@@ -6,8 +6,10 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using VetPlatform.Api.Common.Authorization;
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Security;
+using VetPlatform.Api.Features.Identity;
 using UserEntity = VetPlatform.Api.Features.Identity.User;
 
 namespace VetPlatform.Api.Features.Auth;
@@ -23,10 +25,29 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
 
     public sealed record ClinicSummary(Guid Id, string Name);
 
-    public sealed record CurrentUserResponse(Guid Id, string Name, string Email, ClinicSummary Clinic)
+    public sealed record ChangePasswordRequest(
+        [Required, MaxLength(1024)] string? CurrentPassword,
+        [Required, MaxLength(PasswordPolicy.MaxLength)] string? NewPassword);
+
+    /// <summary>
+    /// The signed-in user, their roles and the permissions those grant. The frontend uses <c>permissions</c> to decide
+    /// what to show; the backend enforces them regardless.
+    /// </summary>
+    public sealed record CurrentUserResponse(
+        Guid Id,
+        string Name,
+        string Email,
+        ClinicSummary Clinic,
+        IReadOnlyList<Role> Roles,
+        IReadOnlyList<string> Permissions)
     {
-        public static CurrentUserResponse From(UserEntity user) =>
-            new(user.Id, user.Name, user.Email, new ClinicSummary(user.Clinic!.Id, user.Clinic.Name));
+        public static CurrentUserResponse From(UserEntity user)
+        {
+            var roles = user.Roles.Select(role => role.Role).Order().ToList();
+            return new(
+                user.Id, user.Name, user.Email, new ClinicSummary(user.Clinic!.Id, user.Clinic.Name),
+                roles, Common.Authorization.Permissions.For(roles));
+        }
     }
 
     /// <summary>Issues the CSRF request token cookie. Call before the first unsafe request, and after a 403 CSRF_TOKEN_INVALID.</summary>
@@ -71,6 +92,15 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity());
         CsrfProtection.IssueToken(HttpContext, antiforgery);
 
+        return NoContent();
+    }
+
+    /// <summary>Changes the caller's password and signs out their other sessions. Rate limited like sign-in.</summary>
+    [HttpPost("password")]
+    [EnableRateLimiting(AuthServiceCollectionExtensions.LoginRateLimitPolicy)]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        await authService.ChangePasswordAsync(User, request.CurrentPassword!, request.NewPassword!, cancellationToken);
         return NoContent();
     }
 

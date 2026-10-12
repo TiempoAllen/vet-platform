@@ -2,7 +2,9 @@ using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Security;
+using System.Text.Json.Serialization;
 using VetPlatform.Api.Features.Auth;
+using VetPlatform.Api.Features.Users;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,12 +14,15 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
     .AddControllers(options => options.Filters.Add<CsrfProtectionFilter>())
+    // Enums travel as their names ("Admin", "Active"), matching how they are stored and documented in API.md.
+    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()))
     .ConfigureApiBehaviorOptions(ApiBehaviorConfiguration.Configure);
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 builder.Services.AddPersistence();
 builder.Services.AddAuth(builder.Configuration);
+builder.Services.AddScoped<UserService>();
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection
 // attempt from stalling health probes.
@@ -27,6 +32,13 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 PersistenceServiceCollectionExtensions.EnsureDatabaseConfigured(app.Configuration);
+
+// Administrative commands run instead of the web server, e.g. `dotnet run -- create-admin ...` (backend/README.md).
+if (args is [CreateAdminCommand.Name, .. var commandArgs])
+{
+    Environment.ExitCode = await CreateAdminCommand.RunAsync(app.Services, commandArgs, Console.In, Console.Out);
+    return;
+}
 
 // Order matters: request id first so everything below (logs, error bodies) can use it;
 // request logging wraps the exception handler so it logs the final status code.

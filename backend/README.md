@@ -26,7 +26,11 @@ backend/
     Common/Persistence/         AppDbContext, Entity base, timestamps, database health check, Migrations/
     Common/Security/            CSRF (antiforgery) protection
     Features/Identity/          Clinic, User, UserSession entities
-    Features/Auth/              login/logout/me/csrf endpoints, session validation, sign-in rules
+    Features/Auth/              login/logout/me/csrf/password endpoints, session validation, sign-in rules
+    Features/Users/             user management endpoints, create-admin command
+    Common/Authorization/       roles, permissions, [RequirePermission]
+    Common/Tenancy/             current clinic, clinic write guard (query filters live in AppDbContext)
+    Common/Auditing/            audit log entity and AuditTrail
     Program.cs                  composition root and middleware order
   tests/VetPlatform.Api.Tests/  xunit integration tests (in-memory host)
 ```
@@ -98,8 +102,26 @@ Cookie sessions validated against the database on every request; contract in `do
 - Unsafe requests need the CSRF header. In tests use `factory.CreateClientWithCsrfAsync()` and, after login or logout,
   `client.UseCsrfTokenFrom(response)`; `DatabaseApiFactory.CreateUserAsync` seeds a signed-in-able user.
 - Read the time from the injected `TimeProvider`, never `DateTime.UtcNow`; tests advance `factory.Clock`.
-- There is no way to create users through the API yet (user management is B-04). Use the test helpers, or insert a
-  clinic and user with a `PasswordHasher<User>`-generated hash.
+
+## Users, permissions and tenancy (B-04)
+
+Create a clinic and its first administrator (prompts for the password without echoing it; or pipe it on stdin):
+
+```bash
+dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Owner" --email jo@happypaws.example
+```
+
+Then sign in as that administrator and create the other staff through `POST /api/users`.
+
+Rules for new code (ADR-004):
+- Protect every endpoint with `[RequirePermission(Permissions.X)]` unless any signed-in user may call it. Add new
+  permissions to `Common/Authorization/Permissions.cs` and grant them there.
+- Clinic-owned entities implement `IClinicOwned`; they are then filtered to the current clinic and write-guarded
+  automatically. Never pass a clinic id from the request; it comes from the session.
+- `IgnoreQueryFilters()` only for genuinely cross-clinic code, with a comment saying why.
+- Record an audit entry (`AuditTrail.Record`) for security-relevant and business changes, before `SaveChanges`.
+- Tests: `factory.SignedInAsync(Role.Admin)` gives a signed-in client in a new clinic; `CreateColleagueAsync` adds
+  users to the same clinic. Direct database setup in tests has no current clinic, so use `IgnoreQueryFilters()`.
 
 ## Conventions established in B-01
 
