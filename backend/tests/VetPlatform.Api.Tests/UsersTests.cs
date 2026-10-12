@@ -23,7 +23,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         name = "New Staff",
         email = NewEmail(),
         password = "a-long-enough-password",
-        roles = roles.Length == 0 ? [Role.Receptionist] : roles,
+        roles = (roles.Length == 0 ? [Role.Receptionist] : roles).Select(role => role.ToString()).ToArray(),
     };
 
     private static async Task<string> ErrorCodeOf(HttpResponseMessage response) =>
@@ -46,7 +46,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
             await client.GetAsync($"/api/users/{user.Id}"),
             await client.PostAsJsonAsync("/api/users", NewUserBody()),
             await client.PatchAsJsonAsync($"/api/users/{user.Id}", new { name = "x" }),
-            await client.PostAsJsonAsync($"/api/users/{user.Id}/roles", new { roles = new[] { Role.Admin } }),
+            await client.PostAsJsonAsync($"/api/users/{user.Id}/roles", new { roles = new[] { "Admin" } }),
         };
 
         foreach (var response in responses)
@@ -89,7 +89,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         var colleagueClient = await factory.SignInAsync(colleague);
         Assert.Equal(HttpStatusCode.OK, (await colleagueClient.GetAsync("/api/users")).StatusCode);
 
-        var demote = await adminClient.PostAsJsonAsync($"/api/users/{colleague.Id}/roles", new { roles = new[] { Role.Nurse } });
+        var demote = await adminClient.PostAsJsonAsync($"/api/users/{colleague.Id}/roles", new { roles = new[] { "Nurse" } });
 
         Assert.Equal(HttpStatusCode.OK, demote.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await colleagueClient.GetAsync("/api/users")).StatusCode);
@@ -122,7 +122,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         {
             await clientA.GetAsync($"/api/users/{adminB.Id}"),
             await clientA.PatchAsJsonAsync($"/api/users/{adminB.Id}", new { status = "Disabled" }),
-            await clientA.PostAsJsonAsync($"/api/users/{adminB.Id}/roles", new { roles = new[] { Role.Nurse } }),
+            await clientA.PostAsJsonAsync($"/api/users/{adminB.Id}/roles", new { roles = new[] { "Nurse" } }),
         };
 
         foreach (var response in responses)
@@ -191,7 +191,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         var response = await client.PostAsJsonAsync("/api/users", new
         {
             name = "  Sam Nurse ", email = "  " + email.ToUpperInvariant(), phone = "+1 555 0100",
-            password = "a-long-enough-password", roles = new[] { Role.Nurse, Role.Nurse },
+            password = "a-long-enough-password", roles = new[] { "Nurse", "Nurse" },
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -237,7 +237,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
 
         var response = await client.PostAsJsonAsync("/api/users", new
         {
-            name = "Dup", email = elsewhere.Email.ToUpperInvariant(), password = "a-long-enough-password", roles = new[] { Role.Nurse },
+            name = "Dup", email = elsewhere.Email.ToUpperInvariant(), password = "a-long-enough-password", roles = new[] { "Nurse" },
         });
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -343,16 +343,16 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         var (client, admin) = await factory.SignedInAsync(Role.Admin);
         var disabledAdmin = await factory.CreateColleagueAsync(admin, UserStatus.Disabled, Role.Admin);
 
-        var demoteSelf = await client.PostAsJsonAsync($"/api/users/{admin.Id}/roles", new { roles = new[] { Role.Veterinarian } });
+        var demoteSelf = await client.PostAsJsonAsync($"/api/users/{admin.Id}/roles", new { roles = new[] { "Veterinarian" } });
         Assert.Equal(HttpStatusCode.Conflict, demoteSelf.StatusCode);
         Assert.Equal(ErrorCodes.Conflict, await ErrorCodeOf(demoteSelf));
 
         // A second, active administrator makes both changes allowed.
         var other = await factory.CreateColleagueAsync(admin, roles: Role.Admin);
         Assert.Equal(HttpStatusCode.OK, (await client.PatchAsJsonAsync($"/api/users/{other.Id}", new { status = "Disabled" })).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/users/{admin.Id}/roles", new { roles = new[] { Role.Nurse } })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync($"/api/users/{admin.Id}/roles", new { roles = new[] { "Nurse" } })).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.PatchAsJsonAsync($"/api/users/{disabledAdmin.Id}", new { status = "Active" })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/users/{admin.Id}/roles", new { roles = new[] { Role.Nurse } })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync($"/api/users/{admin.Id}/roles", new { roles = new[] { "Nurse" } })).StatusCode);
     }
 
     [Fact]
@@ -363,8 +363,8 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         var clientB = await factory.SignInAsync(adminB);
 
         var results = await Task.WhenAll(
-            clientA.PostAsJsonAsync($"/api/users/{adminB.Id}/roles", new { roles = new[] { Role.Nurse } }),
-            clientB.PostAsJsonAsync($"/api/users/{adminA.Id}/roles", new { roles = new[] { Role.Nurse } }));
+            clientA.PostAsJsonAsync($"/api/users/{adminB.Id}/roles", new { roles = new[] { "Nurse" } }),
+            clientB.PostAsJsonAsync($"/api/users/{adminA.Id}/roles", new { roles = new[] { "Nurse" } }));
 
         // Exactly one demotion wins. The other is refused: 409 if it checked the admin count after the winner
         // committed, or 403 if its own admin role was already gone when it was authorised.
@@ -384,7 +384,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         var created = await client.PostAsJsonAsync("/api/users", NewUserBody(Role.Nurse));
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
         await client.PatchAsJsonAsync($"/api/users/{id}", new { name = "Renamed" });
-        await client.PostAsJsonAsync($"/api/users/{id}/roles", new { roles = new[] { Role.Veterinarian } });
+        await client.PostAsJsonAsync($"/api/users/{id}/roles", new { roles = new[] { "Veterinarian" } });
 
         var entries = await factory.AuditEntriesAsync(id);
         Assert.Equal(

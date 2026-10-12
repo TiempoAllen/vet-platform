@@ -2,7 +2,6 @@ using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Security;
-using System.Text.Json.Serialization;
 using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.Users;
 
@@ -14,8 +13,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
     .AddControllers(options => options.Filters.Add<CsrfProtectionFilter>())
-    // Enums travel as their names ("Admin", "Active"), matching how they are stored and documented in API.md.
-    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()))
+    // Enums travel only as their exact names ("Admin", "Active"), matching how they are stored and documented.
+    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new StrictEnumConverterFactory()))
     .ConfigureApiBehaviorOptions(ApiBehaviorConfiguration.Configure);
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();

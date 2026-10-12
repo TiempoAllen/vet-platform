@@ -68,7 +68,7 @@ code (ADR-004), so there are no Role, Permission or RolePermission tables.
 - role (role name; CHECK constraint lists the valid names)
 - created_at
 
-Primary key (user_id, role).
+Primary key (user_id, role). Foreign key to users with RESTRICT; rows are removed explicitly when roles change.
 
 ## 4. Clients and patients
 ### Client
@@ -320,11 +320,14 @@ Appointment availability must account for existing appointments and schedule exc
 - action (stable names such as `auth.login_failed`, `user.roles_changed`)
 - entity_type nullable
 - entity_id nullable
-- occurred_at
+- occurred_at (application clock)
+- recorded_at (always the database clock, set by a trigger)
 - metadata (jsonb)
 - request_id nullable
 
-Do not store secrets in audit metadata. The table is append-only: a trigger rejects UPDATE, DELETE and TRUNCATE.
+`clinic_id` and `actor_user_id` are foreign keys with RESTRICT. Do not store secrets in audit metadata. The table is
+append-only: triggers reject UPDATE, DELETE and TRUNCATE, and the migration's rollback refuses to drop a non-empty
+table.
 Indexed by (clinic_id, occurred_at) and (entity_type, entity_id).
 
 ## 11. Integrity requirements

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using VetPlatform.Api.Common.Auditing;
@@ -30,13 +31,14 @@ public static class CreateAdminCommand
             || !options.TryGetValue("email", out var rawEmail) || string.IsNullOrWhiteSpace(rawEmail))
         {
             await output.WriteLineAsync(
-                $"Usage: {Name} --clinic <clinic name> --name <admin name> --email <admin email>  (password on stdin)");
+                $"Usage: {Name} --clinic <clinic name> --name <admin name> --email <admin email>" +
+                "  (the password is read from stdin; never pass it as an argument)");
             return 2;
         }
 
         var email = User.NormalizeEmail(rawEmail);
         if (clinicName.Length > Clinic.NameMaxLength || name.Length > User.NameMaxLength
-            || email.Length > User.EmailMaxLength || !email.Contains('@'))
+            || email.Length > User.EmailMaxLength || !new EmailAddressAttribute().IsValid(email))
         {
             await output.WriteLineAsync("Error: clinic name, admin name or email is too long or invalid.");
             return 2;
@@ -83,22 +85,28 @@ public static class CreateAdminCommand
 
         db.Clinics.Add(clinic);
         db.Users.Add(admin);
-        audit.Record(
+        audit.RecordFor(
             AuditActions.UserCreated, nameof(User), admin.Id,
-            new { roles = new[] { nameof(Role.Admin) }, source = "cli" }, clinicId: clinic.Id);
+            new { roles = new[] { nameof(Role.Admin) }, source = "cli" }, actorUserId: null, clinicId: clinic.Id);
         await db.SaveChangesAsync(cancellationToken);
 
         await output.WriteLineAsync($"Created clinic {clinic.Id} and administrator {admin.Id}.");
         return 0;
     }
 
-    /// <summary>Parses <c>--key value</c> pairs; returns null on anything else.</summary>
+    private static readonly string[] KnownOptions = ["clinic", "name", "email"];
+
+    /// <summary>
+    /// Parses <c>--key value</c> pairs for the known options; returns null on anything else. Unknown options are
+    /// refused rather than ignored, so a mistaken <c>--password</c> fails loudly instead of being silently accepted.
+    /// </summary>
     private static Dictionary<string, string>? ParseOptions(IReadOnlyList<string> args)
     {
         var options = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < args.Count; i += 2)
         {
-            if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Count)
+            if (!args[i].StartsWith("--", StringComparison.Ordinal) || i + 1 >= args.Count
+                || !KnownOptions.Contains(args[i][2..], StringComparer.OrdinalIgnoreCase))
             {
                 return null;
             }

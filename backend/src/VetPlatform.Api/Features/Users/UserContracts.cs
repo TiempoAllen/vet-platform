@@ -31,15 +31,33 @@ public sealed class UserListQuery : PageQuery, IValidatableObject
     [MaxLength(100)]
     public string? Q { get; init; }
 
-    public UserStatus? Status { get; init; }
+    /// <summary><c>Active</c> or <c>Disabled</c>. A string so only exact names are accepted (see <see cref="StrictEnum"/>).</summary>
+    public string? Status { get; init; }
 
-    public Role? Role { get; init; }
+    /// <summary>A role name. A string so only exact names are accepted (see <see cref="StrictEnum"/>).</summary>
+    public string? Role { get; init; }
+
+    public UserStatus? ParsedStatus => StrictEnum.TryParse<UserStatus>(Status, out var status) ? status : null;
+
+    public Common.Authorization.Role? ParsedRole =>
+        StrictEnum.TryParse<Common.Authorization.Role>(Role, out var role) ? role : null;
 
     /// <summary><c>name</c> (default), <c>email</c>, <c>createdAt</c> or <c>lastLoginAt</c>; prefix with <c>-</c> for descending.</summary>
     public string Sort { get; init; } = "name";
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
+        if (Status is not null && ParsedStatus is null)
+        {
+            yield return new ValidationResult($"Status must be one of {StrictEnum.Names<UserStatus>()}.", [nameof(Status)]);
+        }
+
+        if (Role is not null && ParsedRole is null)
+        {
+            yield return new ValidationResult(
+                $"Role must be one of {StrictEnum.Names<Common.Authorization.Role>()}.", [nameof(Role)]);
+        }
+
         if (!SortFields.Contains(Sort.TrimStart('-'), StringComparer.Ordinal))
         {
             yield return new ValidationResult(

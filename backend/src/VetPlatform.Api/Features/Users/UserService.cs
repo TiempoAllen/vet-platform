@@ -7,6 +7,7 @@ using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Tenancy;
+using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.Identity;
 
 namespace VetPlatform.Api.Features.Users;
@@ -16,11 +17,17 @@ namespace VetPlatform.Api.Features.Users;
 /// filter, so another clinic's users are simply not found (404). Changes and their audit entries commit together.
 /// A clinic must always keep at least one active administrator.
 /// </summary>
+/// <remarks>
+/// Every change takes the clinic row lock first and then re-checks, from the database, that the caller may still
+/// manage users: the permission check at the door used roles read before the lock, and another administrator may
+/// have demoted or disabled the caller while this request waited.
+/// </remarks>
 public sealed class UserService(
     AppDbContext db,
     ITenantContext tenant,
     IPasswordHasher<User> passwordHasher,
     AuditTrail audit,
+    AuthService authService,
     TimeProvider timeProvider)
 {
     public Task<PagedResponse<UserResponse>> ListAsync(UserListQuery query, CancellationToken cancellationToken)
@@ -37,12 +44,12 @@ public sealed class UserService(
                 || EF.Functions.ILike(EF.Functions.Collate(user.Email, "default"), pattern, PagingExtensions.LikeEscape));
         }
 
-        if (query.Status is { } status)
+        if (query.ParsedStatus is { } status)
         {
             users = users.Where(user => user.Status == status);
         }
 
-        if (query.Role is { } role)
+        if (query.ParsedRole is { } role)
         {
             users = users.Where(user => user.Roles.Any(userRole => userRole.Role == role));
         }
@@ -65,7 +72,10 @@ public sealed class UserService(
     public async Task<UserResponse> GetAsync(Guid id, CancellationToken cancellationToken) =>
         UserResponse.From(await FindAsync(id, tracking: false, cancellationToken));
 
-    public async Task<UserResponse> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken)
+    public async Task<UserResponse> CreateAsync(
+        CreateUserRequest request,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
     {
         var email = User.NormalizeEmail(request.Email!);
         if (PasswordPolicy.Validate(request.Password!, email) is { } problem)
@@ -73,6 +83,9 @@ public sealed class UserService(
             throw Invalid("password", problem);
         }
 
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await LockClinicAsync(cancellationToken);
+        await EnsureActorCanManageUsersAsync(actorUserId, cancellationToken);
         await EnsureEmailIsFreeAsync(email, exceptUserId: null, cancellationToken);
 
         var now = timeProvider.GetUtcNow();
@@ -90,6 +103,7 @@ public sealed class UserService(
         audit.Record(AuditActions.UserCreated, nameof(User), user.Id, new { roles = RoleNames(user) });
 
         await SaveAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return UserResponse.From(user);
     }
 
@@ -106,8 +120,10 @@ public sealed class UserService(
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         await LockClinicAsync(cancellationToken);
+        await EnsureActorCanManageUsersAsync(actorUserId, cancellationToken);
         var user = await FindAsync(id, tracking: true, cancellationToken);
         var changed = new List<string>();
+        var sessionsSignedOut = 0;
 
         if (request.Name is { } name && name.Trim() != user.Name)
         {
@@ -142,11 +158,21 @@ public sealed class UserService(
 
             user.Status = status;
             changed.Add("status");
+
+            // Revoke rather than merely refuse: re-enabling the account later must not revive old (possibly stolen)
+            // sessions.
+            if (status == UserStatus.Disabled)
+            {
+                sessionsSignedOut = await authService.RevokeAllSessionsAsync(
+                    user, exceptSessionId: null, reason: null, timeProvider.GetUtcNow(), cancellationToken);
+            }
         }
 
         if (changed.Count > 0)
         {
-            audit.Record(AuditActions.UserUpdated, nameof(User), user.Id, new { fields = changed, status = user.Status });
+            audit.Record(
+                AuditActions.UserUpdated, nameof(User), user.Id,
+                new { fields = changed, status = user.Status, sessionsSignedOut });
             await SaveAsync(cancellationToken);
         }
 
@@ -154,10 +180,15 @@ public sealed class UserService(
         return UserResponse.From(user);
     }
 
-    public async Task<UserResponse> SetRolesAsync(Guid id, IReadOnlyList<Role> roles, CancellationToken cancellationToken)
+    public async Task<UserResponse> SetRolesAsync(
+        Guid id,
+        IReadOnlyList<Role> roles,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         await LockClinicAsync(cancellationToken);
+        await EnsureActorCanManageUsersAsync(actorUserId, cancellationToken);
         var user = await FindAsync(id, tracking: true, cancellationToken);
 
         var before = RoleNames(user);
@@ -168,7 +199,9 @@ public sealed class UserService(
         }
 
         var now = timeProvider.GetUtcNow();
-        user.Roles.RemoveAll(role => !wanted.Contains(role.Role));
+        var removed = user.Roles.Where(role => !wanted.Contains(role.Role)).ToList();
+        db.RemoveRange(removed);
+        user.Roles.RemoveAll(removed.Contains);
         user.Roles.AddRange(wanted
             .Where(role => user.Roles.All(existing => existing.Role != role))
             .Select(role => new UserRole { UserId = user.Id, Role = role, CreatedAt = now }));
@@ -201,6 +234,21 @@ public sealed class UserService(
     /// </summary>
     private Task LockClinicAsync(CancellationToken cancellationToken) =>
         db.Database.ExecuteSqlAsync($"SELECT 1 FROM clinics WHERE id = {CurrentClinicId} FOR UPDATE", cancellationToken);
+
+    /// <summary>Re-checks under the clinic lock that the caller is still an active user allowed to manage users.</summary>
+    private async Task EnsureActorCanManageUsersAsync(Guid actorUserId, CancellationToken cancellationToken)
+    {
+        var roles = await db.Users
+            .Where(user => user.Id == actorUserId && user.Status == UserStatus.Active)
+            .SelectMany(user => user.Roles.Select(role => role.Role))
+            .ToListAsync(cancellationToken);
+
+        if (!Permissions.Grant(roles, Permissions.UsersManage))
+        {
+            throw new ApiException(
+                StatusCodes.Status403Forbidden, ErrorCodes.Forbidden, "You do not have permission to perform this action.");
+        }
+    }
 
     private async Task EnsureAnotherActiveAdminAsync(User user, CancellationToken cancellationToken)
     {

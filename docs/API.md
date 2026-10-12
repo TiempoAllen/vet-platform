@@ -69,8 +69,8 @@ dev-server proxy must forward `/api` to that HTTPS address; the browser-to-dev-s
   while signed in is not valid once signed out. Requests rejected for CSRF still count toward the login rate limit.
 - On `403 CSRF_TOKEN_INVALID`, call `GET /api/auth/csrf` and retry the request once.
 
-**Error precedence** when several apply: `429` → `401` (protected endpoints) → `403 CSRF_TOKEN_INVALID` →
-`400`/`422` → the endpoint's own result.
+**Error precedence** when several apply: `429` → `401` (protected endpoints) → `403 FORBIDDEN` (missing permission)
+→ `403 CSRF_TOKEN_INVALID` → `400`/`422` → the endpoint's own result (including `404` for other clinics' records).
 
 **Authorization default.** Every endpoint requires a signed-in user and returns `401 UNAUTHENTICATED` otherwise, unless
 documented as anonymous. Anonymous endpoints: `GET /api/auth/csrf`, `POST /api/auth/login`, `POST /api/auth/logout`,
@@ -115,6 +115,8 @@ regardless. A user may have no roles, in which case both arrays are empty.
 - `204`: password changed; every other session of this user is signed out, this one stays.
 - `422 VALIDATION_ERROR` with field `currentPassword` (incorrect) or `newPassword` (fails the password policy:
   12 to 1024 characters, not the email address).
+- Wrong current passwords count towards the same lockout as failed sign-ins. The attempt that triggers the lock
+  returns `401 UNAUTHENTICATED` and signs out every session of the user, this one included.
 
 **Session lifetime.** A session ends after 2 hours without requests, 12 hours after sign-in regardless of activity, on
 logout, or as soon as the user is disabled or the clinic suspended. After that every protected endpoint returns
@@ -124,7 +126,8 @@ logout, or as soon as the user is disabled or the clinic suspended. After that e
 Implemented in B-04. All endpoints act on the caller's clinic only: users of other clinics are `404 NOT_FOUND`, never
 `403`. Missing permission is `403 FORBIDDEN`. Design: `ARCHITECTURE.md` ADR-004.
 
-**Roles** (fixed): `Admin`, `Veterinarian`, `Nurse`, `Receptionist`, `Inventory`. A user holds zero or more.
+**Roles** (fixed): `Admin`, `Veterinarian`, `Nurse`, `Receptionist`, `Inventory`. Users created or edited through
+the API hold one or more; `GET /api/auth/me` still returns empty arrays for a user with none.
 **Permissions** granted so far: `users.read`, `users.manage`, both to `Admin` only. Later milestones add permissions
 and grant them to roles; `GET /api/auth/me` lists the caller's.
 
@@ -140,7 +143,8 @@ and grant them to roles; `GET /api/auth/me` lists the caller's.
 `GET /api/users` (`users.read`): paginated list (section 13).
 - `q`: case-insensitive substring match on name or email (max 100 characters; `%` and `_` match literally).
 - `status`: `Active` or `Disabled`. `role`: one of the roles.
-- `sort`: `name` (default), `email`, `createdAt` or `lastLoginAt`; prefix `-` for descending.
+- `sort`: `name` (default), `email`, `createdAt` or `lastLoginAt`; prefix `-` for descending. Users who never signed
+  in sort last ascending and first descending. Ties are broken by id, so pages are stable.
 - Invalid values (unknown sort, status or role, `page < 1`, `pageSize` outside 1 to 100) are `422 VALIDATION_ERROR`
   with the parameter as `field`.
 
@@ -149,6 +153,10 @@ and grant them to roles; `GET /api/auth/me` lists the caller's.
 `POST /api/users` (`users.manage`): creates a user in the caller's clinic.
 
     { "name": "Sam Nurse", "email": "sam@clinic.example", "phone": null, "password": "...", "roles": ["Nurse"] }
+
+Limits: `name` required, max 200, trimmed; `email` required, a valid address, max 254, stored trimmed and lowercased;
+`phone` optional, max 32, trimmed (blank becomes `null`); `password` 12 to 1024 characters, not the email; `roles`
+at least one.
 
 - `201` with the user object and a `Location` header.
 - `422` when a field is missing or invalid (password policy as for `POST /api/auth/password`; at least one role).
@@ -164,17 +172,25 @@ the phone.
     { "name": "...", "email": "...", "phone": "...", "status": "Active" | "Disabled" }
 
 - `200` with the updated user object.
-- `409 CONFLICT` when the email is taken, when disabling your own account, or when disabling the clinic's last active
-  administrator.
-- Disabling a user signs them out immediately and blocks sign-in until re-enabled.
+- `422 VALIDATION_ERROR` when `name` is blank or a field is invalid or too long (same limits as create).
+  `404 NOT_FOUND` for an unknown user. `400 BAD_REQUEST` for an unknown `status`.
+- `409 CONFLICT` when the email is taken (detail field `email`), when disabling your own account, or when disabling
+  the clinic's last active administrator. The last two have no field detail; show `error.message`.
+- Disabling a user ends all their sessions immediately and blocks sign-in until re-enabled; re-enabling does not
+  restore old sessions.
 
 `POST /api/users/:id/roles` (`users.manage`): replaces the user's roles with exactly this set (duplicates ignored).
 
     { "roles": ["Veterinarian", "Admin"] }
 
 - `200` with the updated user object.
+- `roles` must contain at least one role; an empty or missing array is `422 VALIDATION_ERROR` (field `roles`).
+  Unknown user (or another clinic's) is `404 NOT_FOUND`.
 - `409 CONFLICT` when it would remove `Admin` from the clinic's last active administrator (including yourself).
 - Takes effect on the user's next request.
+
+If the caller loses `users.manage` while a request is in flight (demoted or disabled by another administrator), the
+request is refused with `403 FORBIDDEN`.
 
 Every change made through these endpoints is written to the audit log.
 
@@ -258,7 +274,9 @@ matching items across all pages.
 
 An endpoint may adopt cursor pagination later if offset paging proves too slow; that will be documented per endpoint.
 
-Enum values (statuses, roles) are sent and accepted as their names, e.g. `"Active"`, `"Admin"`.
+Enum values (statuses, roles) are sent and accepted only as their exact names, e.g. `"Active"`, `"Admin"`. Numbers,
+other casings (`"admin"`) and comma lists are rejected: `400 BAD_REQUEST` in a JSON body, `422 VALIDATION_ERROR` in a
+query string.
 
 ## 14. API stability
 Do not change response fields or semantics casually. If a breaking change is required, update this document and coordinate frontend changes.
