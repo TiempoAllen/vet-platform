@@ -16,6 +16,11 @@ namespace VetPlatform.Api.Common.Persistence;
 /// request's clinic. With no current clinic the filter matches nothing, so a missing tenant fails closed. Code that
 /// must work across clinics (sign-in, session validation, the CLI) opts out explicitly with
 /// <c>IgnoreQueryFilters()</c> and says why in a comment.
+/// <para>
+/// Child rows that are not themselves <see cref="IClinicOwned"/> (user roles, later invoice items, ...) get no filter,
+/// so they are not exposed as <see cref="DbSet{TEntity}"/>s: reach them only through their clinic-owned parent.
+/// <see cref="UserSessions"/> is the documented exception, used only by authentication code keyed by session or user.
+/// </para>
 /// </remarks>
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext tenant) : DbContext(options)
 {
@@ -29,11 +34,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
 
     public DbSet<User> Users => Set<User>();
 
-    public DbSet<UserRole> UserRoles => Set<UserRole>();
-
     public DbSet<UserSession> UserSessions => Set<UserSession>();
 
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
+    public const string ClinicFilter = "Clinic";
 
     /// <summary>Read by the query filters on every query; <see cref="Guid.Empty"/> matches no row.</summary>
     private Guid CurrentClinicId => tenant.ClinicId ?? Guid.Empty;
@@ -54,5 +60,5 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
 
     private void ApplyClinicFilter<TEntity>(ModelBuilder modelBuilder)
         where TEntity : class, IClinicOwned =>
-        modelBuilder.Entity<TEntity>().HasQueryFilter(entity => entity.ClinicId == CurrentClinicId);
+        modelBuilder.Entity<TEntity>().HasQueryFilter(ClinicFilter, entity => entity.ClinicId == CurrentClinicId);
 }

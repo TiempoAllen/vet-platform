@@ -64,11 +64,17 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
     [EnableRateLimiting(AuthServiceCollectionExtensions.LoginRateLimitPolicy)]
     public async Task<ActionResult<CurrentUserResponse>> Login(SignInRequest request, CancellationToken cancellationToken)
     {
+        // Sign in as nobody: the browser may already be signed in as someone else, possibly in another clinic, and
+        // that identity must not become the current clinic or the audit actor of this sign-in. (CSRF was already
+        // checked against it by the filter.)
+        var previous = User;
+        HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity());
+
         var (user, session) = await authService.SignInAsync(request.Email!, request.Password!, cancellationToken);
 
         // Signing in from a browser that already has a session replaces it: the old session is revoked, but only
         // once the new sign-in has succeeded, so a mistyped password does not sign the user out.
-        await authService.RevokeSessionAsync(User, cancellationToken);
+        await authService.RevokeSessionAsync(previous, cancellationToken);
 
         var principal = AuthClaims.CreatePrincipal(user, session);
         await HttpContext.SignInAsync(

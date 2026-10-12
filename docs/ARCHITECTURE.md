@@ -171,16 +171,52 @@ Choose the simplest solution that satisfies documented requirements, security, m
   - Opting out (`IgnoreQueryFilters()`) is reserved for code that must work across clinics: sign-in, session
     validation, platform-wide email uniqueness checks and the CLI. Each use carries a comment explaining why.
   - Other clinics' records are reported as `404`, so their existence is not revealed.
+  - The filter is a named filter (`AppDbContext.ClinicFilter`), so entities can add other filters (e.g. soft delete)
+    without replacing it.
+  - Child tables that are not `IClinicOwned` (user roles, later invoice items, ...) are not exposed as `DbSet`s and
+    are reached only through their clinic-owned parent. `UserSessions` is the exception, used only by authentication
+    code that is keyed by session or user id.
+  - Sign-in clears the request's identity before running, so a browser already signed in to clinic A can sign in to
+    a clinic B account, and that sign-in is never attributed to the clinic A user.
 - A clinic always keeps at least one active administrator: disabling or demoting the last one is refused, and such
-  changes take a row lock on the clinic so two administrators cannot demote each other at the same moment.
-- Audit log (`audit_logs`): an append-only table (a database trigger rejects UPDATE, DELETE and TRUNCATE). Entries are
-  added to the same unit of work as the change they describe, so both commit or neither does. Actor, clinic and request
-  id default to the current request. Metadata is JSON and never holds secrets, passwords or email addresses; failed
-  sign-ins for unknown emails are recorded without the email. Recorded so far: sign-in success, failure (with
-  reason), lockout, logout, password change, user created/updated/roles changed. Querying is B-27.
+  changes take a row lock on the clinic so two administrators cannot demote each other at the same moment. Under that
+  lock every user-management change re-checks from the database that the caller still holds `users.manage`, so a
+  request authorised just before the caller was demoted cannot complete.
+- Disabling a user revokes all their sessions (re-enabling does not revive them).
+- Audit log (`audit_logs`):
+  - Append-only: database triggers reject UPDATE, DELETE and TRUNCATE, and stamp `recorded_at` with the database
+    clock on insert, so the stored timeline cannot be back- or forward-dated by the application. `occurred_at` is
+    the application's clock (the fake clock in tests).
+  - `clinic_id` and `actor_user_id` are foreign keys (RESTRICT): entries never dangle, and clinics and users with
+    history cannot be deleted. Rolling back the B-04 migration refuses to run while the table holds entries.
+  - Entries join the same unit of work as the change they describe, so both commit or neither does.
+    `AuditTrail.Record` takes actor and clinic from the signed-in caller; `RecordFor` takes them explicitly and is
+    used for sign-in events (no actor: whoever tries is not authenticated as the account) and the CLI.
+  - Metadata is JSON and never holds secrets, passwords or email addresses; failed sign-ins for unknown emails are
+    recorded without the email.
+  - Recorded so far: sign-in success and failure (with reason), lockout, logout, password change and failed password
+    change, sessions revoked, user created/updated/roles changed. Refused requests (403s, 409s) are application logs
+    only.
+  - Protection limit: the triggers stop the application, not the table owner, who can disable or drop them. Production
+    must run migrations as a schema-owner role and the API as a separate role with only the privileges it needs
+    (INSERT and SELECT on `audit_logs`). Recorded as an X-05 requirement.
+  - For B-27: `audit_logs` is not `IClinicOwned` (rows can lack a clinic), so tenant-scoped audit queries must filter
+    `clinic_id` explicitly; use one shared, tested query helper. Clinic-less rows (unknown-email sign-in attempts)
+    need a separately authorised, platform-level view. Add indexes for the query shapes B-27 defines (e.g. actor and
+    action).
+  - Retention: no automatic purge. When one is needed (X-05), it must be an owner-only, audited operation, never a
+    weakening of the triggers. If the table is later partitioned by time, remember that dropping or detaching a
+    partition bypasses row triggers.
 - Bootstrap: `create-admin` (CLI, password on stdin) creates a clinic and its first administrator. There is no public
   sign-up endpoint.
 - Passwords: 12 to 1024 characters and not the email address (NIST SP 800-63B style, no composition rules).
   Self-service change via `POST /api/auth/password` signs out the user's other sessions.
+- Wrong current passwords on `POST /api/auth/password` count towards the account lockout and are audited; the attempt
+  that locks the account also signs out all its sessions, so a stolen session cannot be used to guess the password.
+  Password change and sign-in serialise on a row lock on the user, so a sign-in with the old password cannot slip
+  past the "sign out other sessions" step.
+- Enums cross the API boundary only as exact names (`StrictEnumConverterFactory`, `StrictEnum`).
+- Upgrade note: B-04 grants no roles to users created before it, so a pre-B-04 database would have no administrators.
+  No deployment predates B-04; if one ever must be upgraded, grant `Admin` to the intended users in the same release.
 - Not yet done: administrator-initiated password reset and "must change password at next sign-in". Users currently
   change the initial password themselves; email-based reset needs notifications (B-25).

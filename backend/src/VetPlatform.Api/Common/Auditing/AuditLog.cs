@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using VetPlatform.Api.Features.Auth;
+using VetPlatform.Api.Features.Identity;
 
 namespace VetPlatform.Api.Common.Auditing;
 
@@ -14,7 +15,14 @@ public sealed class AuditLog
 {
     public Guid Id { get; init; } = Guid.CreateVersion7();
 
+    /// <summary>When the event happened, from the application clock.</summary>
     public DateTimeOffset OccurredAt { get; init; }
+
+    /// <summary>
+    /// When the row was written, set by the database (a trigger overrides whatever is sent), so the stored timeline
+    /// cannot be back- or forward-dated by the application.
+    /// </summary>
+    public DateTimeOffset RecordedAt { get; init; }
 
     /// <summary>Null only for events with no clinic, such as a sign-in attempt for an unknown email.</summary>
     public Guid? ClinicId { get; init; }
@@ -41,6 +49,8 @@ public static class AuditActions
     public const string AccountLocked = "auth.account_locked";
     public const string Logout = "auth.logout";
     public const string PasswordChanged = "auth.password_changed";
+    public const string PasswordChangeFailed = "auth.password_change_failed";
+    public const string SessionsRevoked = "auth.sessions_revoked";
     public const string UserCreated = "user.created";
     public const string UserUpdated = "user.updated";
     public const string UserRolesChanged = "user.roles_changed";
@@ -48,32 +58,43 @@ public static class AuditActions
 
 /// <summary>
 /// Adds audit entries to the current unit of work; they are written by the caller's next <c>SaveChanges</c>, so an
-/// entry commits atomically with the change it describes. Actor, clinic and request id default to the current request.
+/// entry commits atomically with the change it describes. The request id always comes from the current request.
 /// </summary>
 public sealed class AuditTrail(Persistence.AppDbContext db, IHttpContextAccessor httpContextAccessor, TimeProvider timeProvider)
 {
-    public void Record(
-        string action,
-        string? entityType = null,
-        Guid? entityId = null,
-        object? metadata = null,
-        Guid? actorUserId = null,
-        Guid? clinicId = null)
+    /// <summary>Records an action by the signed-in caller, in the caller's clinic.</summary>
+    public void Record(string action, string? entityType = null, Guid? entityId = null, object? metadata = null)
     {
-        var context = httpContextAccessor.HttpContext;
-        var principal = context?.User;
+        var principal = httpContextAccessor.HttpContext?.User;
         var signedIn = principal?.Identity?.IsAuthenticated == true;
+        RecordFor(
+            action, entityType, entityId, metadata,
+            actorUserId: signedIn ? AuthClaims.GetUserId(principal!) : null,
+            clinicId: signedIn ? AuthClaims.GetClinicId(principal!) : null);
+    }
 
+    /// <summary>
+    /// Records an action with an explicit actor and clinic, used exactly as given (null stays null). For events whose
+    /// subject is not the caller: sign-in attempts (the browser may be signed in as someone else) and the CLI.
+    /// </summary>
+    public void RecordFor(
+        string action,
+        string? entityType,
+        Guid? entityId,
+        object? metadata,
+        Guid? actorUserId,
+        Guid? clinicId)
+    {
         db.AuditLogs.Add(new AuditLog
         {
             OccurredAt = timeProvider.GetUtcNow(),
             Action = action,
             EntityType = entityType,
             EntityId = entityId,
-            ActorUserId = actorUserId ?? (signedIn ? AuthClaims.GetUserId(principal!) : null),
-            ClinicId = clinicId ?? (signedIn ? AuthClaims.GetClinicId(principal!) : null),
+            ActorUserId = actorUserId,
+            ClinicId = clinicId,
             Metadata = metadata is null ? null : JsonSerializer.Serialize(metadata, JsonSerializerOptions.Web),
-            RequestId = context?.TraceIdentifier,
+            RequestId = httpContextAccessor.HttpContext?.TraceIdentifier,
         });
     }
 }
@@ -87,6 +108,11 @@ internal sealed class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
         builder.Property(log => log.EntityType).HasMaxLength(100);
         builder.Property(log => log.Metadata).HasColumnType("jsonb");
         builder.Property(log => log.RequestId).HasMaxLength(64);
+        builder.Property(log => log.RecordedAt).HasDefaultValueSql("now()").ValueGeneratedOnAdd();
+
+        // Audit rows must not dangle, and their clinic and actor can never be deleted out from under them.
+        builder.HasOne<Clinic>().WithMany().HasForeignKey(log => log.ClinicId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<User>().WithMany().HasForeignKey(log => log.ActorUserId).OnDelete(DeleteBehavior.Restrict);
 
         // Matches the expected B-27 queries: a clinic's log newest first, and the history of one entity.
         builder.HasIndex(log => new { log.ClinicId, log.OccurredAt });

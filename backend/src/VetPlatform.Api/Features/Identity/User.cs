@@ -71,10 +71,12 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.HasIndex(user => user.Email).IsUnique();
         builder.HasIndex(user => user.ClinicId);
 
+        // Restrict, like every relationship to users: users are never deleted, only disabled. Role rows are removed
+        // explicitly when roles change (the change itself is in the audit log).
         builder.HasMany(user => user.Roles)
             .WithOne()
             .HasForeignKey(userRole => userRole.UserId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(user => user.Clinic)
             .WithMany()

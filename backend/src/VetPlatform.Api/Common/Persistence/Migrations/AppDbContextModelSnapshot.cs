@@ -61,6 +61,12 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
 
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at")
+                        .HasDefaultValueSql("now()");
+
                     b.Property<string>("RequestId")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
@@ -68,6 +74,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_audit_logs");
+
+                    b.HasIndex("ActorUserId")
+                        .HasDatabaseName("ix_audit_logs_actor_user_id");
 
                     b.HasIndex("ClinicId", "OccurredAt")
                         .HasDatabaseName("ix_audit_logs_clinic_id_occurred_at");
@@ -257,6 +266,21 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.ToTable("user_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_logs_users_actor_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_logs_clinics_clinic_id");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.Clinic", "Clinic")
@@ -274,7 +298,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasOne("VetPlatform.Api.Features.Identity.User", null)
                         .WithMany("Roles")
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_user_roles_users_user_id");
                 });

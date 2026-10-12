@@ -15,6 +15,10 @@ namespace VetPlatform.Api.Features.Auth;
 /// password hash, one failed-attempt UPDATE and one audit INSERT), so neither the response nor its timing reveals
 /// whether an account exists or why it was refused. Logs and audit metadata carry ids, never emails or passwords.
 /// </summary>
+/// <remarks>
+/// Sign-in must not depend on whoever the browser is already signed in as: callers clear the request principal first
+/// (see <see cref="AuthController"/>), and sign-in audit entries name their actor and clinic explicitly.
+/// </remarks>
 public sealed class AuthService(
     AppDbContext db,
     IPasswordHasher<User> passwordHasher,
@@ -52,7 +56,7 @@ public sealed class AuthService(
         if (user is null)
         {
             passwordHasher.VerifyHashedPassword(null!, DummyPasswordHash.Value, password);
-            await FailAsync(NoUser, null, "unknown_account", now, cancellationToken);
+            await FailAsync(NoUser, null, AuditActions.LoginFailed, "unknown_account", now, cancellationToken);
             logger.LogInformation("Sign-in failed: unknown account.");
             throw InvalidCredentials();
         }
@@ -61,7 +65,7 @@ public sealed class AuthService(
         {
             // Attempts during a lock are not counted, so they cannot extend it.
             passwordHasher.VerifyHashedPassword(user, DummyPasswordHash.Value, password);
-            await FailAsync(NoUser, user, "locked", now, cancellationToken);
+            await FailAsync(NoUser, user, AuditActions.LoginFailed, "locked", now, cancellationToken);
             logger.LogInformation("Sign-in refused for user {UserId}: account temporarily locked.", user.Id);
             throw InvalidCredentials();
         }
@@ -69,25 +73,26 @@ public sealed class AuthService(
         var verification = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, password);
         if (verification == PasswordVerificationResult.Failed)
         {
-            if (await FailAsync(user.Id, user, "wrong_password", now, cancellationToken))
-            {
-                logger.LogWarning(
-                    "User {UserId} locked for {LockoutMinutes} minutes after repeated failed sign-ins.",
-                    user.Id,
-                    settings.LockoutDuration.TotalMinutes);
-            }
-            else
-            {
-                logger.LogInformation("Sign-in failed for user {UserId}: wrong password.", user.Id);
-            }
-
+            await FailAsync(user.Id, user, AuditActions.LoginFailed, "wrong_password", now, cancellationToken);
+            logger.LogInformation("Sign-in failed for user {UserId}: wrong password.", user.Id);
             throw InvalidCredentials();
         }
 
         if (user.Status != UserStatus.Active || user.Clinic!.Status != ClinicStatus.Active)
         {
-            await FailAsync(NoUser, user, "inactive", now, cancellationToken);
+            await FailAsync(NoUser, user, AuditActions.LoginFailed, "inactive", now, cancellationToken);
             logger.LogInformation("Sign-in refused for user {UserId}: user or clinic is not active.", user.Id);
+            throw InvalidCredentials();
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        // Serialise with a concurrent password change: if the password changed after it was verified above, the old
+        // password must not open a session that the change's "sign out other sessions" step has already missed.
+        if (await LockPasswordHashAsync(user.Id, cancellationToken) != user.PasswordHash)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            logger.LogInformation("Sign-in for user {UserId} raced a password change; refused.", user.Id);
             throw InvalidCredentials();
         }
 
@@ -107,36 +112,43 @@ public sealed class AuthService(
             ExpiresAt = now + settings.AbsoluteLifetime,
         };
         db.UserSessions.Add(session);
-        audit.Record(
-            AuditActions.LoginSucceeded, nameof(User), user.Id,
-            new { sessionId = session.Id }, actorUserId: user.Id, clinicId: user.ClinicId);
+        audit.RecordFor(
+            AuditActions.LoginSucceeded, nameof(User), user.Id, new { sessionId = session.Id },
+            actorUserId: user.Id, clinicId: user.ClinicId);
 
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         logger.LogInformation("User {UserId} signed in (session {SessionId}).", user.Id, session.Id);
         return (user, session);
     }
 
     /// <summary>
-    /// Records a failed sign-in: counts it against <paramref name="countAgainst"/> (or nothing for <see cref="NoUser"/>)
-    /// and writes the audit entry. Returns true when this attempt locked the account.
+    /// Records a failed credential check: counts it against <paramref name="countAgainst"/> (nothing for
+    /// <see cref="NoUser"/>) and writes the audit entries. The attempt is attributed to no actor: whoever made it is
+    /// not authenticated as the account. Returns true when this attempt locked the account.
     /// </summary>
     private async Task<bool> FailAsync(
         Guid countAgainst,
         User? user,
+        string action,
         string reason,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var locked = await RecordFailedAttemptAsync(countAgainst, now, cancellationToken);
 
-        audit.Record(
-            AuditActions.LoginFailed, user is null ? null : nameof(User), user?.Id,
-            new { reason }, actorUserId: null, clinicId: user?.ClinicId);
+        audit.RecordFor(
+            action, user is null ? null : nameof(User), user?.Id, new { reason },
+            actorUserId: null, clinicId: user?.ClinicId);
         if (locked)
         {
-            audit.Record(
-                AuditActions.AccountLocked, nameof(User), user!.Id,
-                new { until = now + options.Value.LockoutDuration }, actorUserId: null, clinicId: user.ClinicId);
+            audit.RecordFor(
+                AuditActions.AccountLocked, nameof(User), user!.Id, new { until = now + options.Value.LockoutDuration },
+                actorUserId: null, clinicId: user.ClinicId);
+            logger.LogWarning(
+                "User {UserId} locked for {LockoutMinutes} minutes after repeated failed password checks.",
+                user.Id,
+                options.Value.LockoutDuration.TotalMinutes);
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -166,6 +178,12 @@ public sealed class AuthService(
         return result is [true];
     }
 
+    /// <summary>Locks the user row until the current transaction ends and returns its stored password hash.</summary>
+    private async Task<string> LockPasswordHashAsync(Guid userId, CancellationToken cancellationToken) =>
+        (await db.Database
+            .SqlQuery<string>($"""SELECT password_hash AS "Value" FROM users WHERE id = {userId} FOR UPDATE""")
+            .ToListAsync(cancellationToken)).Single();
+
     /// <summary>Revokes the caller's session, if any. Safe to call when not signed in.</summary>
     public async Task RevokeSessionAsync(ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
@@ -185,8 +203,8 @@ public sealed class AuthService(
 
         if (revoked > 0)
         {
-            audit.Record(
-                AuditActions.Logout, nameof(UserSession), sessionId,
+            audit.RecordFor(
+                AuditActions.Logout, nameof(UserSession), sessionId, metadata: null,
                 actorUserId: AuthClaims.GetUserId(principal), clinicId: AuthClaims.GetClinicId(principal));
             await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation("Session {SessionId} signed out.", sessionId);
@@ -195,7 +213,9 @@ public sealed class AuthService(
 
     /// <summary>
     /// Changes the signed-in user's password after re-checking the current one, and signs out every other session
-    /// of that user (a stolen session must not survive a password change).
+    /// of that user (a stolen session must not survive a password change). Wrong current passwords count towards
+    /// the account lockout exactly like failed sign-ins; if one triggers the lock, every session of the user,
+    /// including this one, is signed out, so a stolen session cannot be used to guess the password.
     /// </summary>
     public async Task ChangePasswordAsync(
         ClaimsPrincipal principal,
@@ -205,9 +225,18 @@ public sealed class AuthService(
     {
         var user = await db.Users.SingleOrDefaultAsync(u => u.Id == AuthClaims.GetUserId(principal), cancellationToken)
             ?? throw new ApiException(StatusCodes.Status401Unauthorized, ErrorCodes.Unauthenticated, "Authentication is required.");
+        var now = timeProvider.GetUtcNow();
 
         if (passwordHasher.VerifyHashedPassword(user, user.PasswordHash, currentPassword) == PasswordVerificationResult.Failed)
         {
+            if (await FailAsync(user.Id, user, AuditActions.PasswordChangeFailed, "wrong_current_password", now, cancellationToken))
+            {
+                await RevokeAllSessionsAsync(user, exceptSessionId: null, "lockout", now, cancellationToken);
+                throw new ApiException(
+                    StatusCodes.Status401Unauthorized, ErrorCodes.Unauthenticated,
+                    "Too many incorrect passwords. You have been signed out.");
+            }
+
             throw new ApiException(
                 StatusCodes.Status422UnprocessableEntity, ErrorCodes.ValidationError, "One or more fields are invalid.",
                 [new ApiErrorDetail("currentPassword", "The current password is incorrect.")]);
@@ -220,23 +249,47 @@ public sealed class AuthService(
                 [new ApiErrorDetail("newPassword", problem)]);
         }
 
-        var now = timeProvider.GetUtcNow();
-        var currentSession = AuthClaims.GetSessionId(principal);
-
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await LockPasswordHashAsync(user.Id, cancellationToken); // serialise with concurrent sign-ins
         user.PasswordHash = passwordHasher.HashPassword(user, newPassword);
-        var otherSessions = await db.UserSessions
-            .Where(session => session.UserId == user.Id && session.Id != currentSession && session.RevokedAt == null)
-            .ExecuteUpdateAsync(
-                update => update
-                    .SetProperty(session => session.RevokedAt, now)
-                    .SetProperty(session => session.UpdatedAt, now),
-                cancellationToken);
+        user.FailedLoginCount = 0;
+        var otherSessions = await RevokeAllSessionsAsync(
+            user, exceptSessionId: AuthClaims.GetSessionId(principal), reason: null, now, cancellationToken);
         audit.Record(AuditActions.PasswordChanged, nameof(User), user.Id, new { otherSessionsSignedOut = otherSessions });
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         logger.LogInformation("User {UserId} changed their password; {Count} other sessions signed out.", user.Id, otherSessions);
+    }
+
+    /// <summary>
+    /// Revokes all of a user's active sessions except <paramref name="exceptSessionId"/>. With a
+    /// <paramref name="reason"/>, also audits and saves; otherwise the caller audits as part of its own change.
+    /// </summary>
+    public async Task<int> RevokeAllSessionsAsync(
+        User user,
+        Guid? exceptSessionId,
+        string? reason,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var revoked = await db.UserSessions
+            .Where(session => session.UserId == user.Id && session.Id != exceptSessionId && session.RevokedAt == null)
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(session => session.RevokedAt, now)
+                    .SetProperty(session => session.UpdatedAt, now),
+                cancellationToken);
+
+        if (reason is not null && revoked > 0)
+        {
+            audit.RecordFor(
+                AuditActions.SessionsRevoked, nameof(User), user.Id, new { reason, count = revoked },
+                actorUserId: null, clinicId: user.ClinicId);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        return revoked;
     }
 
     public Task<User?> FindCurrentUserAsync(ClaimsPrincipal principal, CancellationToken cancellationToken)
