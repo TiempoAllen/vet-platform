@@ -1,6 +1,10 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using System.Net;
+using System.Net.Http.Json;
+using VetPlatform.Api.Common.Auditing;
+using VetPlatform.Api.Common.Authorization;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Features.Identity;
 
@@ -32,7 +36,8 @@ public class DatabaseApiFactory : ApiFactory, IAsyncLifetime
         string password,
         UserStatus status = UserStatus.Active,
         ClinicStatus clinicStatus = ClinicStatus.Active,
-        Clinic? clinic = null)
+        Clinic? clinic = null,
+        params Role[] roles)
     {
         await MigrateAsync();
         await using var scope = Services.CreateAsyncScope();
@@ -52,12 +57,52 @@ public class DatabaseApiFactory : ApiFactory, IAsyncLifetime
             Email = User.NormalizeEmail(email),
             PasswordHash = "",
             Status = status,
+            Roles = roles.Select(role => new UserRole { Role = role, CreatedAt = Clock.GetUtcNow() }).ToList(),
         };
         user.PasswordHash = hasher.HashPassword(user, password);
         db.Users.Add(user);
 
         await db.SaveChangesAsync();
         return user;
+    }
+
+    /// <summary>Creates a new clinic with one user holding <paramref name="roles"/>, signed in on a ready client.</summary>
+    public async Task<(HttpClient Client, User User)> SignedInAsync(params Role[] roles)
+    {
+        var user = await CreateUserAsync($"user-{Guid.NewGuid():N}@example.com", TestPassword, roles: roles);
+        return (await SignInAsync(user), user);
+    }
+
+    /// <summary>Creates another user in <paramref name="colleague"/>'s clinic.</summary>
+    public Task<User> CreateColleagueAsync(User colleague, UserStatus status = UserStatus.Active, params Role[] roles) =>
+        CreateUserAsync(
+            $"user-{Guid.NewGuid():N}@example.com", TestPassword, status,
+            clinic: new Clinic { Id = colleague.ClinicId, Name = "existing" }, roles: roles);
+
+    /// <summary>Signs an existing user (created with <see cref="TestPassword"/>) in on a new client.</summary>
+    public async Task<HttpClient> SignInAsync(User user)
+    {
+        var client = await CreateClientWithCsrfAsync();
+        var response = await client.PostAsJsonAsync("/api/auth/login", new { email = user.Email, password = TestPassword });
+        if (response.StatusCode != HttpStatusCode.OK)
+        {
+            throw new InvalidOperationException($"Test sign-in failed with {response.StatusCode}.");
+        }
+
+        client.UseCsrfTokenFrom(response);
+        return client;
+    }
+
+    public const string TestPassword = "Correct-Horse-9";
+
+    /// <summary>Audit entries about an entity, oldest first.</summary>
+    public async Task<List<AuditLog>> AuditEntriesAsync(Guid entityId)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs
+            .Where(entry => entry.EntityId == entityId)
+            .OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id)
+            .ToListAsync();
     }
 
     /// <summary>Runs <paramref name="action"/> against a fresh <see cref="AppDbContext"/>, then saves.</summary>

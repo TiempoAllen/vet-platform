@@ -72,7 +72,7 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
         Assert.Equal(email, me.GetProperty("email").GetString());
         Assert.Equal(user.ClinicId.ToString(), me.GetProperty("clinic").GetProperty("id").GetString());
         Assert.Equal(
-            ["id", "name", "email", "clinic"],
+            ["id", "name", "email", "clinic", "roles", "permissions"],
             me.EnumerateObject().Select(property => property.Name)); // nothing else (no hash, no lockout state)
     }
 
@@ -157,7 +157,7 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
 
         await factory.UpdateDatabaseAsync(async db =>
         {
-            var stored = await db.Users.AsNoTracking().SingleAsync(u => u.Id == user.Id);
+            var stored = await db.Users.IgnoreQueryFilters().AsNoTracking().SingleAsync(u => u.Id == user.Id);
             Assert.True(stored.LockedUntil > factory.Clock.GetUtcNow());
         });
     }
@@ -349,7 +349,7 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
         var user = await factory.CreateUserAsync(email, Password);
         var (client, _) = await SignedInClientAsync(email);
 
-        await factory.UpdateDatabaseAsync(db => db.Users
+        await factory.UpdateDatabaseAsync(db => db.Users.IgnoreQueryFilters()
             .Where(u => u.Id == user.Id)
             .ExecuteUpdateAsync(update => update.SetProperty(u => u.Status, UserStatus.Disabled)));
 
@@ -411,7 +411,7 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
     {
         var email = NewEmail();
         var user = await factory.CreateUserAsync(email, Password);
-        await factory.UpdateDatabaseAsync(db => db.Users.Where(u => u.Id == user.Id)
+        await factory.UpdateDatabaseAsync(db => db.Users.IgnoreQueryFilters().Where(u => u.Id == user.Id)
             .ExecuteUpdateAsync(update => update.SetProperty(u => u.Email, email.ToUpperInvariant())));
         var client = await factory.CreateClientWithCsrfAsync();
 

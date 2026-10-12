@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using VetPlatform.Api.Common.Authorization;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Features.Identity;
 
@@ -13,6 +14,8 @@ namespace VetPlatform.Api.Features.Auth;
 /// absolute lifetime, belong to an active user of an active clinic, and match the cookie's user and clinic claims
 /// (so even a forged cookie cannot pair a valid session with another identity). Otherwise the cookie is rejected and
 /// cleared. After this check, the user and clinic claims are trustworthy for authorization and tenant scoping.
+/// The user's current roles are loaded from the database here and added as role claims for this request only, so a
+/// role change applies to the very next request; the cookie never carries roles.
 /// Also turns the cookie handler's login/access-denied redirects into plain 401/403 API responses.
 /// </summary>
 public sealed class SessionCookieEvents(
@@ -29,9 +32,12 @@ public sealed class SessionCookieEvents(
         var sessionId = context.Principal is null ? null : AuthClaims.GetSessionId(context.Principal);
         var session = sessionId is null
             ? null
+            // No clinic is known yet (this check is what establishes it), so filters are bypassed deliberately; the
+            // session id comes from an authenticated-encrypted cookie and MatchesClaims ties it to the identity.
             : await db.UserSessions
-                .Include(s => s.User)
-                .ThenInclude(user => user!.Clinic)
+                .IgnoreQueryFilters()
+                .Include(s => s.User!.Clinic)
+                .Include(s => s.User!.Roles)
                 .SingleOrDefaultAsync(s => s.Id == sessionId, context.HttpContext.RequestAborted);
 
         var now = timeProvider.GetUtcNow();
@@ -48,6 +54,12 @@ public sealed class SessionCookieEvents(
             session.LastSeenAt = now;
             await db.SaveChangesAsync(context.HttpContext.RequestAborted);
         }
+
+        var identity = new ClaimsIdentity(
+            context.Principal!.Claims.Where(claim => claim.Type != ClaimTypes.Role),
+            CookieAuthenticationDefaults.AuthenticationScheme);
+        identity.AddClaims(session.User!.Roles.Select(role => new Claim(ClaimTypes.Role, role.Role.ToString())));
+        context.ReplacePrincipal(new ClaimsPrincipal(identity));
     }
 
     public override Task RedirectToLogin(RedirectContext<CookieAuthenticationOptions> context)

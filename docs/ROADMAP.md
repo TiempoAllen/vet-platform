@@ -181,7 +181,9 @@ Security review and tenant-isolation verification.
 Performance review.
 
 ### X-05
-Observability, backups, deployment, and production checklist.
+Observability, backups, deployment, and production checklist. Includes from earlier milestones: Data Protection key
+ring persistence, forwarded headers, separate database roles for migrations and for the API (ADR-004), session and
+audit retention policies.
 
 ## Definition of milestone completion
 A milestone is complete when:
