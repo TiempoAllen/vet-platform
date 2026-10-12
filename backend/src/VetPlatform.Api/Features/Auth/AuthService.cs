@@ -10,8 +10,9 @@ namespace VetPlatform.Api.Features.Auth;
 
 /// <summary>
 /// Sign-in and sign-out rules (docs/SECURITY.md section 2, ADR-003). Every failed sign-in (unknown email, wrong
-/// password, locked, disabled user, suspended clinic) returns the same 401, so responses never reveal whether an
-/// account exists or why it was refused. Logs carry user ids, never email addresses or passwords.
+/// password, locked, disabled user, suspended clinic) returns the same 401 after the same work (one password hash and
+/// one failed-attempt UPDATE), so neither the response nor its timing reveals whether an account exists or why it was
+/// refused. Logs carry user ids, never email addresses or passwords.
 /// </summary>
 public sealed class AuthService(
     AppDbContext db,
@@ -43,13 +44,16 @@ public sealed class AuthService(
         if (user is null)
         {
             passwordHasher.VerifyHashedPassword(null!, DummyPasswordHash.Value, password);
+            await RecordFailedAttemptAsync(NoUser, now, cancellationToken);
             logger.LogInformation("Sign-in failed: unknown account.");
             throw InvalidCredentials();
         }
 
         if (user.LockedUntil > now)
         {
+            // Attempts during a lock are not counted, so they cannot extend it.
             passwordHasher.VerifyHashedPassword(user, DummyPasswordHash.Value, password);
+            await RecordFailedAttemptAsync(NoUser, now, cancellationToken);
             logger.LogInformation("Sign-in refused for user {UserId}: account temporarily locked.", user.Id);
             throw InvalidCredentials();
         }
@@ -57,11 +61,11 @@ public sealed class AuthService(
         var verification = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, password);
         if (verification == PasswordVerificationResult.Failed)
         {
-            user.FailedLoginCount++;
-            if (user.FailedLoginCount >= settings.MaxFailedLogins)
+            await RecordFailedAttemptAsync(user.Id, now, cancellationToken);
+
+            // Based on the count read above, so only indicative under concurrent attempts; the lock itself is exact.
+            if (user.FailedLoginCount + 1 >= settings.MaxFailedLogins)
             {
-                user.LockedUntil = now + settings.LockoutDuration;
-                user.FailedLoginCount = 0;
                 logger.LogWarning(
                     "User {UserId} locked for {LockoutMinutes} minutes after repeated failed sign-ins.",
                     user.Id,
@@ -72,12 +76,12 @@ public sealed class AuthService(
                 logger.LogInformation("Sign-in failed for user {UserId}: wrong password.", user.Id);
             }
 
-            await db.SaveChangesAsync(cancellationToken);
             throw InvalidCredentials();
         }
 
         if (user.Status != UserStatus.Active || user.Clinic!.Status != ClinicStatus.Active)
         {
+            await RecordFailedAttemptAsync(NoUser, now, cancellationToken);
             logger.LogInformation("Sign-in refused for user {UserId}: user or clinic is not active.", user.Id);
             throw InvalidCredentials();
         }
@@ -102,6 +106,29 @@ public sealed class AuthService(
         await db.SaveChangesAsync(cancellationToken);
         logger.LogInformation("User {UserId} signed in (session {SessionId}).", user.Id, session.Id);
         return (user, session);
+    }
+
+    /// <summary>Matches no row: lets failure paths that must not count an attempt still run the same UPDATE.</summary>
+    private static readonly Guid NoUser = Guid.Empty;
+
+    /// <summary>
+    /// Counts a wrong password in one atomic UPDATE, locking the account when the limit is reached. PostgreSQL
+    /// serialises concurrent updates of the row, so parallel guesses cannot overwrite each other's increments.
+    /// </summary>
+    private Task RecordFailedAttemptAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var settings = options.Value;
+        var limit = settings.MaxFailedLogins;
+        DateTimeOffset? lockedUntil = now + settings.LockoutDuration;
+
+        return db.Users
+            .Where(u => u.Id == userId && (u.LockedUntil == null || u.LockedUntil <= now))
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(u => u.LockedUntil, u => u.FailedLoginCount + 1 >= limit ? lockedUntil : u.LockedUntil)
+                    .SetProperty(u => u.FailedLoginCount, u => u.FailedLoginCount + 1 >= limit ? 0 : u.FailedLoginCount + 1)
+                    .SetProperty(u => u.UpdatedAt, now),
+                cancellationToken);
     }
 
     /// <summary>Revokes the caller's session, if any. Safe to call when not signed in.</summary>

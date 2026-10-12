@@ -38,6 +38,12 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseExceptionHandler(fallback => fallback.Run(_ => Task.CompletedTask));
 app.UseStatusCodePages(statusContext => ErrorResponseWriter.WriteForStatusAsync(statusContext.HttpContext));
 
+// Tell browsers to use HTTPS only. Not in Development, where HSTS on localhost would stick to other local projects.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 // Rate limiting runs before authentication so throttled sign-in attempts cost no database work.
 app.UseRateLimiter();
 app.UseAuthentication();

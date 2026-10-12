@@ -37,10 +37,11 @@ All clinic-owned records must be scoped to the appropriate clinic.
 - id
 - clinic_id
 - name
-- email (stored lower-cased; unique across the platform, see ADR-003)
+- email (stored trimmed and lower-cased; unique across the platform case-insensitively, enforced by a
+  case-insensitive collation; see ADR-003)
 - phone
 - password_hash
-- status (`Active`, `Disabled`)
+- status (`Active`, `Disabled`; enforced by a CHECK constraint)
 - last_login_at
 - failed_login_count, locked_until (temporary lockout)
 - created_at

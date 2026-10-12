@@ -11,6 +11,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AlterDatabase()
+                .Annotation("Npgsql:CollationDefinition:case_insensitive", "und-u-ks-level2,und-u-ks-level2,icu,False");
+
             migrationBuilder.CreateTable(
                 name: "clinics",
                 columns: table => new
@@ -24,6 +27,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_clinics", x => x.id);
+                    table.CheckConstraint("ck_clinics_status", "status IN ('Active', 'Suspended')");
                 });
 
             migrationBuilder.CreateTable(
@@ -33,7 +37,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     id = table.Column<Guid>(type: "uuid", nullable: false),
                     clinic_id = table.Column<Guid>(type: "uuid", nullable: false),
                     name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    email = table.Column<string>(type: "character varying(254)", maxLength: 254, nullable: false),
+                    email = table.Column<string>(type: "character varying(254)", maxLength: 254, nullable: false, collation: "case_insensitive"),
                     phone = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: true),
                     password_hash = table.Column<string>(type: "character varying(512)", maxLength: 512, nullable: false),
                     status = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
@@ -46,6 +50,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_users", x => x.id);
+                    table.CheckConstraint("ck_users_failed_login_count", "failed_login_count >= 0");
+                    table.CheckConstraint("ck_users_status", "status IN ('Active', 'Disabled')");
                     table.ForeignKey(
                         name: "fk_users_clinics_clinic_id",
                         column: x => x.clinic_id,
@@ -105,6 +111,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "clinics");
+
+            migrationBuilder.AlterDatabase()
+                .OldAnnotation("Npgsql:CollationDefinition:case_insensitive", "und-u-ks-level2,und-u-ks-level2,icu,False");
         }
     }
 }

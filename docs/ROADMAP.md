@@ -27,7 +27,9 @@ Frontend project setup, routing, layout, design-system foundation, API client, t
 Authentication.
 
 ### B-04
-Users, roles, permissions, authorization middleware.
+Users, roles, permissions, authorization middleware. Also: the `AuditLog` table and audit events for authentication
+(from B-03) and permission changes, a way to create the first clinic administrator, and tenant scoping from the
+validated session's clinic.
 
 ### F-02
 Login/logout/session handling and protected application shell.

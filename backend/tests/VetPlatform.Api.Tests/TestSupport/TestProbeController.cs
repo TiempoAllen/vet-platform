@@ -31,6 +31,11 @@ public sealed class TestProbeController : ControllerBase
 
     [HttpPost("validate")]
     public IActionResult Validate([FromBody] Sample body) => Ok(body);
+
+    [HttpPut("item")]
+    [HttpPatch("item")]
+    [HttpDelete("item")]
+    public IActionResult ChangeItem() => NoContent();
 }
 
 /// <summary>A test-only endpoint with no [AllowAnonymous], to verify controllers require sign-in by default.</summary>

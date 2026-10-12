@@ -27,7 +27,8 @@ internal sealed class ClinicConfiguration : IEntityTypeConfiguration<Clinic>
 {
     public void Configure(EntityTypeBuilder<Clinic> builder)
     {
-        builder.ToTable("clinics");
+        builder.ToTable("clinics", table =>
+            table.HasCheckConstraint("ck_clinics_status", "status IN ('Active', 'Suspended')"));
         builder.Property(clinic => clinic.Name).HasMaxLength(Clinic.NameMaxLength);
         builder.Property(clinic => clinic.Status).HasConversion<string>().HasMaxLength(32);
     }

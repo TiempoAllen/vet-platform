@@ -1,7 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Npgsql;
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.Identity;
@@ -91,7 +97,13 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
         await factory.CreateUserAsync(disabled, Password, status: UserStatus.Disabled);
         var suspendedClinic = NewEmail();
         await factory.CreateUserAsync(suspendedClinic, Password, clinicStatus: ClinicStatus.Suspended);
+        var locked = NewEmail();
+        await factory.CreateUserAsync(locked, Password);
         var client = await factory.CreateClientWithCsrfAsync();
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await LoginAsync(client, locked, "wrong-password");
+        }
 
         var attempts = new[]
         {
@@ -99,6 +111,7 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
             await LoginAsync(client, NewEmail(), Password),
             await LoginAsync(client, disabled, Password),
             await LoginAsync(client, suspendedClinic, Password),
+            await LoginAsync(client, locked, Password),
         };
 
         foreach (var response in attempts)
@@ -128,6 +141,25 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
 
         factory.Clock.Advance(TimeSpan.FromMinutes(15));
         Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, Password)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ConcurrentWrongPasswords_StillLockTheAccount()
+    {
+        var email = NewEmail();
+        var user = await factory.CreateUserAsync(email, Password);
+        var clients = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => factory.CreateClientWithCsrfAsync()));
+
+        var responses = await Task.WhenAll(clients.Select(client => LoginAsync(client, email, "wrong-password")));
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await LoginAsync(clients[0], email, Password)).StatusCode);
+
+        await factory.UpdateDatabaseAsync(async db =>
+        {
+            var stored = await db.Users.AsNoTracking().SingleAsync(u => u.Id == user.Id);
+            Assert.True(stored.LockedUntil > factory.Clock.GetUtcNow());
+        });
     }
 
     [Fact]
@@ -186,6 +218,81 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
         client.DefaultRequestHeaders.Remove("X-XSRF-TOKEN");
         client.DefaultRequestHeaders.Add("X-XSRF-TOKEN", anonymousToken);
         Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsync("/api/auth/logout", content: null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task CsrfToken_IsBoundToTheSession_NotJustTheUser()
+    {
+        var email = NewEmail();
+        await factory.CreateUserAsync(email, Password);
+        var otherEmail = NewEmail();
+        await factory.CreateUserAsync(otherEmail, Password);
+        var (firstBrowser, _) = await SignedInClientAsync(email);
+        var (secondBrowser, _) = await SignedInClientAsync(email);
+        var (otherUser, _) = await SignedInClientAsync(otherEmail);
+        var firstToken = firstBrowser.DefaultRequestHeaders.GetValues("X-XSRF-TOKEN").Single();
+
+        foreach (var client in new[] { secondBrowser, otherUser })
+        {
+            client.DefaultRequestHeaders.Remove("X-XSRF-TOKEN");
+            client.DefaultRequestHeaders.Add("X-XSRF-TOKEN", firstToken);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsync("/api/auth/logout", content: null)).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.NoContent, (await firstBrowser.PostAsync("/api/auth/logout", content: null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task AfterSessionExpiry_TheStaleCsrfTokenIsRejected_AndRefreshingItLetsTheUserSignInAgain()
+    {
+        var email = NewEmail();
+        await factory.CreateUserAsync(email, Password);
+        var (client, _) = await SignedInClientAsync(email);
+        factory.Clock.Advance(TimeSpan.FromHours(3));
+
+        var stale = await client.PostAsJsonAsync("/api/auth/login", new { email, password = Password });
+        Assert.Equal(HttpStatusCode.Forbidden, stale.StatusCode);
+        var error = await stale.Content.ReadFromJsonAsync<ApiErrorResponse>();
+        Assert.Equal(ErrorCodes.CsrfTokenInvalid, error!.Error.Code);
+
+        await client.RefreshCsrfTokenAsync();
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, Password)).StatusCode);
+    }
+
+    /// <summary>
+    /// A cookie forged with the app's own keys (as if the key ring leaked) that pairs a real session with another
+    /// identity must be rejected: the session row, not the cookie's claims, decides who the caller is.
+    /// </summary>
+    [Fact]
+    public async Task ForgedCookie_PairingAValidSessionWithAnotherIdentity_IsRejected()
+    {
+        var attacker = await factory.CreateUserAsync(NewEmail(), Password);
+        var victim = await factory.CreateUserAsync(NewEmail(), Password);
+        await SignedInClientAsync(attacker.Email);
+        var attackerSession = Guid.Empty;
+        await factory.UpdateDatabaseAsync(async db => attackerSession = await db.UserSessions
+            .Where(s => s.UserId == attacker.Id).Select(s => s.Id).SingleAsync());
+
+        // Control: a forged cookie with the attacker's own matching identity works, so the rejections below are real.
+        Assert.Equal(HttpStatusCode.OK, await MeWithCookieAsync(ForgeCookie(attacker.Id, attackerSession, attacker.ClinicId)));
+        Assert.Equal(HttpStatusCode.Unauthorized, await MeWithCookieAsync(ForgeCookie(victim.Id, attackerSession, victim.ClinicId)));
+        Assert.Equal(HttpStatusCode.Unauthorized, await MeWithCookieAsync(ForgeCookie(attacker.Id, attackerSession, victim.ClinicId)));
+    }
+
+    private string ForgeCookie(Guid userId, Guid sessionId, Guid clinicId)
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+                new Claim(AuthClaims.SessionId, sessionId.ToString()),
+                new Claim(AuthClaims.ClinicId, clinicId.ToString()),
+            ],
+            CookieAuthenticationDefaults.AuthenticationScheme));
+        var cookieOptions = factory.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>()
+            .Get(CookieAuthenticationDefaults.AuthenticationScheme);
+        var properties = new AuthenticationProperties { ExpiresUtc = factory.Clock.GetUtcNow().AddHours(1) };
+        return cookieOptions.TicketDataFormat.Protect(
+            new AuthenticationTicket(principal, properties, CookieAuthenticationDefaults.AuthenticationScheme));
     }
 
     [Fact]
@@ -276,6 +383,52 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
         Assert.Contains(factory.Logs.Entries, entry => entry.Contains("signed in"));
         Assert.DoesNotContain(factory.Logs.Entries, entry =>
             entry.Contains("Wrong-Secret-Value-1") || entry.Contains(Password) || entry.Contains(email));
+    }
+
+    [Fact]
+    public async Task Database_RejectsAnEmailDifferingOnlyInCase_EvenWhenAWriterSkipsNormalisation()
+    {
+        var email = NewEmail();
+        var existing = await factory.CreateUserAsync(email, Password);
+
+        var exception = await Assert.ThrowsAsync<DbUpdateException>(() => factory.UpdateDatabaseAsync(db =>
+        {
+            db.Users.Add(new User
+            {
+                ClinicId = existing.ClinicId,
+                Name = "Duplicate",
+                Email = email.ToUpperInvariant(), // deliberately not normalised
+                PasswordHash = "x",
+            });
+            return Task.CompletedTask;
+        }));
+
+        Assert.Equal(PostgresErrorCodes.UniqueViolation, (exception.InnerException as PostgresException)?.SqlState);
+    }
+
+    [Fact]
+    public async Task UnnormalisedStoredEmail_StillSignsIn()
+    {
+        var email = NewEmail();
+        var user = await factory.CreateUserAsync(email, Password);
+        await factory.UpdateDatabaseAsync(db => db.Users.Where(u => u.Id == user.Id)
+            .ExecuteUpdateAsync(update => update.SetProperty(u => u.Email, email.ToUpperInvariant())));
+        var client = await factory.CreateClientWithCsrfAsync();
+
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(client, email, Password)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("UPDATE users SET status = 'active' WHERE id = {0}")]
+    [InlineData("UPDATE users SET failed_login_count = -1 WHERE id = {0}")]
+    public async Task Database_RejectsInvalidUserValues(string sql)
+    {
+        var user = await factory.CreateUserAsync(NewEmail(), Password);
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+            db.Database.ExecuteSqlRawAsync(sql, user.Id)));
+
+        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
     }
 
     [Fact]

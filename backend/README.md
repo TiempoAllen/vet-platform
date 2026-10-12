@@ -93,6 +93,8 @@ Cookie sessions validated against the database on every request; contract in `do
 
 - Controllers require a signed-in user by default. Mark anonymous endpoints `[AllowAnonymous]` deliberately and
   document them in `docs/API.md`.
+- Endpoints that change state must be controller actions: CSRF protection is an MVC filter and does not cover
+  minimal APIs (`MapPost` etc.). `CsrfAndAccessTests` fails if one appears.
 - Unsafe requests need the CSRF header. In tests use `factory.CreateClientWithCsrfAsync()` and, after login or logout,
   `client.UseCsrfTokenFrom(response)`; `DatabaseApiFactory.CreateUserAsync` seeds a signed-in-able user.
 - Read the time from the injected `TimeProvider`, never `DateTime.UtcNow`; tests advance `factory.Clock`.
