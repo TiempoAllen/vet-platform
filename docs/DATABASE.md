@@ -59,24 +59,16 @@ All clinic-owned records must be scoped to the appropriate clinic.
 Server-side sign-in sessions (ADR-003). Rows are kept after revocation or expiry for auditability; a retention and
 cleanup policy belongs to X-05.
 
-### Role
-- id
-- clinic_id or system scope
-- name
-- description
-
-### Permission
-- id
-- key
-- description
-
-### RolePermission
-- role_id
-- permission_id
+### Roles and permissions
+Roles (`Admin`, `Veterinarian`, `Nurse`, `Receptionist`, `Inventory`) and the permissions they grant are fixed in
+code (ADR-004), so there are no Role, Permission or RolePermission tables.
 
 ### UserRole
 - user_id
-- role_id
+- role (role name; CHECK constraint lists the valid names)
+- created_at
+
+Primary key (user_id, role). Foreign key to users with RESTRICT; rows are removed explicitly when roles change.
 
 ## 4. Clients and patients
 ### Client
@@ -323,20 +315,25 @@ Appointment availability must account for existing appointments and schedule exc
 ## 10. Audit
 ### AuditLog
 - id
-- clinic_id
-- actor_user_id
-- action
-- entity_type
-- entity_id
-- timestamp
-- metadata
+- clinic_id nullable (null only when no clinic is known, e.g. a sign-in attempt for an unknown email)
+- actor_user_id nullable
+- action (stable names such as `auth.login_failed`, `user.roles_changed`)
+- entity_type nullable
+- entity_id nullable
+- occurred_at (application clock)
+- recorded_at (always the database clock, set by a trigger)
+- metadata (jsonb)
 - request_id nullable
 
-Do not store secrets in audit metadata.
+`clinic_id` and `actor_user_id` are foreign keys with RESTRICT. Do not store secrets in audit metadata. The table is
+append-only: triggers reject UPDATE, DELETE and TRUNCATE, and the migration's rollback refuses to drop a non-empty
+table.
+Indexed by (clinic_id, occurred_at) and (entity_type, entity_id).
 
 ## 11. Integrity requirements
 - Foreign keys must enforce valid relationships.
-- Clinic scoping must prevent cross-clinic access.
+- Clinic scoping must prevent cross-clinic access. Clinic-owned entities implement `IClinicOwned` and are filtered
+  and write-guarded automatically (ADR-004).
 - Appointment overlap rules must be enforced server-side.
 - Financial totals must be calculated/validated server-side.
 - Stock movements must preserve an auditable history.

@@ -23,6 +23,70 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("action");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<Guid?>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<Guid?>("EntityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entity_id");
+
+                    b.Property<string>("EntityType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("entity_type");
+
+                    b.Property<string>("Metadata")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("metadata");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("request_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_audit_logs");
+
+                    b.HasIndex("ActorUserId")
+                        .HasDatabaseName("ix_audit_logs_actor_user_id");
+
+                    b.HasIndex("ClinicId", "OccurredAt")
+                        .HasDatabaseName("ix_audit_logs_clinic_id_occurred_at");
+
+                    b.HasIndex("EntityType", "EntityId")
+                        .HasDatabaseName("ix_audit_logs_entity_type_entity_id");
+
+                    b.ToTable("audit_logs", (string)null);
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.Clinic", b =>
                 {
                     b.Property<Guid>("Id")
@@ -138,6 +202,30 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Identity.UserRole", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Role")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("role");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.HasKey("UserId", "Role")
+                        .HasName("pk_user_roles");
+
+                    b.ToTable("user_roles", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_user_roles_role", "role IN ('Admin', 'Veterinarian', 'Nurse', 'Receptionist', 'Inventory')");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.UserSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -178,6 +266,21 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.ToTable("user_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_logs_users_actor_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_audit_logs_clinics_clinic_id");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.Clinic", "Clinic")
@@ -190,6 +293,16 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("Clinic");
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Identity.UserRole", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", null)
+                        .WithMany("Roles")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_user_roles_users_user_id");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.UserSession", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.User", "User")
@@ -200,6 +313,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_user_sessions_users_user_id");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>
+                {
+                    b.Navigation("Roles");
                 });
 #pragma warning restore 612, 618
         }
