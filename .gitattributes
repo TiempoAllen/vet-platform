@@ -1,0 +1,2 @@
+# Normalise line endings in the repository; checkouts use the platform default.
+* text=auto

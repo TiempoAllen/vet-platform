@@ -1,0 +1,129 @@
+# Security and Privacy Requirements
+
+## 1. Core principles
+- Least privilege
+- Defense in depth
+- Secure defaults
+- Explicit authorization
+- Data minimization
+- Auditability
+- No secrets in source control
+
+## 2. Authentication
+Use a secure, established authentication approach appropriate to the chosen stack.
+
+Requirements:
+- strong password handling if passwords are used
+- secure session/token management
+- session expiration/rotation as appropriate
+- protection against credential abuse
+- secure logout
+- account status checks
+
+## 3. Authorization
+Authorization must be enforced on the backend.
+
+Every protected operation must verify:
+1. identity
+2. clinic/tenant scope
+3. role/permission
+4. resource ownership/access relationship where relevant
+
+Never trust IDs supplied by the client simply because they belong to a valid user.
+
+## 4. Tenant isolation
+A user from Clinic A must never be able to read or mutate Clinic B data.
+
+Apply tenant scoping consistently to:
+- clients
+- patients
+- appointments
+- clinical records
+- invoices
+- inventory
+- attachments
+- reports
+- audit logs
+
+## 5. Input validation
+Validate all external input:
+- request bodies
+- query parameters
+- path parameters
+- file uploads
+- imported data
+
+Use allowlists and explicit schemas where practical.
+
+## 6. File uploads
+Validate:
+- authenticated uploader
+- authorization
+- file type
+- file size
+- safe storage key
+- content handling
+
+Do not execute uploaded files. Prefer private storage with authorized access.
+
+## 7. Sensitive information
+Avoid unnecessary collection and logging of personal, clinical, and financial information.
+
+Never log:
+- passwords
+- authentication tokens
+- session secrets
+- full payment credentials
+- private keys
+
+## 8. Web security
+Protect against common application threats including:
+- SQL injection
+- XSS
+- CSRF where applicable
+- insecure direct object references
+- broken access control
+- SSRF where applicable
+- unsafe file upload
+- rate-limit abuse
+
+Use framework/library protections rather than custom cryptography or security primitives.
+
+## 9. Financial operations
+Payment creation, refunds, invoice adjustments, and balance calculations require strong authorization and audit events.
+
+## 10. Clinical records
+Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
+
+## 11. Audit logging
+Record important security and business actions such as:
+- authentication events
+- permission changes
+- clinical record changes
+- invoice/payment changes
+- stock adjustments
+- sensitive exports
+- configuration changes
+
+Do not put secrets into audit metadata.
+
+## 12. Secrets and configuration
+Use environment/secret management. Never commit production secrets.
+
+## 13. Dependencies
+Keep dependencies updated. Investigate security advisories before adding or retaining high-risk packages.
+
+## 14. Production checklist
+Before release:
+- authorization tests
+- tenant isolation tests
+- input validation tests
+- secure cookie/token configuration
+- HTTPS
+- rate limiting
+- secure headers
+- backup/recovery verification
+- logging/monitoring
+- error message review
+- dependency audit
+- secret scan
