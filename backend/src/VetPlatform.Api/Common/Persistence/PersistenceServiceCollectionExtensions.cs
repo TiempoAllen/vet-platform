@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace VetPlatform.Api.Common.Persistence;
 
@@ -11,6 +12,10 @@ public static class PersistenceServiceCollectionExtensions
 
     public static IServiceCollection AddPersistence(this IServiceCollection services)
     {
+        // Every time-dependent rule (timestamps, sessions, lockout) reads the clock from DI so tests can control it.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<TimestampsInterceptor>();
+
         // The connection string is read when the context is first created, not at registration, so it comes from
         // the final configuration (including test and environment overrides). Program.cs fails fast if it is missing.
         services.AddDbContext<AppDbContext>((serviceProvider, options) =>
@@ -20,7 +25,8 @@ public static class PersistenceServiceCollectionExtensions
 
             options
                 .UseNpgsql(connectionString, npgsql => npgsql.MigrationsHistoryTable(MigrationsHistoryTable))
-                .UseSnakeCaseNamingConvention();
+                .UseSnakeCaseNamingConvention()
+                .AddInterceptors(serviceProvider.GetRequiredService<TimestampsInterceptor>());
 
             // Never call EnableSensitiveDataLogging: it writes parameter values (client, patient, financial
             // data) into the logs.

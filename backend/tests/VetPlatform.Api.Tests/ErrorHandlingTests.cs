@@ -80,7 +80,7 @@ public sealed class ErrorHandlingTests(ApiFactory factory) : IClassFixture<ApiFa
     [Fact]
     public async Task InvalidFields_Return422_WithFieldDetails()
     {
-        var response = await factory.CreateClient()
+        var response = await (await factory.CreateClientWithCsrfAsync())
             .PostAsync("/api/test-probe/validate", Json("""{"age": 99}"""));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
@@ -95,7 +95,7 @@ public sealed class ErrorHandlingTests(ApiFactory factory) : IClassFixture<ApiFa
     [InlineData("")]
     public async Task MalformedOrEmptyBody_Returns400(string body)
     {
-        var response = await factory.CreateClient().PostAsync("/api/test-probe/validate", Json(body));
+        var response = await (await factory.CreateClientWithCsrfAsync()).PostAsync("/api/test-probe/validate", Json(body));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var error = await ReadError(response);
@@ -108,7 +108,7 @@ public sealed class ErrorHandlingTests(ApiFactory factory) : IClassFixture<ApiFa
     {
         var content = new StringContent("x", Encoding.UTF8, "text/plain");
 
-        var response = await factory.CreateClient().PostAsync("/api/test-probe/validate", content);
+        var response = await (await factory.CreateClientWithCsrfAsync()).PostAsync("/api/test-probe/validate", content);
 
         Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
         Assert.Equal(ErrorCodes.UnsupportedMediaType, (await ReadError(response)).Error.Code);
@@ -117,7 +117,7 @@ public sealed class ErrorHandlingTests(ApiFactory factory) : IClassFixture<ApiFa
     [Fact]
     public async Task ValidRequest_Succeeds()
     {
-        var response = await factory.CreateClient()
+        var response = await (await factory.CreateClientWithCsrfAsync())
             .PostAsync("/api/test-probe/validate", Json("""{"name": "Rex", "age": 3}"""));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

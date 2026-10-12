@@ -26,7 +26,7 @@ Suggested fields:
 - currency
 - tax configuration
 - settings
-- status
+- status (`Active`, `Suspended`; users of a suspended clinic cannot sign in)
 - created_at
 - updated_at
 
@@ -37,13 +37,26 @@ All clinic-owned records must be scoped to the appropriate clinic.
 - id
 - clinic_id
 - name
-- email
+- email (stored lower-cased; unique across the platform, see ADR-003)
 - phone
-- password/auth provider reference
-- status
+- password_hash
+- status (`Active`, `Disabled`)
 - last_login_at
+- failed_login_count, locked_until (temporary lockout)
 - created_at
 - updated_at
+
+### UserSession
+- id
+- user_id
+- last_seen_at
+- expires_at (absolute end)
+- revoked_at nullable
+- created_at
+- updated_at
+
+Server-side sign-in sessions (ADR-003). Rows are kept after revocation or expiry for auditability; a retention and
+cleanup policy belongs to X-05.
 
 ### Role
 - id
