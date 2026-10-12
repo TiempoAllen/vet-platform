@@ -1,6 +1,8 @@
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
+using VetPlatform.Api.Common.Security;
+using VetPlatform.Api.Features.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,12 +11,13 @@ var builder = WebApplication.CreateBuilder(args);
 // variables < command line. Secrets must come from environment/secret stores, never from files in git.
 
 builder.Services
-    .AddControllers()
+    .AddControllers(options => options.Filters.Add<CsrfProtectionFilter>())
     .ConfigureApiBehaviorOptions(ApiBehaviorConfiguration.Configure);
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 builder.Services.AddPersistence();
+builder.Services.AddAuth(builder.Configuration);
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection
 // attempt from stalling health probes.
@@ -35,14 +38,27 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseExceptionHandler(fallback => fallback.Run(_ => Task.CompletedTask));
 app.UseStatusCodePages(statusContext => ErrorResponseWriter.WriteForStatusAsync(statusContext.HttpContext));
 
-app.MapControllers();
+// Tell browsers to use HTTPS only. Not in Development, where HSTS on localhost would stick to other local projects.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
+// Rate limiting runs before authentication so throttled sign-in attempts cost no database work.
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Secure default: every controller endpoint requires a signed-in user unless marked [AllowAnonymous]. Applied to
+// endpoints (not as a fallback policy) so unknown routes still return 404 and wrong methods 405.
+app.MapControllers().RequireAuthorization();
 
 // Anonymous by design: reports only overall status, never configuration or dependency details.
 app.MapHealthChecks("/api/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {
     ResponseWriter = (context, report) =>
         context.Response.WriteAsJsonAsync(new { status = report.Status.ToString() }, context.RequestAborted),
-});
+}).AllowAnonymous();
 
 app.Run();
 
