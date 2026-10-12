@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using VetPlatform.Api.Common.Persistence;
+using VetPlatform.Api.Common.Tenancy;
 
 namespace VetPlatform.Api.Features.Identity;
 
@@ -9,7 +10,7 @@ namespace VetPlatform.Api.Features.Identity;
 /// across the platform, case-insensitively, so it alone identifies the account at sign-in (ADR-003). Roles arrive
 /// in B-04.
 /// </summary>
-public sealed class User : Entity
+public sealed class User : Entity, IClinicOwned
 {
     public const int NameMaxLength = 200;
     public const int EmailMaxLength = 254;
@@ -36,6 +37,8 @@ public sealed class User : Entity
     public int FailedLoginCount { get; set; }
 
     public DateTimeOffset? LockedUntil { get; set; }
+
+    public List<UserRole> Roles { get; set; } = [];
 
     public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 }
@@ -67,6 +70,11 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
 
         builder.HasIndex(user => user.Email).IsUnique();
         builder.HasIndex(user => user.ClinicId);
+
+        builder.HasMany(user => user.Roles)
+            .WithOne()
+            .HasForeignKey(userRole => userRole.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasOne(user => user.Clinic)
             .WithMany()

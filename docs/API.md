@@ -97,22 +97,86 @@ in (a valid CSRF token is still required; on `403 CSRF_TOKEN_INVALID` refresh it
 
 `GET /api/auth/me` returns `200` or `401 UNAUTHENTICATED`:
 
-    { "id": "uuid", "name": "Jo Vet", "email": "jo@clinic.example", "clinic": { "id": "uuid", "name": "Happy Paws" } }
+    {
+      "id": "uuid", "name": "Jo Vet", "email": "jo@clinic.example",
+      "clinic": { "id": "uuid", "name": "Happy Paws" },
+      "roles": ["Admin", "Veterinarian"],
+      "permissions": ["users.manage", "users.read"]
+    }
 
-`email` is returned normalized (trimmed, lowercase).
+`email` is returned normalized (trimmed, lowercase). `roles` and `permissions` reflect the current state on every call
+(a role change applies to the user's next request). Use `permissions` to decide what to show; the API enforces them
+regardless. A user may have no roles, in which case both arrays are empty.
+
+`POST /api/auth/password` (signed in; rate limited like login):
+
+    { "currentPassword": "...", "newPassword": "..." }
+
+- `204`: password changed; every other session of this user is signed out, this one stays.
+- `422 VALIDATION_ERROR` with field `currentPassword` (incorrect) or `newPassword` (fails the password policy:
+  12 to 1024 characters, not the email address).
 
 **Session lifetime.** A session ends after 2 hours without requests, 12 hours after sign-in regardless of activity, on
 logout, or as soon as the user is disabled or the clinic suspended. After that every protected endpoint returns
 `401 UNAUTHENTICATED`; the frontend should send the user to the login screen.
 
 ## 4. Users and access
-`GET /api/users`
-`GET /api/users/:id`
-`POST /api/users`
-`PATCH /api/users/:id`
-`POST /api/users/:id/roles`
+Implemented in B-04. All endpoints act on the caller's clinic only: users of other clinics are `404 NOT_FOUND`, never
+`403`. Missing permission is `403 FORBIDDEN`. Design: `ARCHITECTURE.md` ADR-004.
 
-Permission checks are mandatory.
+**Roles** (fixed): `Admin`, `Veterinarian`, `Nurse`, `Receptionist`, `Inventory`. A user holds zero or more.
+**Permissions** granted so far: `users.read`, `users.manage`, both to `Admin` only. Later milestones add permissions
+and grant them to roles; `GET /api/auth/me` lists the caller's.
+
+**User object**
+
+    {
+      "id": "uuid", "name": "Sam Nurse", "email": "sam@clinic.example", "phone": "+1 555 0100" | null,
+      "status": "Active" | "Disabled", "roles": ["Nurse"],
+      "lastLoginAt": "2026-10-13T08:00:00+00:00" | null,
+      "createdAt": "...", "updatedAt": "..."
+    }
+
+`GET /api/users` (`users.read`): paginated list (section 13).
+- `q`: case-insensitive substring match on name or email (max 100 characters; `%` and `_` match literally).
+- `status`: `Active` or `Disabled`. `role`: one of the roles.
+- `sort`: `name` (default), `email`, `createdAt` or `lastLoginAt`; prefix `-` for descending.
+- Invalid values (unknown sort, status or role, `page < 1`, `pageSize` outside 1 to 100) are `422 VALIDATION_ERROR`
+  with the parameter as `field`.
+
+`GET /api/users/:id` (`users.read`): `200` user object, or `404`.
+
+`POST /api/users` (`users.manage`): creates a user in the caller's clinic.
+
+    { "name": "Sam Nurse", "email": "sam@clinic.example", "phone": null, "password": "...", "roles": ["Nurse"] }
+
+- `201` with the user object and a `Location` header.
+- `422` when a field is missing or invalid (password policy as for `POST /api/auth/password`; at least one role).
+- `400 BAD_REQUEST` when the body is not valid JSON or contains an unknown role or status name (enum values must parse
+  to be accepted; this applies to every endpoint that takes roles or statuses).
+- `409 CONFLICT` (detail field `email`) when the email is already used by any user on the platform (emails are unique
+  across clinics, ADR-003).
+- The administrator chooses the initial password and should ask the user to change it with `POST /api/auth/password`.
+
+`PATCH /api/users/:id` (`users.manage`): partial update. Omitted or `null` fields are unchanged; `"phone": ""` clears
+the phone.
+
+    { "name": "...", "email": "...", "phone": "...", "status": "Active" | "Disabled" }
+
+- `200` with the updated user object.
+- `409 CONFLICT` when the email is taken, when disabling your own account, or when disabling the clinic's last active
+  administrator.
+- Disabling a user signs them out immediately and blocks sign-in until re-enabled.
+
+`POST /api/users/:id/roles` (`users.manage`): replaces the user's roles with exactly this set (duplicates ignored).
+
+    { "roles": ["Veterinarian", "Admin"] }
+
+- `200` with the updated user object.
+- `409 CONFLICT` when it would remove `Admin` from the clinic's last active administrator (including yourself).
+- Takes effect on the user's next request.
+
+Every change made through these endpoints is written to the audit log.
 
 ## 5. Clients
 `GET /api/clients`
@@ -178,7 +242,9 @@ Stock-changing operations require appropriate permissions and auditability.
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.
 
 ## 13. Pagination
-Default list responses should support a consistent pagination contract, for example:
+List endpoints use this contract (implemented in B-04): query parameters `page` (default 1, minimum 1) and `pageSize`
+(default 25, 1 to 100); out-of-range values are `422 VALIDATION_ERROR`, not clamped. `total` is the number of
+matching items across all pages.
 
 {
   "data": [],
@@ -190,7 +256,9 @@ Default list responses should support a consistent pagination contract, for exam
   }
 }
 
-The exact pagination strategy can change if cursor pagination is more appropriate.
+An endpoint may adopt cursor pagination later if offset paging proves too slow; that will be documented per endpoint.
+
+Enum values (statuses, roles) are sent and accepted as their names, e.g. `"Active"`, `"Admin"`.
 
 ## 14. API stability
 Do not change response fields or semantics casually. If a breaking change is required, update this document and coordinate frontend changes.

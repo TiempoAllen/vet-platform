@@ -153,3 +153,34 @@ Choose the simplest solution that satisfies documented requirements, security, m
   session and antiforgery cookies; keys currently live in the default per-machine location, so a new container signs
   everyone out), and forwarded-headers configuration so the app sees the original scheme (HTTPS) and client address
   behind a proxy.
+
+### ADR-004: Roles, permissions, tenant isolation and audit logging (decided in B-04)
+- Roles are a fixed enum (`Admin`, `Veterinarian`, `Nurse`, `Receptionist`, `Inventory`), stored per user in
+  `user_roles`. Permissions are string constants granted to roles in code (`Common/Authorization/Permissions.cs`).
+  Endpoints declare `[RequirePermission(Permissions.X)]`; a policy handler checks it. Chosen over per-clinic
+  configurable roles for now: simpler, reviewable in code, and enough for the documented users. Revisit if clinics
+  need custom roles. This replaces the Role, Permission and RolePermission tables sketched in `DATABASE.md`.
+- Roles are loaded from the database during session validation on every request and added as claims for that request
+  only; the cookie never carries them. Role and status changes therefore apply to the next request.
+- Tenant isolation is enforced twice:
+  - Read side: every `IClinicOwned` entity has an EF Core global query filter on the current clinic. With no current
+    clinic the filter matches nothing (fail closed). `ExecuteUpdate`/`ExecuteDelete` honour it too.
+  - Write side: `ClinicScopeInterceptor` defaults new rows to the current clinic and throws when saving a row of, or
+    moving a row to, another clinic.
+  - The current clinic comes from the validated session (ADR-003), via `ITenantContext`.
+  - Opting out (`IgnoreQueryFilters()`) is reserved for code that must work across clinics: sign-in, session
+    validation, platform-wide email uniqueness checks and the CLI. Each use carries a comment explaining why.
+  - Other clinics' records are reported as `404`, so their existence is not revealed.
+- A clinic always keeps at least one active administrator: disabling or demoting the last one is refused, and such
+  changes take a row lock on the clinic so two administrators cannot demote each other at the same moment.
+- Audit log (`audit_logs`): an append-only table (a database trigger rejects UPDATE, DELETE and TRUNCATE). Entries are
+  added to the same unit of work as the change they describe, so both commit or neither does. Actor, clinic and request
+  id default to the current request. Metadata is JSON and never holds secrets, passwords or email addresses; failed
+  sign-ins for unknown emails are recorded without the email. Recorded so far: sign-in success, failure (with
+  reason), lockout, logout, password change, user created/updated/roles changed. Querying is B-27.
+- Bootstrap: `create-admin` (CLI, password on stdin) creates a clinic and its first administrator. There is no public
+  sign-up endpoint.
+- Passwords: 12 to 1024 characters and not the email address (NIST SP 800-63B style, no composition rules).
+  Self-service change via `POST /api/auth/password` signs out the user's other sessions.
+- Not yet done: administrator-initiated password reset and "must change password at next sign-in". Users currently
+  change the initial password themselves; email-based reset needs notifications (B-25).
