@@ -1,0 +1,341 @@
+# Database Specification
+
+## 1. General principles
+Use a relational schema with UUID-style identifiers unless the selected stack has a documented alternative.
+
+Every persistent entity should have, as appropriate:
+- `id`
+- `created_at`
+- `updated_at`
+- optional `deleted_at` only where soft deletion is justified
+- ownership/clinic scope where multi-tenancy requires it
+
+Do not physically delete records when doing so would destroy required clinical, financial, or audit history.
+
+## 2. Tenant / clinic model
+### Clinic
+Represents a veterinary practice.
+
+Suggested fields:
+- id
+- name
+- legal/business name
+- contact information
+- address
+- timezone
+- currency
+- tax configuration
+- settings
+- status
+- created_at
+- updated_at
+
+All clinic-owned records must be scoped to the appropriate clinic.
+
+## 3. Identity and access
+### User
+- id
+- clinic_id
+- name
+- email
+- phone
+- password/auth provider reference
+- status
+- last_login_at
+- created_at
+- updated_at
+
+### Role
+- id
+- clinic_id or system scope
+- name
+- description
+
+### Permission
+- id
+- key
+- description
+
+### RolePermission
+- role_id
+- permission_id
+
+### UserRole
+- user_id
+- role_id
+
+## 4. Clients and patients
+### Client
+- id
+- clinic_id
+- first_name
+- last_name
+- email
+- phone
+- address
+- preferred_contact_method
+- notes
+- status
+
+### Patient
+- id
+- clinic_id
+- client_id
+- name
+- species
+- breed
+- sex
+- reproductive_status
+- date_of_birth
+- color/markings
+- microchip_number
+- weight/current_weight if appropriate
+- status
+- notes
+
+A patient belongs to one primary client in the initial release. Design for future support of multiple responsible owners if required.
+
+## 5. Clinical records
+### Appointment
+- id
+- clinic_id
+- patient_id
+- client_id
+- veterinarian_id
+- start_at
+- end_at
+- appointment_type
+- reason
+- status
+- notes
+- created_by
+
+### Consultation
+- id
+- clinic_id
+- appointment_id
+- patient_id
+- veterinarian_id
+- started_at
+- completed_at
+- subjective_notes
+- objective_notes
+- assessment_notes
+- plan_notes
+- status
+
+### Diagnosis
+- id
+- consultation_id
+- code if a coding system is adopted
+- name
+- notes
+- type/status
+
+### Treatment
+- id
+- consultation_id
+- name
+- instructions
+- dosage if applicable
+- frequency if applicable
+- duration if applicable
+- notes
+
+### Prescription
+- id
+- consultation_id
+- patient_id
+- veterinarian_id
+- medication_name
+- dosage
+- route
+- frequency
+- duration
+- quantity
+- instructions
+- status
+
+### Vaccination
+- id
+- patient_id
+- consultation_id nullable
+- vaccine_name
+- administered_at
+- next_due_at
+- lot_number nullable
+- manufacturer nullable
+- veterinarian_id
+
+### ClinicalNote
+- id
+- patient_id
+- consultation_id nullable
+- author_id
+- content
+- created_at
+
+## 6. Documents
+### Attachment
+- id
+- clinic_id
+- patient_id/client_id/consultation_id as appropriate
+- storage_key
+- original_filename
+- mime_type
+- size_bytes
+- uploaded_by
+- created_at
+
+Access must be authorized through the owning record and clinic scope.
+
+## 7. Billing
+### Invoice
+- id
+- clinic_id
+- client_id
+- patient_id nullable
+- invoice_number
+- status
+- issued_at
+- due_at
+- subtotal
+- discount_total
+- tax_total
+- total
+- balance_due
+
+### InvoiceItem
+- id
+- invoice_id
+- description
+- quantity
+- unit_price
+- discount
+- tax
+- total
+- product_id/service_id nullable
+
+### Payment
+- id
+- clinic_id
+- invoice_id
+- amount
+- method
+- status
+- reference
+- paid_at
+- received_by
+
+## 8. Inventory
+### Product
+- id
+- clinic_id
+- sku
+- name
+- category
+- type
+- unit
+- reorder_level
+- active
+
+### InventoryItem / StockLot
+- id
+- product_id
+- lot_number nullable
+- expiration_date nullable
+- quantity
+- unit_cost
+- location nullable
+
+### StockMovement
+- id
+- clinic_id
+- product_id
+- stock_lot_id nullable
+- movement_type
+- quantity
+- reference_type
+- reference_id
+- performed_by
+- created_at
+- notes
+
+Stock should be derived from auditable movements/lots rather than arbitrary direct edits wherever practical.
+
+### Supplier
+- id
+- clinic_id
+- name
+- contact information
+- status
+
+### PurchaseOrder
+- id
+- clinic_id
+- supplier_id
+- status
+- ordered_at
+- received_at
+- total
+
+### PurchaseOrderItem
+- id
+- purchase_order_id
+- product_id
+- quantity
+- unit_cost
+
+## 9. Scheduling
+### VeterinarianAvailability
+- id
+- veterinarian_id
+- day_of_week
+- start_time
+- end_time
+- effective_from
+- effective_to nullable
+
+### ScheduleException
+- id
+- veterinarian_id
+- starts_at
+- ends_at
+- type
+- reason
+
+Appointment availability must account for existing appointments and schedule exceptions.
+
+## 10. Audit
+### AuditLog
+- id
+- clinic_id
+- actor_user_id
+- action
+- entity_type
+- entity_id
+- timestamp
+- metadata
+- request_id nullable
+
+Do not store secrets in audit metadata.
+
+## 11. Integrity requirements
+- Foreign keys must enforce valid relationships.
+- Clinic scoping must prevent cross-clinic access.
+- Appointment overlap rules must be enforced server-side.
+- Financial totals must be calculated/validated server-side.
+- Stock movements must preserve an auditable history.
+- Clinical history should be append-oriented where practical.
+- Sensitive records require authorization checks on every read/write path.
+
+## 12. Schema evolution
+Use migrations. Never modify production schema manually without a tracked migration.
+
+Engine, naming, key, timestamp and money conventions are recorded in `ARCHITECTURE.md` ADR-002. In short: PostgreSQL;
+the snake_case names in this document are the real table/column names; ids are `uuid`; timestamps are `timestamptz`
+in UTC; money is `numeric(19,4)`.
+
+Every model change ships with an EF Core migration in the same change (`dotnet ef migrations add <Name>`); a test fails
+if the model and the latest migration disagree. Review generated migrations before committing: no unintended drops,
+and no destructive change to clinical, financial or audit data without a documented data-preserving plan.

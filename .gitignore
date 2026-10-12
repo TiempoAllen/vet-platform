@@ -1,0 +1,18 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+coverage*/
+
+# Secrets and local configuration - never commit
+.env
+.env.*
+appsettings.*.local.json
+secrets.json
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,16 @@
+# Local development database only. Not a deployment manifest.
+# The password comes from the environment or a git-ignored backend/.env file (POSTGRES_PASSWORD=...).
+services:
+  postgres:
+    image: postgres:18-alpine # keep in step with tests/VetPlatform.Api.Tests/TestSupport/TestPostgres.cs
+    environment:
+      POSTGRES_DB: vetplatform
+      POSTGRES_USER: vetplatform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your environment or backend/.env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+volumes:
+  postgres-data:
