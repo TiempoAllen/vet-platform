@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 
 namespace VetPlatform.Api.Tests.TestSupport;
 
@@ -17,9 +18,24 @@ public class ApiFactory : WebApplicationFactory<Program>
 {
     public const string UnreachableConnectionString = "Host=127.0.0.1;Port=1;Database=unreachable;Username=test;Timeout=3";
 
+    public ApiFactory()
+    {
+        // Session and CSRF cookies are Secure (__Host- prefix), so the client must talk HTTPS to send them back.
+        ClientOptions.BaseAddress = new Uri("https://localhost");
+    }
+
     public CapturingLoggerProvider Logs { get; } = new();
 
+    /// <summary>The app's clock. Advance it to test idle timeouts, lifetimes and lockouts.</summary>
+    public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
+
     protected virtual string? ConnectionString => UnreachableConnectionString;
+
+    /// <summary>Configuration overrides. Sign-in throttling is relaxed so tests can sign in freely.</summary>
+    protected virtual IDictionary<string, string?> Settings => new Dictionary<string, string?>
+    {
+        ["Auth:LoginAttemptsPerMinute"] = "1000",
+    };
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -27,13 +43,22 @@ public class ApiFactory : WebApplicationFactory<Program>
 
         // Added last, so it overrides any ConnectionStrings__Default set in the developer's environment.
         builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(
-            new Dictionary<string, string?> { ["ConnectionStrings:Default"] = ConnectionString }));
+            new Dictionary<string, string?>(Settings) { ["ConnectionStrings:Default"] = ConnectionString }));
 
         builder.ConfigureTestServices(services =>
         {
             services.AddSingleton<ILoggerProvider>(Logs);
+            services.AddSingleton<TimeProvider>(Clock);
             services.AddControllers().AddApplicationPart(typeof(ApiFactory).Assembly);
         });
+    }
+
+    /// <summary>A client that already holds a CSRF token, ready for unsafe requests.</summary>
+    public async Task<HttpClient> CreateClientWithCsrfAsync()
+    {
+        var client = CreateClient();
+        await client.RefreshCsrfTokenAsync();
+        return client;
     }
 }
 

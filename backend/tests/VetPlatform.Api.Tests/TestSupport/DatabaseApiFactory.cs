@@ -1,14 +1,17 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using VetPlatform.Api.Common.Persistence;
+using VetPlatform.Api.Features.Identity;
 
 namespace VetPlatform.Api.Tests.TestSupport;
 
 /// <summary>
 /// An API host backed by its own empty PostgreSQL database (see <see cref="TestPostgres"/>), dropped on dispose.
-/// The schema is not created automatically: call <see cref="MigrateAsync"/> when a test needs it.
+/// The schema is not created automatically: call <see cref="MigrateAsync"/> when a test needs it
+/// (<see cref="CreateUserAsync"/> does).
 /// </summary>
-public sealed class DatabaseApiFactory : ApiFactory, IAsyncLifetime
+public class DatabaseApiFactory : ApiFactory, IAsyncLifetime
 {
     private string? _connectionString;
 
@@ -23,6 +26,49 @@ public sealed class DatabaseApiFactory : ApiFactory, IAsyncLifetime
         await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
     }
 
+    /// <summary>Creates a user (in a new clinic unless one is given) whose password is <paramref name="password"/>.</summary>
+    public async Task<User> CreateUserAsync(
+        string email,
+        string password,
+        UserStatus status = UserStatus.Active,
+        ClinicStatus clinicStatus = ClinicStatus.Active,
+        Clinic? clinic = null)
+    {
+        await MigrateAsync();
+        await using var scope = Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>();
+
+        if (clinic is null)
+        {
+            clinic = new Clinic { Name = "Clinic for " + email, Status = clinicStatus };
+            db.Clinics.Add(clinic);
+        }
+
+        var user = new User
+        {
+            ClinicId = clinic.Id,
+            Name = "Test User",
+            Email = User.NormalizeEmail(email),
+            PasswordHash = "",
+            Status = status,
+        };
+        user.PasswordHash = hasher.HashPassword(user, password);
+        db.Users.Add(user);
+
+        await db.SaveChangesAsync();
+        return user;
+    }
+
+    /// <summary>Runs <paramref name="action"/> against a fresh <see cref="AppDbContext"/>, then saves.</summary>
+    public async Task UpdateDatabaseAsync(Func<AppDbContext, Task> action)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await action(db);
+        await db.SaveChangesAsync();
+    }
+
     async Task IAsyncLifetime.DisposeAsync()
     {
         await base.DisposeAsync();
@@ -31,4 +77,15 @@ public sealed class DatabaseApiFactory : ApiFactory, IAsyncLifetime
             await TestPostgres.DropDatabaseAsync(_connectionString);
         }
     }
+}
+
+/// <summary>A database-backed host with the production-like sign-in rate limit of 3 attempts per minute.</summary>
+public sealed class RateLimitedDatabaseApiFactory : DatabaseApiFactory
+{
+    public const int AttemptsPerMinute = 3;
+
+    protected override IDictionary<string, string?> Settings => new Dictionary<string, string?>
+    {
+        ["Auth:LoginAttemptsPerMinute"] = AttemptsPerMinute.ToString(),
+    };
 }

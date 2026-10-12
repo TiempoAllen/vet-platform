@@ -9,6 +9,8 @@ ASP.NET Core (.NET 10, controllers) modular monolith. Contract and rules live in
   (`rollForward: latestFeature`), so builds fail fast on a missing or older SDK instead of silently using another one.
 - PostgreSQL for running the API and the database tests: Docker (recommended), or any PostgreSQL 16+ server.
 - `dotnet tool restore` once, to install the pinned `dotnet-ef` tool from `dotnet-tools.json`.
+- `dotnet dev-certs https --trust` once: the API only serves HTTPS, because session and CSRF cookies are Secure-only
+  (antiforgery refuses plain-HTTP requests with a 500).
 
 ## Layout
 
@@ -21,12 +23,15 @@ backend/
   src/VetPlatform.Api/          the web API
     Common/Errors/              error envelope, ApiException, global exception handler
     Common/Http/                request-id and request-logging middleware
-    Common/Persistence/         AppDbContext, database health check, Migrations/
+    Common/Persistence/         AppDbContext, Entity base, timestamps, database health check, Migrations/
+    Common/Security/            CSRF (antiforgery) protection
+    Features/Identity/          Clinic, User, UserSession entities
+    Features/Auth/              login/logout/me/csrf endpoints, session validation, sign-in rules
     Program.cs                  composition root and middleware order
   tests/VetPlatform.Api.Tests/  xunit integration tests (in-memory host)
 ```
 
-Feature code (clients, patients, ...) will be added under `src/VetPlatform.Api/Features/<Name>/` in later
+Further feature code (clients, patients, ...) goes under `src/VetPlatform.Api/Features/<Name>/` in later
 milestones, following the layering in `docs/ARCHITECTURE.md`.
 
 ## Commands
@@ -37,8 +42,8 @@ Run from `backend/`.
 dotnet build VetPlatform.slnx
 dotnet test  VetPlatform.slnx                                # all tests; database tests need PostgreSQL (below)
 dotnet test  VetPlatform.slnx --filter "Category!=Database"  # no PostgreSQL needed
-dotnet run --project src/VetPlatform.Api                     # http://localhost:5096, Development
-curl http://localhost:5096/api/health                        # {"status":"Healthy"} once the database is reachable
+dotnet run --project src/VetPlatform.Api                     # https://localhost:7096, Development
+curl https://localhost:7096/api/health                       # {"status":"Healthy"} once the database is reachable
 ```
 
 ## Database (PostgreSQL + EF Core)
@@ -79,6 +84,22 @@ command-line. Environments: `Development`, `Testing` (automated tests), `Staging
   The API refuses to start without `ConnectionStrings:Default` (env var `ConnectionStrings__Default`).
   Local-only overrides may go in `appsettings.Development.local.json` style files, which are git-ignored.
 - Logging: structured JSON on the console in every environment except Development, which uses readable text.
+
+## Authentication (B-03)
+
+Cookie sessions validated against the database on every request; contract in `docs/API.md` section 3, design in
+`docs/ARCHITECTURE.md` ADR-003. Settings (`Auth` section, all optional): `IdleTimeout`, `AbsoluteLifetime`,
+`MaxFailedLogins`, `LockoutDuration`, `LoginAttemptsPerMinute`.
+
+- Controllers require a signed-in user by default. Mark anonymous endpoints `[AllowAnonymous]` deliberately and
+  document them in `docs/API.md`.
+- Endpoints that change state must be controller actions: CSRF protection is an MVC filter and does not cover
+  minimal APIs (`MapPost` etc.). `CsrfAndAccessTests` fails if one appears.
+- Unsafe requests need the CSRF header. In tests use `factory.CreateClientWithCsrfAsync()` and, after login or logout,
+  `client.UseCsrfTokenFrom(response)`; `DatabaseApiFactory.CreateUserAsync` seeds a signed-in-able user.
+- Read the time from the injected `TimeProvider`, never `DateTime.UtcNow`; tests advance `factory.Clock`.
+- There is no way to create users through the API yet (user management is B-04). Use the test helpers, or insert a
+  clinic and user with a `PasswordHasher<User>`-generated hash.
 
 ## Conventions established in B-01
 

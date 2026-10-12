@@ -34,8 +34,9 @@ Every error response uses this shape (implemented in B-01):
 
 `details` is always an array (empty when there is nothing field-specific). `field` is camelCase and optional.
 
-Error codes (stable; clients may switch on them): `BAD_REQUEST`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`,
-`METHOD_NOT_ALLOWED`, `CONFLICT`, `UNSUPPORTED_MEDIA_TYPE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `INTERNAL_ERROR`.
+Error codes (stable; clients may switch on them): `BAD_REQUEST`, `UNAUTHENTICATED`, `FORBIDDEN`,
+`CSRF_TOKEN_INVALID`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `CONFLICT`, `UNSUPPORTED_MEDIA_TYPE`, `VALIDATION_ERROR`,
+`RATE_LIMITED`, `INTERNAL_ERROR`.
 
 Status mapping for request-body problems: `422 VALIDATION_ERROR` when the body parses but field values are invalid;
 `400 BAD_REQUEST` when the body is missing or not valid JSON (parser details are not echoed).
@@ -48,12 +49,61 @@ Do not expose stack traces or sensitive internal details in production. Unexpect
 `500 INTERNAL_ERROR`; details are logged server-side only.
 
 ## 3. Authentication
-`POST /api/auth/login`
-`POST /api/auth/logout`
-`POST /api/auth/refresh` if token refresh architecture is used
-`GET /api/auth/me`
+Cookie sessions (implemented in B-03; design in `ARCHITECTURE.md` ADR-003). There is no token refresh endpoint.
 
-Authentication mechanism is determined by `ARCHITECTURE.md` and must use secure cookie/token practices appropriate to the chosen stack.
+**Same-site only.** The API sets `SameSite=Strict`, `Secure` cookies and has no CORS. The frontend must be served from
+the same site as the API (in development, proxy `/api` from the frontend dev server). Use HTTPS, except
+`http://localhost`, which browsers treat as secure. Requests must include cookies (same-origin `fetch` does by default).
+
+In development the API listens only on `https://localhost:7096` (run `dotnet dev-certs https --trust` once). The
+dev-server proxy must forward `/api` to that HTTPS address; the browser-to-dev-server leg may stay on
+`http://localhost`. The API cannot process CSRF-protected requests over plain HTTP (they fail with
+`500 INTERNAL_ERROR`).
+
+**CSRF.** Every unsafe request (`POST`, `PUT`, `PATCH`, `DELETE`), including login and logout, must send the header
+`X-XSRF-TOKEN` with the value of the `XSRF-TOKEN` cookie. Otherwise: `403 CSRF_TOKEN_INVALID`.
+- Get the cookie with `GET /api/auth/csrf` before the first unsafe request.
+- The token is bound to the current sign-in session (or to "signed out"), so login and logout responses set a new
+  `XSRF-TOKEN` cookie. Read the cookie just before each request; never cache the value.
+- After any `401 UNAUTHENTICATED`, and before showing the login screen, call `GET /api/auth/csrf`: a token issued
+  while signed in is not valid once signed out. Requests rejected for CSRF still count toward the login rate limit.
+- On `403 CSRF_TOKEN_INVALID`, call `GET /api/auth/csrf` and retry the request once.
+
+**Error precedence** when several apply: `429` → `401` (protected endpoints) → `403 CSRF_TOKEN_INVALID` →
+`400`/`422` → the endpoint's own result.
+
+**Authorization default.** Every endpoint requires a signed-in user and returns `401 UNAUTHENTICATED` otherwise, unless
+documented as anonymous. Anonymous endpoints: `GET /api/auth/csrf`, `POST /api/auth/login`, `POST /api/auth/logout`,
+`GET /api/health`.
+
+`GET /api/auth/csrf` returns `204` and sets the `XSRF-TOKEN` cookie.
+
+`POST /api/auth/login`, rate limited to 10 attempts per minute per client address (`429 RATE_LIMITED` with
+`Retry-After` when exceeded):
+
+    { "email": "jo@clinic.example", "password": "..." }
+
+- `200` with the current-user body (below); sets the HttpOnly session cookie. Signing in again from the same browser
+  replaces the previous session.
+- `401 UNAUTHENTICATED`, message `Email or password is incorrect.`, for every failure: unknown email, wrong password,
+  temporarily locked account (5 consecutive wrong passwords lock it for 15 minutes), disabled user or suspended clinic.
+  The response never says which.
+- `422 VALIDATION_ERROR` when `email` is missing, blank or not an email address (max 254), or `password` is missing
+  or blank (max 1024). `400 BAD_REQUEST` when the body is missing or not valid JSON.
+- Email matching ignores case and surrounding spaces.
+
+`POST /api/auth/logout` returns `204`. Ends the session server-side and clears the cookie; succeeds even if not signed
+in (a valid CSRF token is still required; on `403 CSRF_TOKEN_INVALID` refresh it and retry, as above).
+
+`GET /api/auth/me` returns `200` or `401 UNAUTHENTICATED`:
+
+    { "id": "uuid", "name": "Jo Vet", "email": "jo@clinic.example", "clinic": { "id": "uuid", "name": "Happy Paws" } }
+
+`email` is returned normalized (trimmed, lowercase).
+
+**Session lifetime.** A session ends after 2 hours without requests, 12 hours after sign-in regardless of activity, on
+logout, or as soon as the user is disabled or the clinic suspended. After that every protected endpoint returns
+`401 UNAUTHENTICATED`; the frontend should send the user to the login screen.
 
 ## 4. Users and access
 `GET /api/users`
