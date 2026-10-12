@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Security;
 using VetPlatform.Api.Tests.TestSupport;
@@ -42,6 +46,40 @@ public sealed class CsrfAndAccessTests(ApiFactory factory) : IClassFixture<ApiFa
         Assert.Equal(ErrorCodes.CsrfTokenInvalid, error!.Error.Code);
     }
 
+    [Theory]
+    [InlineData("PUT")]
+    [InlineData("PATCH")]
+    [InlineData("DELETE")]
+    public async Task EveryUnsafeMethod_RequiresACsrfToken(string method)
+    {
+        var withoutToken = await factory.CreateClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), "/api/test-probe/item"));
+        var withToken = await (await factory.CreateClientWithCsrfAsync())
+            .SendAsync(new HttpRequestMessage(new HttpMethod(method), "/api/test-probe/item"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, withoutToken.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, withToken.StatusCode);
+    }
+
+    /// <summary>
+    /// CSRF protection is an MVC filter, so it only covers controller actions. This fails if anyone maps an unsafe
+    /// minimal-API endpoint (MapPost, MapDelete, ...), which would silently skip it.
+    /// </summary>
+    [Fact]
+    public void EveryUnsafeEndpoint_IsAControllerAction_SoTheCsrfFilterCoversIt()
+    {
+        string[] safe = ["GET", "HEAD", "OPTIONS", "TRACE"];
+        var unprotected = factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.Metadata.GetMetadata<HttpMethodMetadata>() is not { } methods
+                || methods.HttpMethods.Any(method => !safe.Contains(method)))
+            .Where(endpoint => endpoint.Metadata.GetMetadata<ControllerActionDescriptor>() is null)
+            .Select(endpoint => endpoint.RoutePattern.RawText)
+            .ToList();
+
+        // Health only answers GET in practice, but MapHealthChecks registers it for every method.
+        Assert.Equal(["/api/health"], unprotected);
+    }
+
     [Fact]
     public async Task UnsafeRequest_WithForgedCsrfToken_IsRejected()
     {
@@ -77,6 +115,30 @@ public sealed class CsrfAndAccessTests(ApiFactory factory) : IClassFixture<ApiFa
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         var error = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
         Assert.Contains(error!.Error.Details, detail => detail.Field == field);
+    }
+
+    [Theory]
+    [InlineData("{bad")]
+    [InlineData("")]
+    public async Task Login_WithMalformedBody_Returns400(string body)
+    {
+        var client = await factory.CreateClientWithCsrfAsync();
+
+        var response = await client.PostAsync("/api/auth/login", Json(body));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("203.0.113.7", "203.0.113.7")]
+    [InlineData("::ffff:203.0.113.7", "203.0.113.7")]
+    [InlineData("2001:db8:1:2:aaaa:bbbb:cccc:dddd", "2001:db8:1:2::/64")]
+    [InlineData("2001:db8:1:2::1", "2001:db8:1:2::/64")]
+    public void LoginRateLimit_GroupsIpv6ClientsByTheirSlash64(string address, string expectedPartition)
+    {
+        Assert.Equal(
+            expectedPartition,
+            AuthServiceCollectionExtensions.ClientPartitionKey(System.Net.IPAddress.Parse(address)));
     }
 
     [Fact]

@@ -6,7 +6,8 @@ namespace VetPlatform.Api.Features.Identity;
 
 /// <summary>
 /// A staff member who can sign in (docs/DATABASE.md section 3). Belongs to exactly one clinic. Email is unique
-/// across the platform so it alone identifies the account at sign-in (ADR-003). Roles arrive in B-04.
+/// across the platform, case-insensitively, so it alone identifies the account at sign-in (ADR-003). Roles arrive
+/// in B-04.
 /// </summary>
 public sealed class User : Entity
 {
@@ -49,9 +50,17 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
 {
     public void Configure(EntityTypeBuilder<User> builder)
     {
-        builder.ToTable("users");
+        builder.ToTable("users", table =>
+        {
+            table.HasCheckConstraint("ck_users_status", "status IN ('Active', 'Disabled')");
+            table.HasCheckConstraint("ck_users_failed_login_count", "failed_login_count >= 0");
+        });
         builder.Property(user => user.Name).HasMaxLength(User.NameMaxLength);
-        builder.Property(user => user.Email).HasMaxLength(User.EmailMaxLength);
+        // Case-insensitive collation: the unique index rejects "Jo@x.com" next to "jo@x.com" even if a writer skips
+        // NormalizeEmail, and sign-in lookups match regardless of case.
+        builder.Property(user => user.Email)
+            .HasMaxLength(User.EmailMaxLength)
+            .UseCollation(AppDbContext.CaseInsensitiveCollation);
         builder.Property(user => user.Phone).HasMaxLength(32);
         builder.Property(user => user.PasswordHash).HasMaxLength(512);
         builder.Property(user => user.Status).HasConversion<string>().HasMaxLength(32);

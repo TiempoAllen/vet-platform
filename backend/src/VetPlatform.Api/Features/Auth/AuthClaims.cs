@@ -26,6 +26,8 @@ public static class AuthClaims
 
     public static Guid? GetSessionId(ClaimsPrincipal principal) => Read(principal, SessionId);
 
+    public static Guid? GetClinicId(ClaimsPrincipal principal) => Read(principal, ClinicId);
+
     private static Guid? Read(ClaimsPrincipal principal, string type) =>
         Guid.TryParse(principal.FindFirstValue(type), out var value) ? value : null;
 }

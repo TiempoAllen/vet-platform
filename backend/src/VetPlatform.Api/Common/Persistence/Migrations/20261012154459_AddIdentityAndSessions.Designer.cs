@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261012141851_AddIdentityAndSessions")]
+    [Migration("20261012154459_AddIdentityAndSessions")]
     partial class AddIdentityAndSessions
     {
         /// <inheritdoc />
@@ -20,6 +20,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
+                .HasAnnotation("Npgsql:CollationDefinition:case_insensitive", "und-u-ks-level2,und-u-ks-level2,icu,False")
                 .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -55,7 +56,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_clinics");
 
-                    b.ToTable("clinics", (string)null);
+                    b.ToTable("clinics", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_clinics_status", "status IN ('Active', 'Suspended')");
+                        });
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>
@@ -77,7 +81,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(254)
                         .HasColumnType("character varying(254)")
-                        .HasColumnName("email");
+                        .HasColumnName("email")
+                        .UseCollation("case_insensitive");
 
                     b.Property<int>("FailedLoginCount")
                         .HasColumnType("integer")
@@ -128,7 +133,12 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("ix_users_email");
 
-                    b.ToTable("users", (string)null);
+                    b.ToTable("users", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_users_failed_login_count", "failed_login_count >= 0");
+
+                            t.HasCheckConstraint("ck_users_status", "status IN ('Active', 'Disabled')");
+                        });
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.UserSession", b =>

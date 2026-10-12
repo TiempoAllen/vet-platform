@@ -1,4 +1,7 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
@@ -53,6 +56,7 @@ public static class AuthServiceCollectionExtensions
         services.AddAuthorization();
 
         services.AddAntiforgery(CsrfProtection.Configure);
+        services.AddSingleton<IAntiforgeryAdditionalDataProvider, SessionBoundAntiforgeryData>();
 
         services.AddRateLimiter(options =>
         {
@@ -61,7 +65,7 @@ public static class AuthServiceCollectionExtensions
                 var permits = context.RequestServices.GetRequiredService<IOptions<AuthOptions>>().Value
                     .LoginAttemptsPerMinute;
                 // Behind a reverse proxy this is the proxy's address until forwarded headers are configured (X-05).
-                var partition = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                var partition = ClientPartitionKey(context.Connection.RemoteIpAddress);
                 return RateLimitPartition.GetFixedWindowLimiter(partition, _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = permits,
@@ -87,5 +91,31 @@ public static class AuthServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    /// <summary>
+    /// The rate-limit bucket for a client address: the IPv4 address, or the /64 prefix for IPv6, because one IPv6
+    /// subscriber usually controls a whole /64 and could otherwise rotate through unlimited addresses.
+    /// </summary>
+    public static string ClientPartitionKey(IPAddress? address)
+    {
+        if (address is null)
+        {
+            return "unknown";
+        }
+
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        if (address.AddressFamily != AddressFamily.InterNetworkV6)
+        {
+            return address.ToString();
+        }
+
+        var bytes = address.GetAddressBytes();
+        Array.Clear(bytes, 8, 8);
+        return new IPAddress(bytes) + "/64";
     }
 }
