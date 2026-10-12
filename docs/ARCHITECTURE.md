@@ -81,8 +81,8 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - Errors, request correlation and logging: see `API.md` section 2 and `backend/README.md`. Logging uses the built-in
   `Microsoft.Extensions.Logging` JSON console formatter (no third-party logging dependency); the log sink is the
   platform's stdout collector.
-- Still open, to be decided and recorded in the milestone that needs them: authentication mechanism (B-03),
-  file storage provider (B-15). Database: see ADR-002.
+- Still open, to be decided and recorded in the milestone that needs them: file storage provider (B-15).
+  Database: see ADR-002. Authentication: see ADR-003.
 
 ### ADR-002: Database and data access (decided in B-02)
 - Engine: PostgreSQL (18 for local development and tests). Data access: EF Core 10 with the Npgsql provider,
@@ -105,3 +105,34 @@ Choose the simplest solution that satisfies documented requirements, security, m
   strategy changes how explicit transactions must be written.
 - Tests: integration tests run against real PostgreSQL (Testcontainers, or `VETPLATFORM_TEST_POSTGRES`), each test
   class in its own database. No in-memory provider: it hides constraint, transaction and SQL behaviour.
+
+### ADR-003: Authentication with server-side cookie sessions (decided in B-03)
+- Mechanism: ASP.NET Core cookie authentication. The cookie (`__Host-vet_session`: HttpOnly, Secure, SameSite=Strict,
+  browser-session lifetime) carries the user id, clinic id and a session id. Every request re-validates the session
+  row in `user_sessions` (`SessionCookieEvents`), so logout, idle timeout (2 h), absolute lifetime (12 h), disabling a
+  user and suspending a clinic take effect on the next request. Chosen over JWTs because browser sessions need
+  immediate revocation and HttpOnly storage; a future mobile client can add a token scheme alongside.
+- Cost: one indexed database read per authenticated request, plus at most one `last_seen_at` write per session per
+  minute. Acceptable at clinic scale; revisit in X-04 if needed.
+- Passwords: ASP.NET Core Identity's `PasswordHasher<T>` (PBKDF2) from the shared framework, with automatic rehash
+  when the algorithm parameters are upgraded. ASP.NET Core Identity's stores and tables are not used; the schema
+  follows `DATABASE.md`.
+- Credential abuse: a fixed-window login rate limit per client IP (10/min) and a temporary per-account lockout
+  (5 consecutive failures, 15 min). All sign-in failures return the same 401 so accounts cannot be enumerated; unknown
+  emails still run a password hash so timing does not reveal them either.
+- CSRF: ASP.NET Core antiforgery. A global MVC filter requires a valid `X-XSRF-TOKEN` header on every unsafe request;
+  `GET /api/auth/csrf` issues the readable `XSRF-TOKEN` cookie. SameSite=Strict cookies are a second layer.
+- Secure default: `MapControllers().RequireAuthorization()`, so every controller endpoint needs a signed-in user unless
+  marked `[AllowAnonymous]`. Applied per endpoint, not as a fallback policy, so unmatched routes still return 404/405.
+- Identity model: email is unique across the platform (one account, one clinic), so sign-in needs no clinic selector.
+  Revisit if one person must work for several clinics (multi-location is a future candidate in `ROADMAP.md`).
+- Settings live in the `Auth` configuration section (`AuthOptions`) and are validated at startup.
+- The clock is the DI `TimeProvider` everywhere (sessions, lockout, timestamps), so tests use a fake clock.
+- Frontend constraint: same-site deployment, no CORS (see `API.md` section 3).
+- HTTPS everywhere, including local development (`https://localhost:7096`): antiforgery refuses to issue or check
+  Secure cookies on plain-HTTP requests. Behind a TLS-terminating proxy, forwarded headers must be configured (X-05)
+  or every CSRF-protected request fails.
+- Deferred to X-05 (deployment): persisting and encrypting the ASP.NET Core Data Protection key ring (it encrypts the
+  session and antiforgery cookies; keys currently live in the default per-machine location, so a new container signs
+  everyone out), and forwarded-headers configuration so the app sees the original scheme (HTTPS) and client address
+  behind a proxy.

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using VetPlatform.Api.Features.Identity;
 
 namespace VetPlatform.Api.Common.Persistence;
 
@@ -9,6 +10,12 @@ namespace VetPlatform.Api.Common.Persistence;
 /// </summary>
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
+    public DbSet<Clinic> Clinics => Set<Clinic>();
+
+    public DbSet<User> Users => Set<User>();
+
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);

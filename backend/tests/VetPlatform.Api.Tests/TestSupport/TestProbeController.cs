@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using VetPlatform.Api.Common.Errors;
@@ -7,6 +8,7 @@ namespace VetPlatform.Api.Tests.TestSupport;
 
 /// <summary>Test-only endpoints that trigger each error path. Lives in the test assembly, never shipped.</summary>
 [ApiController]
+[AllowAnonymous]
 [Route("api/test-probe")]
 public sealed class TestProbeController : ControllerBase
 {
@@ -29,4 +31,13 @@ public sealed class TestProbeController : ControllerBase
 
     [HttpPost("validate")]
     public IActionResult Validate([FromBody] Sample body) => Ok(body);
+}
+
+/// <summary>A test-only endpoint with no [AllowAnonymous], to verify controllers require sign-in by default.</summary>
+[ApiController]
+[Route("api/test-probe-protected")]
+public sealed class ProtectedTestProbeController : ControllerBase
+{
+    [HttpGet]
+    public IActionResult Get() => Ok(new { ok = true });
 }
