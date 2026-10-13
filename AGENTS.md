@@ -16,6 +16,11 @@ Build a production-quality veterinary practice management platform. The reposito
 - `docs/UI.md` — UX, navigation, design system
 - `docs/SECURITY.md` — security and privacy requirements
 - `docs/ROADMAP.md` — implementation milestones
+- `docs/SRS.md` — numbered requirements with status (traced in `TEST_PLAN.md`)
+- `docs/SDD.md` — software design; references the ADRs in `ARCHITECTURE.md`
+- `docs/openapi.yaml` — machine-readable spec of implemented endpoints (`API.md` wins on conflict)
+- `docs/TEST_PLAN.md` — test levels, per-milestone checklist, traceability matrix
+- `docs/RUNBOOK.md` — operating, deployment and incident procedures
 
 When documents conflict, flag the conflict and prefer the more specific/current requirement rather than silently inventing behavior.
 
@@ -31,7 +36,9 @@ When documents conflict, flag the conflict and prefer the more specific/current 
 9. Prefer simple, maintainable abstractions over speculative frameworks.
 10. Preserve existing behavior unless the task explicitly changes it.
 11. Add or update tests for meaningful behavior.
-12. Update documentation when contracts, architecture, schema, or user behavior changes.
+12. Update documentation when contracts, architecture, schema, or user behavior changes: `API.md` and `openapi.yaml`
+    together, the `SRS.md` status and `TEST_PLAN.md` traceability for delivered requirements, and `RUNBOOK.md` for
+    operational changes.
 
 ## Frontend rules
 - Follow `docs/UI.md`.
