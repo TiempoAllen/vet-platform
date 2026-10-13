@@ -1,0 +1,535 @@
+openapi: 3.1.0
+info:
+  title: Veterinary Management Platform API
+  version: 0.4.0
+  summary: Implemented endpoints as of milestone B-04.
+  description: |
+    Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
+    wins if the two disagree; update both in the same change. Planned endpoints (clients, patients, appointments,
+    clinical, billing, inventory, reports) are listed in `API.md` sections 5-12 and are added here when implemented.
+
+    Conventions (API.md sections 2, 3 and 13):
+    - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
+    - Every unsafe request (POST, PUT, PATCH, DELETE), including login and logout, needs the `X-XSRF-TOKEN` header
+      equal to the `XSRF-TOKEN` cookie, obtained from `GET /api/auth/csrf`.
+    - Every endpoint requires a signed-in user unless it declares `security: []`.
+    - Error precedence: 429, 401, 403 FORBIDDEN, 403 CSRF_TOKEN_INVALID, 400/422, then the endpoint's own result.
+    - Every response carries `X-Request-Id`.
+    - Enum values are accepted only as exact names (`Admin`, `Active`).
+servers:
+  - url: https://localhost:7096
+    description: Local development
+tags:
+  - name: Auth
+  - name: Users
+  - name: Operations
+security:
+  - sessionCookie: []
+
+paths:
+  /api/auth/csrf:
+    get:
+      tags: [Auth]
+      operationId: getCsrfToken
+      summary: Issue the CSRF cookie
+      description: Sets the readable `XSRF-TOKEN` cookie bound to the current session (or to "signed out"). Call before the first unsafe request, after any 401, and when a request fails with CSRF_TOKEN_INVALID.
+      security: []
+      responses:
+        '204':
+          description: Cookie set.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: '`XSRF-TOKEN=...; Secure; SameSite=Strict; Path=/`'
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Sign in
+      description: |
+        Rate limited to 10 attempts per minute per client address (IPv6 grouped by /64). Every credential failure
+        (unknown email, wrong password, locked account, disabled user, suspended clinic) returns the same 401 with the
+        message `Email or password is incorrect.` Five consecutive wrong passwords lock the account for 15 minutes.
+        Signing in again from the same browser replaces the previous session.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Signed in. Sets the session cookie and a new `XSRF-TOKEN` cookie.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrentUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/CsrfInvalid' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Sign out
+      description: Revokes the session server-side and clears the cookie. Succeeds even when not signed in; a valid CSRF token is still required.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: Signed out. Sets a new signed-out `XSRF-TOKEN` cookie.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        '403': { $ref: '#/components/responses/CsrfInvalid' }
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: Current user, clinic, roles and permissions
+      description: Roles and permissions reflect the current state on every call. Use `permissions` to decide what to show; the API enforces them regardless.
+      responses:
+        '200':
+          description: The signed-in user.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrentUser' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/auth/password:
+    post:
+      tags: [Auth]
+      operationId: changePassword
+      summary: Change own password
+      description: |
+        Rate limited like login. On success every other session of the user is signed out; this one stays.
+        Wrong current passwords count towards the account lockout; the attempt that locks the account returns 401
+        and signs out every session, this one included.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '204':
+          description: Password changed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/CsrfInvalid' }
+        '422':
+          description: '`currentPassword` is incorrect, or `newPassword` fails the policy (12-1024 characters, not the email).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List the clinic's users
+      description: 'Requires `users.read`. Users who never signed in sort last ascending and first descending; ties are broken by id.'
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring of name or email. `%` and `_` match literally.
+          schema: { type: string, maxLength: 100 }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/UserStatus' }
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [name, -name, email, -email, createdAt, -createdAt, lastLoginAt, -lastLoginAt]
+            default: name
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of users.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user in the caller's clinic
+      description: Requires `users.manage`. Emails are unique across the whole platform.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUserRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/users/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: Get one user
+      description: Requires `users.read`. Users of other clinics are 404.
+      responses:
+        '200':
+          description: The user.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Users]
+      operationId: updateUser
+      summary: Partially update a user
+      description: |
+        Requires `users.manage`. Omitted or null fields are unchanged; `"phone": ""` clears the phone.
+        Disabling a user ends all their sessions immediately; re-enabling does not restore them.
+        409 when the email is taken (detail field `email`), when disabling yourself, or when disabling the clinic's
+        last active administrator.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUserRequest' }
+      responses:
+        '200':
+          description: Updated user.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/users/{id}/roles:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [Users]
+      operationId: setUserRoles
+      summary: Replace a user's roles
+      description: Requires `users.manage`. Duplicates are ignored. 409 when it would remove Admin from the clinic's last active administrator. Takes effect on the user's next request.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetRolesRequest' }
+      responses:
+        '200':
+          description: Updated user.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/health:
+    get:
+      tags: [Operations]
+      operationId: getHealth
+      summary: Overall service health
+      description: Checks that the database accepts connections (5-second timeout). Reports overall status only.
+      security: []
+      responses:
+        '200':
+          description: Healthy or Degraded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Unhealthy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-vet_session
+      description: HttpOnly, Secure, SameSite=Strict session cookie set by POST /api/auth/login.
+
+  headers:
+    XRequestId:
+      description: Correlation id; equals `requestId` in error bodies. Clients may send their own (max 64 of A-Z a-z 0-9 - _ .).
+      schema: { type: string, maxLength: 64 }
+
+  parameters:
+    XsrfToken:
+      name: X-XSRF-TOKEN
+      in: header
+      required: true
+      description: Value of the `XSRF-TOKEN` cookie. Read it just before each request; never cache it.
+      schema: { type: string }
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+
+  schemas:
+    Role:
+      type: string
+      enum: [Admin, Veterinarian, Nurse, Receptionist, Inventory]
+    UserStatus:
+      type: string
+      enum: [Active, Disabled]
+    Permission:
+      type: string
+      description: Stable permission name. Granted so far, both to Admin only.
+      enum: [users.read, users.manage]
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 1, maxLength: 1024 }
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, maxLength: 1024 }
+        newPassword: { type: string, minLength: 12, maxLength: 1024, description: Must not equal the email address. }
+
+    CurrentUser:
+      type: object
+      required: [id, name, email, clinic, roles, permissions]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email, description: Normalized (trimmed, lowercase). }
+        clinic:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        permissions:
+          type: array
+          items: { $ref: '#/components/schemas/Permission' }
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, phone, status, roles, lastLoginAt, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 200 }
+        email: { type: string, format: email, maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        lastLoginAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateUserRequest:
+      type: object
+      required: [name, email, password, roles]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        email: { type: string, format: email, maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        password: { type: string, minLength: 12, maxLength: 1024, description: Must not equal the email address. }
+        roles:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Role' }
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name: { type: [string, 'null'], minLength: 1, maxLength: 200 }
+        email: { type: [string, 'null'], format: email, maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32, description: Empty string clears the phone. }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/UserStatus'
+            - type: 'null'
+
+    SetRolesRequest:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Role' }
+
+    Pagination:
+      type: object
+      required: [page, pageSize, total, totalPages]
+      properties:
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+
+    UserPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [Healthy, Degraded, Unhealthy] }
+
+    ErrorCode:
+      type: string
+      enum: [BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, CSRF_TOKEN_INVALID, NOT_FOUND, METHOD_NOT_ALLOWED, CONFLICT,
+             UNSUPPORTED_MEDIA_TYPE, VALIDATION_ERROR, RATE_LIMITED, INTERNAL_ERROR]
+
+    ErrorResponse:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                required: [message]
+                properties:
+                  field: { type: string, description: camelCase field or query parameter name }
+                  message: { type: string }
+        requestId: { type: string }
+
+  responses:
+    BadRequest:
+      description: Body missing or not valid JSON, or an unknown enum name in the body (BAD_REQUEST).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthenticated:
+      description: Not signed in or session ended (UNAUTHENTICATED). Refresh the CSRF token, then show the login screen.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Signed in but missing the required permission (FORBIDDEN).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    CsrfInvalid:
+      description: Missing or invalid X-XSRF-TOKEN (CSRF_TOKEN_INVALID). Refresh with GET /api/auth/csrf and retry once.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ForbiddenOrCsrf:
+      description: FORBIDDEN (missing permission) or CSRF_TOKEN_INVALID; check error.code.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Unknown id, or a record of another clinic (NOT_FOUND).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Business rule conflict (CONFLICT); show error.message.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationError:
+      description: Field or query values invalid (VALIDATION_ERROR); details name each field.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Too many attempts (RATE_LIMITED).
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }

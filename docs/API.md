@@ -1,5 +1,8 @@
 # API Contract
 
+Machine-readable form of the implemented endpoints: `openapi.yaml`. Change both together; this document wins if
+they disagree.
+
 ## 1. Conventions
 Base path: `/api`
 
