@@ -92,11 +92,49 @@ erDiagram
   users ||--o{ user_sessions : "signs in"
   clinics ||--o{ audit_logs : "scopes (nullable)"
   users ||--o{ audit_logs : "acts (nullable)"
-  clinics { uuid id PK; varchar name; varchar status; timestamptz created_at; timestamptz updated_at }
-  users { uuid id PK; uuid clinic_id FK; varchar name; varchar email UK "case_insensitive collation"; varchar phone; varchar password_hash; varchar status; timestamptz last_login_at; int failed_login_count; timestamptz locked_until }
-  user_roles { uuid user_id PK; varchar role PK; timestamptz created_at }
-  user_sessions { uuid id PK; uuid user_id FK; timestamptz last_seen_at; timestamptz expires_at; timestamptz revoked_at }
-  audit_logs { uuid id PK; uuid clinic_id FK; uuid actor_user_id FK; varchar action; varchar entity_type; uuid entity_id; timestamptz occurred_at; timestamptz recorded_at; jsonb metadata; varchar request_id }
+  clinics {
+    uuid id PK
+    varchar name
+    varchar status
+    timestamptz created_at
+    timestamptz updated_at
+  }
+  users {
+    uuid id PK
+    uuid clinic_id FK
+    varchar name
+    varchar email UK "case_insensitive collation"
+    varchar phone
+    varchar password_hash
+    varchar status
+    timestamptz last_login_at
+    int failed_login_count
+    timestamptz locked_until
+  }
+  user_roles {
+    uuid user_id PK
+    varchar role PK
+    timestamptz created_at
+  }
+  user_sessions {
+    uuid id PK
+    uuid user_id FK
+    timestamptz last_seen_at
+    timestamptz expires_at
+    timestamptz revoked_at
+  }
+  audit_logs {
+    uuid id PK
+    uuid clinic_id FK
+    uuid actor_user_id FK
+    varchar action
+    varchar entity_type
+    uuid entity_id
+    timestamptz occurred_at
+    timestamptz recorded_at
+    jsonb metadata
+    varchar request_id
+  }
 ```
 
 Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04). The full planned
@@ -202,7 +240,8 @@ Every module from B-05 onward follows this template; the milestone records any d
 | `reports.read` | ✓ | – | – | – | – |
 | `settings.manage`, `audit.read` | ✓ | – | – | – | – |
 
-   This table is a proposal to be confirmed per milestone with the user; `Permissions.cs` is the source of truth.
+This table is a proposal to be confirmed per milestone with the user; `Permissions.cs` is the source of truth.
+
 4. **Service** owns rules and transactions; it records audit entries before `SaveChanges`.
 5. **Controller** with `[RequirePermission]` on every action; unsafe actions only as controller actions.
 6. **Contract** documented in `API.md` and `openapi.yaml` in the same change.
