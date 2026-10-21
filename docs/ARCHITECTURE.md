@@ -201,7 +201,7 @@ Choose the simplest solution that satisfies documented requirements, security, m
     must run migrations as a schema-owner role and the API as a separate role with only the privileges it needs
     (INSERT and SELECT on `audit_logs`). Recorded as an X-05 requirement.
   - For B-27: `audit_logs` is not `IClinicOwned` (rows can lack a clinic), so tenant-scoped audit queries must filter
-    `clinic_id` explicitly; use one shared, tested query helper. Clinic-less rows (unknown-email sign-in attempts)
+    `clinic_id` explicitly; use the shared, tested helper `AuditLogQueries.ForCurrentClinic` (added in B-07). Clinic-less rows (unknown-email sign-in attempts)
     need a separately authorised, platform-level view. Add indexes for the query shapes B-27 defines (e.g. actor and
     action).
   - Retention: no automatic purge. When one is needed (X-05), it must be an owner-only, audited operation, never a
@@ -273,3 +273,26 @@ Choose the simplest solution that satisfies documented requirements, security, m
   - A transfer racing a concurrent deactivation of the target client can still complete (no lock). The composite key
     still guarantees the owner is of the same clinic.
   - Search over owner names and microchip substrings scans the clinic's patients (as for clients, ADR-005).
+
+### ADR-007: Patient history read model (decided in B-07)
+- **Scope** (confirmed with the user): build the timeline API now and let each later milestone add entry types,
+  rather than wait for the clinical tables. Readable with `patients.read`. The only entry type today is
+  `PatientRegistered`; owner transfers, status and weight changes are deliberately not shown yet.
+- **Contract:** `GET /api/patients/{id}/history`, standard offset paging, newest first, entries
+  `{ id, type, occurredAt, actor, details }` with a fixed `details` shape per `type`. Clients must ignore unknown
+  types, so adding a type is not a breaking change (API.md section 14).
+- **No new table.** Entries are read from their source records. Registration comes from the existing
+  `patient.created` audit entries (served by the `(entity_type, entity_id)` index), so patients created in B-06 already
+  have history. Clinical milestones add their own tables as sources.
+- **Growth path:** each source becomes a query projected to `(type, id, occurred_at)`; sources are combined with
+  `UNION ALL` in SQL, ordered and paged there, then the page's rows are loaded per type. Paging never happens in memory.
+  If offset paging over the union gets slow (X-04), switch this endpoint to cursor paging on `(occurred_at, type, id)`.
+- **Permissions per source:** a source the caller may not read (later: clinical entries without `clinical.read`) is
+  left out of the union, so `total` and paging never reveal hidden entries.
+- **Tenancy:** `audit_logs` has no query filter (ADR-004), so it is read only through the shared helper
+  `AuditLogQueries.ForCurrentClinic`, which fails closed. Actor and owner names are resolved through the clinic-filtered
+  `users` and `clients`, so a row that somehow names another clinic's user or client shows `null`, never that name.
+- **Names are current, not historical:** the actor and owner names shown are today's names. The audit log stores ids,
+  never names (ADR-004), so a renamed client shows the new name on old entries.
+- **Staff names** (actor) are visible to every role with `patients.read`, as on a paper record; `users.read` still
+  governs the staff list itself.

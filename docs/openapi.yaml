@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.6.0
-  summary: Implemented endpoints as of milestone B-06.
+  version: 0.7.0
+  summary: Implemented endpoints as of milestone B-07.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (appointments,
@@ -519,6 +519,33 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/patients/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/PatientId'
+    get:
+      tags: [Patients]
+      operationId: getPatientHistory
+      summary: The patient's timeline, newest first
+      description: |
+        Requires `patients.read`. Unknown or other clinics' patients are 404. Entries have a fixed `details` shape per
+        `type`; clients must ignore types they do not know, because later milestones add types without a version
+        change. Ties on `occurredAt` are broken by `id`, descending.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of history entries.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PatientHistoryPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -889,6 +916,69 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/Patient' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    PatientHistoryEntry:
+      type: object
+      required: [id, type, occurredAt, actor, details]
+      description: Use `type` + `id` as the key. Ignore entries with an unknown `type`.
+      properties:
+        id: { type: string, format: uuid, description: Id of the source record; unique per type. }
+        type:
+          type: string
+          description: 'Known so far: PatientRegistered. More types are added by later milestones.'
+          examples: [PatientRegistered]
+        occurredAt: { type: string, format: date-time }
+        actor:
+          description: The staff member who caused the entry, or null.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, name]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+            - type: 'null'
+        details:
+          type: object
+          description: Shape fixed per type. See PatientRegisteredDetails.
+      discriminator:
+        propertyName: type
+        mapping:
+          PatientRegistered: '#/components/schemas/PatientRegisteredEntry'
+
+    PatientRegisteredEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          properties:
+            type: { const: PatientRegistered }
+            details: { $ref: '#/components/schemas/PatientRegisteredDetails' }
+
+    PatientRegisteredDetails:
+      type: object
+      additionalProperties: false
+      required: [client]
+      properties:
+        client:
+          description: The owner at registration with the client's current name; null if it can no longer be shown.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, firstName, lastName]
+              properties:
+                id: { type: string, format: uuid }
+                firstName: { type: string }
+                lastName: { type: string }
+            - type: 'null'
+
+    PatientHistoryPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/PatientHistoryEntry' }
         pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:

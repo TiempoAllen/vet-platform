@@ -350,6 +350,38 @@ Creating a patient and every change is written to the audit log (`patient.create
 `patient.updated` with the changed field names and, on a transfer, `fromClientId` and `toClientId`). Names, notes and
 other values are not recorded.
 
+### 6.1 Patient history
+Implemented in B-07 (design: `ARCHITECTURE.md` ADR-007).
+
+`GET /api/patients/:id/history` (`patients.read`): the patient's timeline, newest first, in the standard paginated
+envelope (section 13; `page`, `pageSize` only). Unknown or another clinic's patient is `404`.
+
+    {
+      "data": [
+        {
+          "id": "uuid",
+          "type": "PatientRegistered",
+          "occurredAt": "2026-10-22T08:00:00+00:00",
+          "actor": { "id": "uuid", "name": "Sam Reception" } | null,
+          "details": { "client": { "id": "uuid", "firstName": "Jane", "lastName": "Doe" } | null }
+        }
+      ],
+      "pagination": { "page": 1, "pageSize": 25, "total": 1, "totalPages": 1 }
+    }
+
+- `id` is the id of the entry's source record; it is unique per `type`, so use `type` + `id` as a key.
+- `actor` is the staff member who caused the entry, or `null` (created by an operator command, or not visible).
+- `details` has a fixed shape per `type`. **Ignore entries whose `type` you do not know**: later milestones add types
+  (consultations, diagnoses, prescriptions, vaccinations, attachments, invoices, ...) without a version change.
+  Later clinical types will also require `clinical.read`; entries the caller may not see are left out entirely.
+- Ties on `occurredAt` are broken by `id`, descending, so pages are stable.
+
+Entry types so far:
+
+| `type` | When | `details` |
+|---|---|---|
+| `PatientRegistered` | The patient was created. | `client`: the owner at registration, with that client's **current** name; `null` if it can no longer be shown. |
+
 ## 7. Appointments
 `GET /api/appointments`
 `GET /api/appointments/:id`

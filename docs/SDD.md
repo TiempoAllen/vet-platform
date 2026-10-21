@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-06). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-07). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -196,6 +196,9 @@ emails. Action names so far:
 `auth.password_change_failed`, `auth.sessions_revoked`, `user.created`, `user.updated`, `user.roles_changed`, `client.created`, `client.updated`, `patient.created`, `patient.updated`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
+
+Tenant-scoped reads of `audit_logs` go through `AuditLogQueries.ForCurrentClinic` (it is not `IClinicOwned`, so it
+has no query filter); the first user is the patient history (B-07).
 
 ### 6.4 Errors, validation and serialisation
 - `ApiException(status, code, message, details)` for expected failures; everything else becomes `500

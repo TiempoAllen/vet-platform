@@ -7,7 +7,7 @@ namespace VetPlatform.Api.Features.Patients;
 /// <summary>Patients of the caller's clinic (docs/API.md section 6). There is no delete: deactivate or mark deceased.</summary>
 [ApiController]
 [Route("api/patients")]
-public sealed class PatientsController(PatientService patients) : ControllerBase
+public sealed class PatientsController(PatientService patients, PatientHistoryService history) : ControllerBase
 {
     [HttpGet]
     [RequirePermission(Permissions.PatientsRead)]
@@ -18,6 +18,15 @@ public sealed class PatientsController(PatientService patients) : ControllerBase
     [RequirePermission(Permissions.PatientsRead)]
     public Task<PatientResponse> Get(Guid id, CancellationToken cancellationToken) =>
         patients.GetAsync(id, cancellationToken);
+
+    /// <summary>The patient's timeline, newest first (docs/API.md section 6.1).</summary>
+    [HttpGet("{id:guid}/history")]
+    [RequirePermission(Permissions.PatientsRead)]
+    public Task<PagedResponse<PatientHistoryEntry>> History(
+        Guid id,
+        [FromQuery] PageQuery query,
+        CancellationToken cancellationToken) =>
+        history.ListAsync(id, query, cancellationToken);
 
     [HttpPost]
     [RequirePermission(Permissions.PatientsManage)]
