@@ -36,6 +36,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_clients", x => x.id);
+                    table.UniqueConstraint("ak_clients_clinic_id_id", x => new { x.clinic_id, x.id });
+                    table.CheckConstraint("ck_clients_email_lowercase", "email = lower(email)");
+                    table.CheckConstraint("ck_clients_names", "btrim(first_name) <> '' AND btrim(last_name) <> ''");
                     table.CheckConstraint("ck_clients_preferred_contact_method", "preferred_contact_method IN ('Email', 'Phone', 'Sms')");
                     table.CheckConstraint("ck_clients_status", "status IN ('Active', 'Inactive')");
                     table.ForeignKey(
@@ -47,14 +50,19 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "ix_clients_clinic_id_created_at",
+                name: "ix_clients_clinic_id_created_at_id",
                 table: "clients",
-                columns: new[] { "clinic_id", "created_at" });
+                columns: new[] { "clinic_id", "created_at", "id" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_clients_clinic_id_last_name_first_name_id",
                 table: "clients",
                 columns: new[] { "clinic_id", "last_name", "first_name", "id" });
+
+            migrationBuilder.CreateIndex(
+                name: "ix_clients_clinic_id_updated_at_id",
+                table: "clients",
+                columns: new[] { "clinic_id", "updated_at", "id" });
         }
 
         /// <inheritdoc />

@@ -76,6 +76,8 @@ internal sealed class ClientConfiguration : IEntityTypeConfiguration<Client>
         builder.ToTable("clients", table =>
         {
             table.HasCheckConstraint("ck_clients_status", "status IN ('Active', 'Inactive')");
+            table.HasCheckConstraint("ck_clients_names", "btrim(first_name) <> '' AND btrim(last_name) <> ''");
+            table.HasCheckConstraint("ck_clients_email_lowercase", "email = lower(email)");
             table.HasCheckConstraint(
                 "ck_clients_preferred_contact_method", "preferred_contact_method IN ('Email', 'Phone', 'Sms')");
         });
@@ -93,10 +95,15 @@ internal sealed class ClientConfiguration : IEntityTypeConfiguration<Client>
         builder.Property(client => client.Notes).HasMaxLength(Client.NotesMaxLength);
         builder.Property(client => client.Status).HasConversion<string>().HasMaxLength(32);
 
-        // Every list query is scoped to one clinic (NFR-PERF-2); these match the default sort (name) and the
-        // createdAt sort. Substring search scans the clinic's rows; a trigram index can be added if X-04 needs it.
+        // Unique (clinic_id, id): later tables (patients, appointments, invoices) reference clients through a
+        // composite foreign key on (clinic_id, client_id), so the database itself refuses a cross-clinic link (ADR-005).
+        builder.HasAlternateKey(client => new { client.ClinicId, client.Id });
+
+        // Every list query is scoped to one clinic (NFR-PERF-2); one index per sort, ending in the id tie-breaker.
+        // Substring search scans the clinic's rows; a trigram index can be added if X-04 needs it (ADR-005).
         builder.HasIndex(client => new { client.ClinicId, client.LastName, client.FirstName, client.Id });
-        builder.HasIndex(client => new { client.ClinicId, client.CreatedAt });
+        builder.HasIndex(client => new { client.ClinicId, client.CreatedAt, client.Id });
+        builder.HasIndex(client => new { client.ClinicId, client.UpdatedAt, client.Id });
 
         // Restrict: clinics are never deleted out from under their clients.
         builder.HasOne<Clinic>()

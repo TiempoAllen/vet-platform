@@ -42,7 +42,12 @@ Error codes (stable; clients may switch on them): `BAD_REQUEST`, `UNAUTHENTICATE
 `RATE_LIMITED`, `INTERNAL_ERROR`.
 
 Status mapping for request-body problems: `422 VALIDATION_ERROR` when the body parses but field values are invalid;
-`400 BAD_REQUEST` when the body is missing or not valid JSON (parser details are not echoed).
+`400 BAD_REQUEST` when the body is missing or not valid JSON (parser details are not echoed), or when any text
+(body or query string) contains a NUL character, which cannot be stored.
+
+`details` may not list every invalid field: checks that compare or parse values (email format, enum query
+parameters, blank names in a PATCH) run only after the basic required/length checks pass. Show what is returned
+and expect further errors after the user corrects it.
 
 Request correlation: every response, success or error, carries an `X-Request-Id` header equal to the `requestId`
 in error bodies. A client may supply its own `X-Request-Id` (max 64 characters of `A-Z a-z 0-9 - _ .`);
@@ -226,8 +231,8 @@ text. `preferredContactMethod: null` means no stated preference.
 - `q`: case-insensitive substring match on first name, last name, full name ("Jane Doe"), email or phone (max 100
   characters; `%` and `_` match literally). Phone matches the stored text, so "555 0100" does not match "5550100".
 - `status`: `Active` or `Inactive`.
-- `sort`: `name` (default: last name, then first name), `createdAt` or `updatedAt`; prefix `-` for descending. Ties
-  are broken by id, so pages are stable.
+- `sort`: `name` (default: last name, then first name), `createdAt` or `updatedAt`; prefix one `-` for descending
+  (`--name` is invalid). Ties are broken by id in the same direction, so pages are stable.
 - Invalid values (unknown sort or status, `page < 1`, `pageSize` outside 1 to 100) are `422 VALIDATION_ERROR` with the
   parameter as `field`.
 
@@ -242,8 +247,9 @@ is ignored.
 
 Limits: `firstName` and `lastName` required, max 100 each; `email` optional, a valid address, max 254, stored
 trimmed and lowercased; `phone` max 32; `addressLine1`, `addressLine2` max 200; `city`, `region`, `country` max 100;
-`postalCode` max 20; `notes` max 4000. All text is trimmed; an optional field that is omitted, `null` or blank is
-stored as `null`. Emails are **not** unique: members of one household may share one.
+`postalCode` max 20; `notes` max 4000. Limits apply to the value as sent, before trimming. All text is trimmed; an optional field that is omitted, `null` or blank is
+stored as `null`. Emails are **not** unique: members of one household may share one. The server's email check is
+deliberately loose (text, one `@`, text, e.g. `a@b` passes); the frontend may validate more strictly.
 
 - `201` with the client object and a `Location` header.
 - `422 VALIDATION_ERROR` when a field is missing, blank, too long or not a valid email (detail `field` names it).
@@ -254,7 +260,7 @@ stored as `null`. Emails are **not** unique: members of one household may share 
 
     { "lastName": "Smith", "phone": "", "preferredContactMethod": null, "status": "Inactive" }
 
-- Text fields: omitted or `null` leaves the field unchanged; `""` clears an optional field. `firstName` and
+- Text fields: omitted or `null` leaves the field unchanged; `""` (or only spaces) clears an optional field. `firstName` and
   `lastName` cannot be cleared (`""` is `422`).
 - `preferredContactMethod`: omitted leaves it unchanged; an explicit `null` clears it.
 - `status`: `Active` or `Inactive`; unknown values are `400 BAD_REQUEST`.
@@ -319,7 +325,7 @@ Stock-changing operations require appropriate permissions and auditability.
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.
 
 ## 13. Pagination
-List endpoints use this contract (implemented in B-04): query parameters `page` (default 1, minimum 1) and `pageSize`
+List endpoints use this contract (implemented in B-04): query parameters `page` (default 1, 1 to 1,000,000) and `pageSize`
 (default 25, 1 to 100); out-of-range values are `422 VALIDATION_ERROR`, not clamped. `total` is the number of
 matching items across all pages.
 

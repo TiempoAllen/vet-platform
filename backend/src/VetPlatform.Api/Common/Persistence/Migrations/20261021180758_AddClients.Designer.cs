@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261017161005_AddClients")]
+    [Migration("20261021180758_AddClients")]
     partial class AddClients
     {
         /// <inheritdoc />
@@ -180,14 +180,24 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_clients");
 
-                    b.HasIndex("ClinicId", "CreatedAt")
-                        .HasDatabaseName("ix_clients_clinic_id_created_at");
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_clients_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "CreatedAt", "Id")
+                        .HasDatabaseName("ix_clients_clinic_id_created_at_id");
+
+                    b.HasIndex("ClinicId", "UpdatedAt", "Id")
+                        .HasDatabaseName("ix_clients_clinic_id_updated_at_id");
 
                     b.HasIndex("ClinicId", "LastName", "FirstName", "Id")
                         .HasDatabaseName("ix_clients_clinic_id_last_name_first_name_id");
 
                     b.ToTable("clients", null, t =>
                         {
+                            t.HasCheckConstraint("ck_clients_email_lowercase", "email = lower(email)");
+
+                            t.HasCheckConstraint("ck_clients_names", "btrim(first_name) <> '' AND btrim(last_name) <> ''");
+
                             t.HasCheckConstraint("ck_clients_preferred_contact_method", "preferred_contact_method IN ('Email', 'Phone', 'Sms')");
 
                             t.HasCheckConstraint("ck_clients_status", "status IN ('Active', 'Inactive')");

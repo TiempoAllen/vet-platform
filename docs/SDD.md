@@ -201,9 +201,9 @@ New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 - `ApiException(status, code, message, details)` for expected failures; everything else becomes `500
   INTERNAL_ERROR` and is logged with the request id.
 - DataAnnotations and `IValidatableObject` on contracts produce `422 VALIDATION_ERROR` with camelCase `field`
-  details; unparsable JSON is `400 BAD_REQUEST`.
+  details; unparsable JSON, and text containing NUL characters (PostgreSQL SQLSTATE 22021), is `400 BAD_REQUEST`.
 - Enums cross the boundary only as exact names (`StrictEnumConverterFactory` in bodies, `StrictEnum` in queries).
-- Pagination: `PageQuery` (`page`, `pageSize` 1–100) and `Paging` produce the `{ data, pagination }` envelope.
+- Pagination: `PageQuery` (`page` 1–1,000,000, `pageSize` 1–100), `SortSpec` for `sort` values, and `Paging` produce the `{ data, pagination }` envelope.
 
 ### 6.5 Time and configuration
 - All code reads time from the DI `TimeProvider`; tests use a fake clock.

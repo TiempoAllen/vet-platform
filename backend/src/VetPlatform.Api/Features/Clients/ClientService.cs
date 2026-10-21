@@ -37,8 +37,8 @@ public sealed class ClientService(AppDbContext db, AuditTrail audit)
             clients = clients.Where(client => client.Status == status);
         }
 
-        var descending = query.Sort.StartsWith('-');
-        var ordered = query.Sort.TrimStart('-') switch
+        var (field, descending) = SortSpec.Parse(query.Sort);
+        var ordered = field switch
         {
             "createdAt" => descending ? clients.OrderByDescending(c => c.CreatedAt) : clients.OrderBy(c => c.CreatedAt),
             "updatedAt" => descending ? clients.OrderByDescending(c => c.UpdatedAt) : clients.OrderBy(c => c.UpdatedAt),
@@ -47,8 +47,10 @@ public sealed class ClientService(AppDbContext db, AuditTrail audit)
                 : clients.OrderBy(c => c.LastName).ThenBy(c => c.FirstName),
         };
 
-        // Id as a tie-breaker keeps pages stable when sort values repeat.
-        return ordered.ThenBy(client => client.Id).ToPageAsync(query, ClientResponse.From, cancellationToken);
+        // Id as a tie-breaker keeps pages stable when sort values repeat. It follows the sort direction so the
+        // (clinic_id, <sort column(s)>, id) indexes can serve both directions.
+        return (descending ? ordered.ThenByDescending(client => client.Id) : ordered.ThenBy(client => client.Id))
+            .ToPageAsync(query, ClientResponse.From, cancellationToken);
     }
 
     public async Task<ClientResponse> GetAsync(Guid id, CancellationToken cancellationToken) =>

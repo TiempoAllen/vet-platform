@@ -75,8 +75,9 @@ Primary key (user_id, role). Foreign key to users with RESTRICT; rows are remove
 Implemented in B-05 (table `clients`).
 - id
 - clinic_id (FK to clinics, RESTRICT)
-- first_name, last_name (required)
-- email (optional, stored lower-cased; **not** unique: households share addresses)
+- first_name, last_name (required; CHECK: not blank)
+- email (optional, stored lower-cased (CHECK); **not** unique: households share addresses; default collation, because
+  the case-insensitive collation used for users would only matter for uniqueness and breaks ILIKE before PostgreSQL 18)
 - phone
 - address: address_line1, address_line2, city, region (state/province/county), postal_code, country (all optional)
 - preferred_contact_method (`Email`, `Phone`, `Sms`, or null for no preference; CHECK constraint)
@@ -84,8 +85,13 @@ Implemented in B-05 (table `clients`).
 - status (`Active`, `Inactive`; CHECK constraint)
 - created_at, updated_at
 
-Indexes: (clinic_id, last_name, first_name, id) for the default sort, (clinic_id, created_at). Clients are never
-deleted; later tables (patients, appointments, invoices) reference them with RESTRICT.
+Keys and indexes: unique (clinic_id, id), so child tables can use a composite foreign key (below); one index per
+list sort: (clinic_id, last_name, first_name, id), (clinic_id, created_at, id), (clinic_id, updated_at, id). Clients
+are never deleted.
+
+**Rule for tables that reference a clinic-owned row (from B-06):** reference it with a composite foreign key
+`(clinic_id, <parent>_id) → <parent>(clinic_id, id) ON DELETE RESTRICT`, so the database itself refuses a link to
+another clinic's row (ADR-005).
 
 ### Patient
 - id

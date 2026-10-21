@@ -54,8 +54,8 @@ public sealed class UserService(
             users = users.Where(user => user.Roles.Any(userRole => userRole.Role == role));
         }
 
-        var descending = query.Sort.StartsWith('-');
-        users = query.Sort.TrimStart('-') switch
+        var (field, descending) = SortSpec.Parse(query.Sort);
+        users = field switch
         {
             "email" => descending ? users.OrderByDescending(u => u.Email) : users.OrderBy(u => u.Email),
             "createdAt" => descending ? users.OrderByDescending(u => u.CreatedAt) : users.OrderBy(u => u.CreatedAt),
