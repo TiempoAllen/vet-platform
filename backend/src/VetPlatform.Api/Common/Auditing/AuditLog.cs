@@ -56,6 +56,8 @@ public static class AuditActions
     public const string UserRolesChanged = "user.roles_changed";
     public const string ClientCreated = "client.created";
     public const string ClientUpdated = "client.updated";
+    public const string PatientCreated = "patient.created";
+    public const string PatientUpdated = "patient.updated";
 }
 
 /// <summary>

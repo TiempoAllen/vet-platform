@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using VetPlatform.Api.Common.Auditing;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Clients;
+using VetPlatform.Api.Features.Patients;
 using VetPlatform.Api.Features.Identity;
 
 namespace VetPlatform.Api.Common.Persistence;
@@ -40,6 +41,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     public DbSet<Client> Clients => Set<Client>();
+
+    public DbSet<Patient> Patients => Set<Patient>();
 
     /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
     public const string ClinicFilter = "Clinic";

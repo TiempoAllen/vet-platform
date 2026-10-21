@@ -109,7 +109,7 @@ in (a valid CSRF token is still required; on `403 CSRF_TOKEN_INVALID` refresh it
       "id": "uuid", "name": "Jo Vet", "email": "jo@clinic.example",
       "clinic": { "id": "uuid", "name": "Happy Paws" },
       "roles": ["Admin", "Veterinarian"],
-      "permissions": ["clients.manage", "clients.read", "users.manage", "users.read"]
+      "permissions": ["clients.manage", "clients.read", "patients.manage", "patients.read", "users.manage", "users.read"]
     }
 
 `email` is returned normalized (trimmed, lowercase). `roles` and `permissions` reflect the current state on every call
@@ -143,6 +143,7 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `users.read`, `users.manage` | ✓ | – | – | – | – |
 | `clients.read` | ✓ | ✓ | ✓ | ✓ | – |
 | `clients.manage` | ✓ | – | – | ✓ | – |
+| `patients.read`, `patients.manage` | ✓ | ✓ | ✓ | ✓ | – |
 
 **User object**
 
@@ -270,12 +271,84 @@ Creating a client and every change to one is written to the audit log (`client.c
 names the changed fields but not their values.
 
 ## 6. Patients
-`GET /api/patients`
-`GET /api/patients/:id`
-`POST /api/patients`
-`PATCH /api/patients/:id`
+Implemented in B-06. Patients are the animals of the caller's clinic: other clinics' patients are `404 NOT_FOUND`,
+never `403`. Missing permission is `403 FORBIDDEN`. Patients are never deleted (`DELETE` is `405`): set
+`"status": "Inactive"` or `"Deceased"`.
 
-Patient endpoints must enforce clinic scope and client access permissions.
+**Patient object**
+
+    {
+      "id": "uuid", "name": "Rex",
+      "species": "Dog" | "Cat" | "Bird" | "Rabbit" | "Rodent" | "Reptile" | "Horse" | "Other",
+      "breed": "Labrador" | null,
+      "sex": "Male" | "Female" | "Unknown",
+      "reproductiveStatus": "Intact" | "Neutered" | "Unknown",
+      "dateOfBirth": "2020-05-01" | null, "dateOfBirthEstimated": false,
+      "markings": "Black, white chest" | null,
+      "microchipNumber": "985112003456789" | null,
+      "weightKg": 31.25 | null,
+      "status": "Active" | "Inactive" | "Deceased", "dateOfDeath": "2024-03-01" | null,
+      "notes": "..." | null,
+      "client": { "id": "uuid", "firstName": "Jane", "lastName": "Doe" },
+      "createdAt": "...", "updatedAt": "..."
+    }
+
+Every field is always present. Dates are calendar dates (`YYYY-MM-DD`). `weightKg` is a JSON number with at most 3
+decimals and no trailing zeros. `client` is the primary owner; it is always returned because every role that can read
+patients can also read clients. `Neutered` covers spayed and castrated. `dateOfBirthEstimated` is `true` when the date
+is approximate (always `false` without a date). `dateOfDeath` is only ever set while the status is `Deceased`.
+
+`GET /api/patients` (`patients.read`): paginated list (section 13). Includes inactive and deceased patients unless
+`status` is given.
+- `q`: case-insensitive substring of the patient's name or the owner's first, last or full name ("Jane Doe"), or a
+  substring of the microchip number ignoring spaces, dashes and dots ("003-456" finds "985112003456789"). Max 100
+  characters; `%` and `_` match literally.
+- `clientId`: only that owner's patients (an unknown id returns an empty page). Not a GUID → `422`.
+- `species`, `status`: exact names as above.
+- `sort`: `name` (default), `createdAt` or `updatedAt`; one leading `-` for descending. Ties are broken by id in the
+  same direction.
+- Invalid values are `422 VALIDATION_ERROR` with the parameter as `field`.
+
+`GET /api/patients/:id` (`patients.read`): `200` patient object, or `404`.
+
+`POST /api/patients` (`patients.manage`): creates an `Active` patient in the caller's clinic.
+
+    { "clientId": "uuid", "name": "Rex", "species": "Dog", "breed": "Labrador", "sex": "Male",
+      "reproductiveStatus": "Neutered", "dateOfBirth": "2020-05-01", "dateOfBirthEstimated": true,
+      "markings": "Black, white chest", "microchipNumber": "985 112 003 456 789", "weightKg": 31.25, "notes": null }
+
+- Required: `clientId`, `name` (max 100), `species`. `sex` and `reproductiveStatus` default to `Unknown`.
+- `clientId` must be an **active** client of the caller's clinic. An unknown, inactive or other clinic's client is
+  `422` with field `clientId` and the same message in every case.
+- `breed` max 100, `markings` max 200, `notes` max 4000. Text is trimmed; blank optional text is stored as `null`.
+  Length limits apply to the value as sent.
+- `microchipNumber`: spaces, dashes and dots are removed and letters upper-cased; the result must be 1 to 20 letters
+  or digits (input max 40 characters). Unique within the clinic: a second patient with the same chip is
+  `409 CONFLICT` (detail field `microchipNumber`). Other clinics may record the same chip.
+- `weightKg`: more than 0, at most 2000, at most 3 decimals.
+- `dateOfBirth`: not in the future. Until clinics have a time zone (B-26), "today" is the UTC date plus one day.
+- Problems found by the server (owner, microchip format, weight, dates) are reported together in one `422`.
+- `400 BAD_REQUEST` for invalid JSON, a value of the wrong type or format (dates must be exactly `YYYY-MM-DD`, ids
+  must be UUIDs, `weightKg` a number), or an enum value that is not an exact name (`"dog"`, `"Spayed"`).
+- `201` with the patient object and a `Location` header.
+
+`PATCH /api/patients/:id` (`patients.manage`): partial update.
+
+    { "clientId": "uuid", "weightKg": null, "status": "Deceased", "dateOfDeath": "2024-03-01" }
+
+- Omitted or `null` fields are unchanged, except `dateOfBirth`, `weightKg` and `dateOfDeath`, which an explicit
+  `null` clears. `""` (or only spaces) clears optional text, including `microchipNumber`. `name` cannot be cleared.
+- `clientId` transfers the patient to another **active** client of the clinic (rules as for create). Sending the
+  current owner is always accepted, even if that client is now inactive.
+- `dateOfDeath` needs `status` `Deceased` (in the same request or already), cannot be in the future or before the
+  date of birth. Changing the status away from `Deceased` clears the date of death. If a new `dateOfBirth` would
+  fall after the recorded date of death, the error is reported on `dateOfDeath`.
+- `200` with the updated patient; `404` for an unknown patient (or another clinic's); `409` for a microchip already
+  used by another patient of the clinic (only once there are no `422` problems); `422` and `400` as for create.
+
+Creating a patient and every change is written to the audit log (`patient.created` with the owner's id,
+`patient.updated` with the changed field names and, on a transfer, `fromClientId` and `toClientId`). Names, notes and
+other values are not recorded.
 
 ## 7. Appointments
 `GET /api/appointments`

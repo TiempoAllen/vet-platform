@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.1, 2026-10-18, updated for B-05.
+Veterinary Management Platform. Version 1.2, 2026-10-22, updated for B-06.
 
 ## 1. Introduction
 
@@ -131,9 +131,9 @@ A user may hold several roles; their permissions are the union.
 ### 3.4 Patients (FR-PAT) — B-06, B-07, F-05, F-06
 | ID | Requirement | Status |
 |---|---|---|
-| FR-PAT-1 | Authorised staff can create, view and update patients (name, species, breed, sex, reproductive status, date of birth, markings, microchip, weight, status, notes). | Planned |
-| FR-PAT-2 | Each patient belongs to one primary client; the model must allow multiple responsible owners later. | Planned |
-| FR-PAT-3 | Patient lists support search (including by client and microchip), filtering, sorting and pagination. | Planned |
+| FR-PAT-1 | Authorised staff can create, view and update patients (name, species, breed, sex, reproductive status, date of birth, markings, microchip, weight, status, notes). | Done |
+| FR-PAT-2 | Each patient belongs to one primary client; the model must allow multiple responsible owners later. | Done (primary owner; extra owners via a later `patient_owners` table, ADR-006) |
+| FR-PAT-3 | Patient lists support search (including by client and microchip), filtering, sorting and pagination. | Done |
 | FR-PAT-4 | A patient history view aggregates consultations, diagnoses, treatments, prescriptions, vaccinations, attachments and billing. | Planned (B-07) |
 
 ### 3.5 Scheduling (FR-SCH) — B-08..B-10, F-07..F-09
@@ -181,7 +181,7 @@ A user may hold several roles; their permissions are the union.
 | FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Planned (B-23, B-24) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
 | FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Planned (B-26) |
-| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Done for auth, users and clients; rest Planned |
+| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Done for auth, users, clients and patients; rest Planned |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
 ### 3.10 Dashboard and UI (FR-UI) — F-01..F-22
@@ -213,7 +213,7 @@ A user may hold several roles; their permissions are the union.
 | ID | Requirement | Status |
 |---|---|---|
 | NFR-REL-1 | Multi-record operations (booking, payments, stock movements) run in a single transaction. | Planned per milestone |
-| NFR-REL-2 | Foreign keys, CHECK constraints and unique indexes enforce integrity in the database, not only in code. | Done for identity and clients |
+| NFR-REL-2 | Foreign keys, CHECK constraints and unique indexes enforce integrity in the database, not only in code. | Done for identity, clients and patients |
 | NFR-REL-3 | Clinical, financial and audit history is not physically deleted. | Ongoing rule |
 | NFR-REL-4 | Backups with a verified restore procedure; target RPO ≤ 24 h, RTO ≤ 4 h until X-05 sets final values. | Planned (X-05) |
 | NFR-REL-5 | Health endpoint reports database reachability within 5 seconds. | Done |
@@ -224,7 +224,7 @@ Targets for a single clinic of up to 50 concurrent staff; verified in X-04.
 | ID | Requirement | Status |
 |---|---|---|
 | NFR-PERF-1 | 95th percentile API latency ≤ 300 ms for reads and ≤ 500 ms for writes, excluding reports and uploads. | Planned (X-04) |
-| NFR-PERF-2 | List endpoints are paginated (max page size 100) and backed by indexes starting with `clinic_id`. | Done (users, clients) |
+| NFR-PERF-2 | List endpoints are paginated (max page size 100) and backed by indexes starting with `clinic_id`. | Done (users, clients, patients) |
 | NFR-PERF-3 | Session validation costs at most one indexed read per request and one write per session per minute. | Done |
 
 ### 4.4 Usability and accessibility (NFR-UX)
