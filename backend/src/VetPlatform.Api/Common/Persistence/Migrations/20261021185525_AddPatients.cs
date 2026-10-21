@@ -38,6 +38,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 {
                     table.PrimaryKey("pk_patients", x => x.id);
                     table.UniqueConstraint("ak_patients_clinic_id_id", x => new { x.clinic_id, x.id });
+                    table.CheckConstraint("ck_patients_date_of_birth_estimated", "NOT date_of_birth_estimated OR date_of_birth IS NOT NULL");
                     table.CheckConstraint("ck_patients_date_of_death", "date_of_death IS NULL OR (status = 'Deceased' AND (date_of_birth IS NULL OR date_of_death >= date_of_birth))");
                     table.CheckConstraint("ck_patients_microchip_number", "microchip_number ~ '^[A-Z0-9]+$'");
                     table.CheckConstraint("ck_patients_name", "btrim(name) <> ''");
@@ -61,9 +62,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "ix_patients_clinic_id_client_id_name",
+                name: "ix_patients_clinic_id_client_id_name_id",
                 table: "patients",
-                columns: new[] { "clinic_id", "client_id", "name" });
+                columns: new[] { "clinic_id", "client_id", "name", "id" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_patients_clinic_id_created_at_id",

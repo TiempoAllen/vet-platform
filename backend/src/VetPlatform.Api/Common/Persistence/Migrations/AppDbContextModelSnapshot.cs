@@ -481,9 +481,6 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasDatabaseName("ix_patients_clinic_id_microchip_number")
                         .HasFilter("microchip_number IS NOT NULL");
 
-                    b.HasIndex("ClinicId", "ClientId", "Name")
-                        .HasDatabaseName("ix_patients_clinic_id_client_id_name");
-
                     b.HasIndex("ClinicId", "CreatedAt", "Id")
                         .HasDatabaseName("ix_patients_clinic_id_created_at_id");
 
@@ -493,8 +490,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "UpdatedAt", "Id")
                         .HasDatabaseName("ix_patients_clinic_id_updated_at_id");
 
+                    b.HasIndex("ClinicId", "ClientId", "Name", "Id")
+                        .HasDatabaseName("ix_patients_clinic_id_client_id_name_id");
+
                     b.ToTable("patients", null, t =>
                         {
+                            t.HasCheckConstraint("ck_patients_date_of_birth_estimated", "NOT date_of_birth_estimated OR date_of_birth IS NOT NULL");
+
                             t.HasCheckConstraint("ck_patients_date_of_death", "date_of_death IS NULL OR (status = 'Deceased' AND (date_of_birth IS NULL OR date_of_death >= date_of_birth))");
 
                             t.HasCheckConstraint("ck_patients_microchip_number", "microchip_number ~ '^[A-Z0-9]+$'");

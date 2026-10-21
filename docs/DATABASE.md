@@ -104,7 +104,7 @@ Implemented in B-06 (table `patients`).
 - breed (free text)
 - sex (`Male`, `Female`, `Unknown`; CHECK)
 - reproductive_status (`Intact`, `Neutered`, `Unknown`; CHECK)
-- date_of_birth (`date`), date_of_birth_estimated (boolean)
+- date_of_birth (`date`), date_of_birth_estimated (boolean; CHECK: only true with a date)
 - markings (colour and markings, free text)
 - microchip_number (normalised: upper-case letters and digits only, CHECK; unique per clinic where not null)
 - weight_kg (`numeric(7,3)`, CHECK 0 < weight ≤ 2000): current weight; dated history comes with consultation vitals
@@ -114,7 +114,7 @@ Implemented in B-06 (table `patients`).
 
 Keys and indexes: unique (clinic_id, id) for later composite FKs; unique (clinic_id, microchip_number) where not null;
 (clinic_id, name, id), (clinic_id, created_at, id), (clinic_id, updated_at, id) for the list sorts; (clinic_id,
-client_id, name) for a client's patients.
+client_id, name, id) for a client's patients.
 
 A patient belongs to one primary client in the initial release. Multiple responsible owners, if required, become a
 `patient_owners` table (patient, client, role) beside `client_id`, which stays the primary owner (ADR-006).

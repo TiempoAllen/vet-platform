@@ -130,6 +130,8 @@ internal sealed class PatientConfiguration : IEntityTypeConfiguration<Patient>
             table.HasCheckConstraint("ck_patients_reproductive_status", Names<ReproductiveStatus>("reproductive_status"));
             table.HasCheckConstraint("ck_patients_status", Names<PatientStatus>("status"));
             table.HasCheckConstraint("ck_patients_name", "btrim(name) <> ''");
+            table.HasCheckConstraint(
+                "ck_patients_date_of_birth_estimated", "NOT date_of_birth_estimated OR date_of_birth IS NOT NULL");
             table.HasCheckConstraint("ck_patients_weight_kg", $"weight_kg > 0 AND weight_kg <= {Patient.MaxWeightKg}");
             table.HasCheckConstraint("ck_patients_microchip_number", "microchip_number ~ '^[A-Z0-9]+$'");
             table.HasCheckConstraint(
@@ -168,7 +170,7 @@ internal sealed class PatientConfiguration : IEntityTypeConfiguration<Patient>
         builder.HasIndex(patient => new { patient.ClinicId, patient.Name, patient.Id });
         builder.HasIndex(patient => new { patient.ClinicId, patient.CreatedAt, patient.Id });
         builder.HasIndex(patient => new { patient.ClinicId, patient.UpdatedAt, patient.Id });
-        builder.HasIndex(patient => new { patient.ClinicId, patient.ClientId, patient.Name });
+        builder.HasIndex(patient => new { patient.ClinicId, patient.ClientId, patient.Name, patient.Id });
 
         // Clinic FK in its own right too, so the clinic cannot be deleted even if the composite key changes later.
         builder.HasOne<Identity.Clinic>()

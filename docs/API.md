@@ -328,7 +328,8 @@ is approximate (always `false` without a date). `dateOfDeath` is only ever set w
 - `weightKg`: more than 0, at most 2000, at most 3 decimals.
 - `dateOfBirth`: not in the future. Until clinics have a time zone (B-26), "today" is the UTC date plus one day.
 - Problems found by the server (owner, microchip format, weight, dates) are reported together in one `422`.
-- `400 BAD_REQUEST` for invalid JSON or an enum value that is not an exact name (`"dog"`, `"Spayed"`).
+- `400 BAD_REQUEST` for invalid JSON, a value of the wrong type or format (dates must be exactly `YYYY-MM-DD`, ids
+  must be UUIDs, `weightKg` a number), or an enum value that is not an exact name (`"dog"`, `"Spayed"`).
 - `201` with the patient object and a `Location` header.
 
 `PATCH /api/patients/:id` (`patients.manage`): partial update.
@@ -340,9 +341,10 @@ is approximate (always `false` without a date). `dateOfDeath` is only ever set w
 - `clientId` transfers the patient to another **active** client of the clinic (rules as for create). Sending the
   current owner is always accepted, even if that client is now inactive.
 - `dateOfDeath` needs `status` `Deceased` (in the same request or already), cannot be in the future or before the
-  date of birth. Changing the status away from `Deceased` clears the date of death.
+  date of birth. Changing the status away from `Deceased` clears the date of death. If a new `dateOfBirth` would
+  fall after the recorded date of death, the error is reported on `dateOfDeath`.
 - `200` with the updated patient; `404` for an unknown patient (or another clinic's); `409` for a microchip already
-  used by another patient of the clinic; `422` and `400` as for create.
+  used by another patient of the clinic (only once there are no `422` problems); `422` and `400` as for create.
 
 Creating a patient and every change is written to the audit log (`patient.created` with the owner's id,
 `patient.updated` with the changed field names and, on a transfer, `fromClientId` and `toClientId`). Names, notes and
