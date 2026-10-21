@@ -248,3 +248,28 @@ Choose the simplest solution that satisfies documented requirements, security, m
     is.
   - Phone search matches the stored text as typed ("5550100" does not find "555 0100"). A normalised digits column can
     be added if users need it.
+
+### ADR-006: Patients (decided in B-06)
+- **Shape** (confirmed with the user): species from a fixed list plus `Other` (breed stays free text); `sex` and
+  `reproductiveStatus` as two fields with `Unknown`; `dateOfBirth` with a `dateOfBirthEstimated` flag; current
+  `weightKg` only (history arrives with consultation vitals, B-11); statuses `Active`, `Inactive`, `Deceased` with an
+  optional `dateOfDeath` that exists only while deceased.
+- **Permissions** (confirmed): `patients.read` and `patients.manage` for Admin, Veterinarian, Nurse and Receptionist.
+  Every one of these roles also has `clients.read`, so embedding the owner summary in patient responses discloses
+  nothing new. If a role ever gets `patients.read` without `clients.read`, revisit the embedded summary.
+- **Ownership:** one primary owner (`client_id`) through the ADR-005 composite foreign key. New patients and transfers
+  need an **active** client; keeping a now-inactive current owner is allowed so old records stay editable. Unknown,
+  inactive and other clinics' clients get one identical `422` so nothing about other clinics leaks. Transfers are
+  audited with both owner ids. Additional owners later: a `patient_owners` table; `client_id` stays primary.
+- **Microchips** are normalised (separators removed, upper-cased) and unique per clinic, not platform-wide: a
+  platform-wide check would tell one clinic that another treats the animal.
+- **Validation needing the clock or the database** (owner, microchip, weight, dates) runs in the service and reports
+  all problems in one `422`. "Today" is the UTC date plus one day of grace until clinics have a time zone (B-26).
+- **Responses equal later reads:** `weightKg` drops trailing zeros, because PostgreSQL returns `numeric(7,3)` with three
+  decimals.
+- **Accepted for now:**
+  - A client can be deactivated while it still owns active patients; the patients stay valid. Whether deactivation
+    should be refused or cascade is a product decision for later.
+  - A transfer racing a concurrent deactivation of the target client can still complete (no lock). The composite key
+    still guarantees the owner is of the same clinic.
+  - Search over owner names and microchip substrings scans the clinic's patients (as for clients, ADR-005).

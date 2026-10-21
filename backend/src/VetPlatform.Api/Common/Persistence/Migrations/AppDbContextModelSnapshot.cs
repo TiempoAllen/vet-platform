@@ -380,6 +380,139 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.ToTable("user_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Patients.Patient", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Breed")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("breed");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly?>("DateOfBirth")
+                        .HasColumnType("date")
+                        .HasColumnName("date_of_birth");
+
+                    b.Property<bool>("DateOfBirthEstimated")
+                        .HasColumnType("boolean")
+                        .HasColumnName("date_of_birth_estimated");
+
+                    b.Property<DateOnly?>("DateOfDeath")
+                        .HasColumnType("date")
+                        .HasColumnName("date_of_death");
+
+                    b.Property<string>("Markings")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("markings");
+
+                    b.Property<string>("MicrochipNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("microchip_number");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("ReproductiveStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("reproductive_status");
+
+                    b.Property<string>("Sex")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("sex");
+
+                    b.Property<string>("Species")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("species");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<decimal?>("WeightKg")
+                        .HasPrecision(7, 3)
+                        .HasColumnType("numeric(7,3)")
+                        .HasColumnName("weight_kg");
+
+                    b.HasKey("Id")
+                        .HasName("pk_patients");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_patients_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "MicrochipNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ix_patients_clinic_id_microchip_number")
+                        .HasFilter("microchip_number IS NOT NULL");
+
+                    b.HasIndex("ClinicId", "ClientId", "Name")
+                        .HasDatabaseName("ix_patients_clinic_id_client_id_name");
+
+                    b.HasIndex("ClinicId", "CreatedAt", "Id")
+                        .HasDatabaseName("ix_patients_clinic_id_created_at_id");
+
+                    b.HasIndex("ClinicId", "Name", "Id")
+                        .HasDatabaseName("ix_patients_clinic_id_name_id");
+
+                    b.HasIndex("ClinicId", "UpdatedAt", "Id")
+                        .HasDatabaseName("ix_patients_clinic_id_updated_at_id");
+
+                    b.ToTable("patients", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_patients_date_of_death", "date_of_death IS NULL OR (status = 'Deceased' AND (date_of_birth IS NULL OR date_of_death >= date_of_birth))");
+
+                            t.HasCheckConstraint("ck_patients_microchip_number", "microchip_number ~ '^[A-Z0-9]+$'");
+
+                            t.HasCheckConstraint("ck_patients_name", "btrim(name) <> ''");
+
+                            t.HasCheckConstraint("ck_patients_reproductive_status", "reproductive_status IN ('Intact', 'Neutered', 'Unknown')");
+
+                            t.HasCheckConstraint("ck_patients_sex", "sex IN ('Male', 'Female', 'Unknown')");
+
+                            t.HasCheckConstraint("ck_patients_species", "species IN ('Dog', 'Cat', 'Bird', 'Rabbit', 'Rodent', 'Reptile', 'Horse', 'Other')");
+
+                            t.HasCheckConstraint("ck_patients_status", "status IN ('Active', 'Inactive', 'Deceased')");
+
+                            t.HasCheckConstraint("ck_patients_weight_kg", "weight_kg > 0 AND weight_kg <= 2000");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.User", null)
@@ -437,6 +570,26 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_user_sessions_users_user_id");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Patients.Patient", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_patients_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Clients.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ClientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_patients_clients_clinic_id_client_id");
+
+                    b.Navigation("Client");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>
