@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-04). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-05). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -92,14 +92,52 @@ erDiagram
   users ||--o{ user_sessions : "signs in"
   clinics ||--o{ audit_logs : "scopes (nullable)"
   users ||--o{ audit_logs : "acts (nullable)"
-  clinics { uuid id PK; varchar name; varchar status; timestamptz created_at; timestamptz updated_at }
-  users { uuid id PK; uuid clinic_id FK; varchar name; varchar email UK "case_insensitive collation"; varchar phone; varchar password_hash; varchar status; timestamptz last_login_at; int failed_login_count; timestamptz locked_until }
-  user_roles { uuid user_id PK; varchar role PK; timestamptz created_at }
-  user_sessions { uuid id PK; uuid user_id FK; timestamptz last_seen_at; timestamptz expires_at; timestamptz revoked_at }
-  audit_logs { uuid id PK; uuid clinic_id FK; uuid actor_user_id FK; varchar action; varchar entity_type; uuid entity_id; timestamptz occurred_at; timestamptz recorded_at; jsonb metadata; varchar request_id }
+  clinics {
+    uuid id PK
+    varchar name
+    varchar status
+    timestamptz created_at
+    timestamptz updated_at
+  }
+  users {
+    uuid id PK
+    uuid clinic_id FK
+    varchar name
+    varchar email UK "case_insensitive collation"
+    varchar phone
+    varchar password_hash
+    varchar status
+    timestamptz last_login_at
+    int failed_login_count
+    timestamptz locked_until
+  }
+  user_roles {
+    uuid user_id PK
+    varchar role PK
+    timestamptz created_at
+  }
+  user_sessions {
+    uuid id PK
+    uuid user_id FK
+    timestamptz last_seen_at
+    timestamptz expires_at
+    timestamptz revoked_at
+  }
+  audit_logs {
+    uuid id PK
+    uuid clinic_id FK
+    uuid actor_user_id FK
+    varchar action
+    varchar entity_type
+    uuid entity_id
+    timestamptz occurred_at
+    timestamptz recorded_at
+    jsonb metadata
+    varchar request_id
+  }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms
@@ -155,7 +193,7 @@ table append-only and stamp `recorded_at` from the database clock. Metadata neve
 emails. Action names so far:
 
 `auth.login_succeeded`, `auth.login_failed`, `auth.account_locked`, `auth.logout`, `auth.password_changed`,
-`auth.password_change_failed`, `auth.sessions_revoked`, `user.created`, `user.updated`, `user.roles_changed`.
+`auth.password_change_failed`, `auth.sessions_revoked`, `user.created`, `user.updated`, `user.roles_changed`, `client.created`, `client.updated`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 
@@ -163,9 +201,9 @@ New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 - `ApiException(status, code, message, details)` for expected failures; everything else becomes `500
   INTERNAL_ERROR` and is logged with the request id.
 - DataAnnotations and `IValidatableObject` on contracts produce `422 VALIDATION_ERROR` with camelCase `field`
-  details; unparsable JSON is `400 BAD_REQUEST`.
+  details; unparsable JSON, and text containing NUL characters (PostgreSQL SQLSTATE 22021), is `400 BAD_REQUEST`.
 - Enums cross the boundary only as exact names (`StrictEnumConverterFactory` in bodies, `StrictEnum` in queries).
-- Pagination: `PageQuery` (`page`, `pageSize` 1–100) and `Paging` produce the `{ data, pagination }` envelope.
+- Pagination: `PageQuery` (`page` 1–1,000,000, `pageSize` 1–100), `SortSpec` for `sort` values, and `Paging` produce the `{ data, pagination }` envelope.
 
 ### 6.5 Time and configuration
 - All code reads time from the DI `TimeProvider`; tests use a fake clock.
@@ -202,7 +240,9 @@ Every module from B-05 onward follows this template; the milestone records any d
 | `reports.read` | ✓ | – | – | – | – |
 | `settings.manage`, `audit.read` | ✓ | – | – | – | – |
 
-   This table is a proposal to be confirmed per milestone with the user; `Permissions.cs` is the source of truth.
+This table is a proposal to be confirmed per milestone with the user; `Permissions.cs` is the source of truth.
+The `clients.*` row was confirmed and implemented in B-05.
+
 4. **Service** owns rules and transactions; it records audit entries before `SaveChanges`.
 5. **Controller** with `[RequirePermission]` on every action; unsafe actions only as controller actions.
 6. **Contract** documented in `API.md` and `openapi.yaml` in the same change.

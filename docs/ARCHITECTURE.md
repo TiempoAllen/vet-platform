@@ -220,3 +220,31 @@ Choose the simplest solution that satisfies documented requirements, security, m
   No deployment predates B-04; if one ever must be upgraded, grant `Admin` to the intended users in the same release.
 - Not yet done: administrator-initiated password reset and "must change password at next sign-in". Users currently
   change the initial password themselves; email-based reset needs notifications (B-25).
+
+### ADR-005: Clients and the pattern for clinic-owned records (decided in B-05)
+- **Shape** (confirmed with the user): first and last name; structured optional address (`address_line1`,
+  `address_line2`, `city`, `region`, `postal_code`, `country`); optional `preferred_contact_method`
+  (`Email`, `Phone`, `Sms`, null = no preference); `Active`/`Inactive` status. Email is optional and **not**
+  unique, because members of one household often share one.
+- **Permissions** (confirmed): `clients.read` for Admin, Veterinarian, Nurse and Receptionist; `clients.manage` for
+  Admin and Receptionist. Client changes have no cross-row invariant, so unlike user management they take no clinic
+  lock and rely on the permission check at the door; concurrent edits are last-write-wins.
+- **No deletion** (FR-CLI-3): there is no `DELETE`; deactivate instead. Later references use RESTRICT.
+- **Cross-clinic references are refused by the database.** Clinic-owned parents get a unique `(clinic_id, id)` key and
+  children reference them with a composite foreign key on `(clinic_id, <parent>_id)`. The query filter and write
+  guard (ADR-004) remain the first line; this makes a missed check in a future service impossible to persist.
+- **PATCH null semantics:** text fields use `""` to clear. Where `null` itself must be expressible
+  (`preferredContactMethod`), the request uses `Optional<T>`, which tells an omitted property from an explicit null.
+- **Audit:** `client.created`, `client.updated`; metadata lists changed field names, never values (personal data).
+- **Timestamps** set by `TimestampsInterceptor` are truncated to microseconds (PostgreSQL precision), so a create
+  response equals a later read.
+- **Text PostgreSQL cannot store** (NUL characters) is a `400 BAD_REQUEST` from the global exception handler, for every
+  endpoint, instead of a logged 500.
+- **Accepted for now:**
+  - Substring search (`ILIKE '%term%'` over names, email and phone) cannot use an index and scans the clinic's
+    clients. Fine at single-clinic sizes; add `pg_trgm` GIN indexes if X-04 measures a need.
+  - Other application timestamps (`audit_logs.occurred_at`, `users.last_login_at`, `user_roles.created_at`, session
+    times) keep 100 ns precision in memory. None is returned straight from memory after a save today; revisit if one
+    is.
+  - Phone search matches the stored text as typed ("5550100" does not find "555 0100"). A normalised digits column can
+    be added if users need it.

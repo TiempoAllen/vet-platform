@@ -58,7 +58,7 @@ public sealed class UserListQuery : PageQuery, IValidatableObject
                 $"Role must be one of {StrictEnum.Names<Common.Authorization.Role>()}.", [nameof(Role)]);
         }
 
-        if (!SortFields.Contains(Sort.TrimStart('-'), StringComparer.Ordinal))
+        if (!SortFields.Contains(SortSpec.Parse(Sort).Field, StringComparer.Ordinal))
         {
             yield return new ValidationResult(
                 $"Sort must be one of {string.Join(", ", SortFields)}, optionally prefixed with '-'.", [nameof(Sort)]);

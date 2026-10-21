@@ -54,6 +54,8 @@ public static class AuditActions
     public const string UserCreated = "user.created";
     public const string UserUpdated = "user.updated";
     public const string UserRolesChanged = "user.roles_changed";
+    public const string ClientCreated = "client.created";
+    public const string ClientUpdated = "client.updated";
 }
 
 /// <summary>

@@ -28,6 +28,7 @@ backend/
     Features/Identity/          Clinic, User, UserSession entities
     Features/Auth/              login/logout/me/csrf/password endpoints, session validation, sign-in rules
     Features/Users/             user management endpoints, create-admin command
+    Features/Clients/           client (pet owner) records
     Common/Authorization/       roles, permissions, [RequirePermission]
     Common/Tenancy/             current clinic, clinic write guard (query filters live in AppDbContext)
     Common/Auditing/            audit log entity and AuditTrail
@@ -35,7 +36,7 @@ backend/
   tests/VetPlatform.Api.Tests/  xunit integration tests (in-memory host)
 ```
 
-Further feature code (clients, patients, ...) goes under `src/VetPlatform.Api/Features/<Name>/` in later
+Further feature code (patients, appointments, ...) goes under `src/VetPlatform.Api/Features/<Name>/` in later
 milestones, following the layering in `docs/ARCHITECTURE.md`.
 
 ## Commands
