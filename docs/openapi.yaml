@@ -302,7 +302,7 @@ paths:
           schema: { $ref: '#/components/schemas/ClientStatus' }
         - name: sort
           in: query
-          description: '`name` sorts by last name, then first name.'
+          description: '`name` sorts by last name, then first name. Ties are broken by id in the same direction.'
           schema:
             type: string
             enum: [name, -name, createdAt, -createdAt, updatedAt, -updatedAt]
@@ -374,7 +374,7 @@ paths:
       description: |
         Requires `clients.manage`. Omitted or null text fields are unchanged; `""` clears an optional text field.
         `preferredContactMethod` is unchanged when omitted and cleared by an explicit `null`. Deactivate with
-        `"status": "Inactive"`; clients are never deleted.
+        `"status": "Inactive"`; clients are never deleted (DELETE is 405 METHOD_NOT_ALLOWED).
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -448,7 +448,7 @@ components:
     Page:
       name: page
       in: query
-      schema: { type: integer, minimum: 1, default: 1 }
+      schema: { type: integer, minimum: 1, maximum: 1000000, default: 1 }
     PageSize:
       name: pageSize
       in: query

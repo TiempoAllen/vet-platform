@@ -148,7 +148,7 @@ Tests live in `backend/tests/VetPlatform.Api.Tests/`.
 | FR-USR-5 | `UsersTests.DisablingAUser_SignsThemOutAndBlocksSignIn`; `B04ReviewTests.ReEnablingAUser_DoesNotReviveTheirOldSessions` |
 | FR-USR-6 | `UsersTests.AnAdministrator_CannotDisableThemselves`, `TheLastActiveAdministrator_CannotBeDemoted_OrDisabled`, `TwoAdministratorsDemotingEachOtherAtOnce_LeaveOneAdministrator` |
 | FR-USR-7 | `UsersTests.RoleChanges_ApplyToTheVeryNextRequest` |
-| FR-CLI-1 | `ClientsTests.Create_Returns201WithLocation_AndNormalisesInput`, `Create_WithOnlyNames_LeavesEverythingElseEmpty`, `Create_RejectsInvalidFields_With422`, `Create_RejectsUnknownContactMethod_With400`, `Update_*`, `Get_UnknownClient_Is404`, `AdministratorsAndReceptionists_CanManageClients`, `ClinicalStaff_CanReadClients_ButNotChangeThem` |
+| FR-CLI-1 | `ClientsTests.Create_Returns201WithLocation_AndNormalisesInput`, `Create_WithOnlyNames_LeavesEverythingElseEmpty`, `Create_RejectsInvalidFields_With422`, `Create_RejectsUnknownContactMethod_With400`, `Update_*` (including `Update_IgnoresIdClinicAndTimestampsInTheBody`), `Get_UnknownClient_Is404`, `AdministratorsAndReceptionists_CanManageClients`, `ClinicalStaff_CanReadClients_ButNotChangeThem` |
 | FR-CLI-2 | `ClientsTests.List_SearchesNamesEmailAndPhone_CaseInsensitively`, `List_FiltersByStatus_AndSortsByName`, `List_SortsByCreatedAt_AndPages`, `List_RejectsInvalidParameters_With422` |
 | FR-CLI-3 | `ClientsTests.Clients_CannotBeDeleted`, `Update_CanDeactivateAndReactivate` |
 | FR-AUD-1 | `UsersTests.UserChanges_AreAudited_WithActorClinicAndRequestId`, `AuthenticationEvents_AreAudited`; `B04ReviewTests.FailedSignInFromASignedInBrowser_IsNotAttributedToTheSignedInUser`; `ClientsTests.Changes_AreAudited_WithoutPersonalData` |
@@ -159,8 +159,8 @@ Tests live in `backend/tests/VetPlatform.Api.Tests/`.
 | NFR-SEC-5 | `PasswordAndBootstrapTests.ChangePassword_EnforcesThePasswordPolicy`; `UsersTests.Create_RejectsInvalidInput` |
 | NFR-SEC-6 | `AuthTests.Credentials_AreNeverWrittenToLogs`; `RequestLoggingTests.QueryStringValues_AreNeverLogged` |
 | NFR-SEC-7 | `UsersTests.AuditLog_IsAppendOnly_InTheDatabase`; `B04ReviewTests.AuditRecordedAt_IsAlwaysTheDatabaseClock`, `AuditEntries_CannotReferenceUnknownClinicsOrUsers`, `RollingBackPastB04_IsRefusedWhileTheAuditLogHasEntries` |
-| NFR-SEC-8 | `ErrorHandlingTests.*` |
-| NFR-REL-2 | `AuthTests.Database_RejectsInvalidUserValues`, `Database_RejectsAnEmailDifferingOnlyInCase_EvenWhenAWriterSkipsNormalisation`; `ClientsTests.Database_RejectsInvalidClientValues` |
+| NFR-SEC-8 | `ErrorHandlingTests.*`; `ClientsTests.TextWithANulCharacter_IsRejectedWith400_NotA500` |
+| NFR-REL-2 | `AuthTests.Database_RejectsInvalidUserValues`, `Database_RejectsAnEmailDifferingOnlyInCase_EvenWhenAWriterSkipsNormalisation`; `ClientsTests.Database_RejectsInvalidClientValues` (status, contact method, blank names, upper-case email) |
 | NFR-REL-5 | `DatabaseTests.Health_IsAnonymousAndReportsHealthy_WhenDatabaseIsReachable`; `HealthEndpointTests.Health_Returns503Unhealthy_WhenDatabaseIsUnreachable` |
 | NFR-OPS-1 | `RequestIdTests.*` |
 | NFR-OPS-4 | `PersistenceConfigurationTests.Model_HasNoChangesMissingFromMigrations`; `DatabaseTests.Migrations_ApplyToAnEmptyDatabase_AndLeaveNothingPending` |

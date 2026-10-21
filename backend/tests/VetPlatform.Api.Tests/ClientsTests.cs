@@ -342,6 +342,48 @@ public sealed class ClientsTests(DatabaseApiFactory factory) : IClassFixture<Dat
     }
 
     [Fact]
+    public async Task Update_IgnoresIdClinicAndTimestampsInTheBody()
+    {
+        var (client, user) = await factory.SignedInAsync(Role.Receptionist);
+        var (_, other) = await factory.SignedInAsync(Role.Receptionist);
+        var created = await CreateAsync(client, NewClientBody());
+        var id = created.GetProperty("id").GetGuid();
+
+        var response = await client.PatchAsJsonAsync($"/api/clients/{id}", new
+        {
+            id = Guid.NewGuid(), clinicId = other.ClinicId, createdAt = "2000-01-01T00:00:00+00:00", firstName = "X",
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(id, body.GetProperty("id").GetGuid());
+        Assert.Equal("X", body.GetProperty("firstName").GetString());
+        Assert.Equal(created.GetProperty("createdAt").GetString(), body.GetProperty("createdAt").GetString());
+        await factory.UpdateDatabaseAsync(async db =>
+            Assert.Equal(user.ClinicId, (await db.Clients.IgnoreQueryFilters().SingleAsync(c => c.Id == id)).ClinicId));
+    }
+
+    [Fact]
+    public async Task TextWithANulCharacter_IsRejectedWith400_NotA500()
+    {
+        var (client, _) = await factory.SignedInAsync(Role.Receptionist);
+        var id = (await CreateAsync(client, NewClientBody())).GetProperty("id").GetGuid();
+
+        var responses = new[]
+        {
+            await client.PostAsJsonAsync("/api/clients", new { firstName = "A\0", lastName = "B" }),
+            await client.PatchAsJsonAsync($"/api/clients/{id}", new { notes = "x\0y" }),
+            await client.GetAsync("/api/clients?q=a%00b"),
+        };
+
+        foreach (var response in responses)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(ErrorCodes.BadRequest, (await ErrorOf(response)).Code);
+        }
+    }
+
+    [Fact]
     public async Task Update_UnknownClient_Is404()
     {
         var (client, _) = await factory.SignedInAsync(Role.Receptionist);
@@ -408,6 +450,8 @@ public sealed class ClientsTests(DatabaseApiFactory factory) : IClassFixture<Dat
     [InlineData("status=active", "status")]
     [InlineData("pageSize=101", "pageSize")]
     [InlineData("page=0", "page")]
+    [InlineData("page=1000001", "page")]
+    [InlineData("sort=--name", "sort")]
     public async Task List_RejectsInvalidParameters_With422(string query, string field)
     {
         var (client, _) = await factory.SignedInAsync(Role.Receptionist);
@@ -438,6 +482,8 @@ public sealed class ClientsTests(DatabaseApiFactory factory) : IClassFixture<Dat
     [Theory]
     [InlineData("UPDATE clients SET status = 'Deleted' WHERE id = {0}")]
     [InlineData("UPDATE clients SET preferred_contact_method = 'Fax' WHERE id = {0}")]
+    [InlineData("UPDATE clients SET first_name = '  ' WHERE id = {0}")]
+    [InlineData("UPDATE clients SET email = 'Jane@Example.com' WHERE id = {0}")]
     public async Task Database_RejectsInvalidClientValues(string sql)
     {
         var (client, _) = await factory.SignedInAsync(Role.Receptionist);

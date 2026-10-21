@@ -8,11 +8,24 @@ public class PageQuery
 {
     public const int MaxPageSize = 100;
 
-    [Range(1, int.MaxValue)]
+    /// <summary>Keeps the row offset ((page - 1) * pageSize) well inside int range.</summary>
+    public const int MaxPage = 1_000_000;
+
+    [Range(1, MaxPage)]
     public int Page { get; init; } = 1;
 
     [Range(1, MaxPageSize)]
     public int PageSize { get; init; } = 25;
+}
+
+/// <summary>
+/// A <c>sort</c> query value: a field name, optionally prefixed with one <c>-</c> for descending. Further dashes stay
+/// part of the field name, so <c>--name</c> is rejected as an unknown field.
+/// </summary>
+public readonly record struct SortSpec(string Field, bool Descending)
+{
+    public static SortSpec Parse(string sort) =>
+        sort.StartsWith('-') ? new(sort[1..], true) : new(sort, false);
 }
 
 public sealed record PaginationInfo(int Page, int PageSize, int Total, int TotalPages);
