@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using VetPlatform.Api.Common.Persistence;
 using Npgsql;
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Features.Auth;
@@ -436,7 +437,7 @@ public sealed class AuthTests(DatabaseApiFactory factory) : IClassFixture<Databa
     {
         var user = await factory.CreateUserAsync(NewEmail(), Password);
 
-        Assert.Equal(factory.Clock.GetUtcNow(), user.CreatedAt);
+        Assert.Equal(TimestampsInterceptor.ToDatabasePrecision(factory.Clock.GetUtcNow()), user.CreatedAt);
         Assert.Equal(user.CreatedAt, user.UpdatedAt);
     }
 }

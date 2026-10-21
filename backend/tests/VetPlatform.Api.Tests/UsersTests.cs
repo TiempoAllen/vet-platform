@@ -77,7 +77,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
 
         Assert.Equal(["Admin", "Veterinarian"], me.GetProperty("roles").EnumerateArray().Select(r => r.GetString()));
         Assert.Equal(
-            [Permissions.UsersManage, Permissions.UsersRead],
+            [Permissions.ClientsManage, Permissions.ClientsRead, Permissions.UsersManage, Permissions.UsersRead],
             me.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()));
     }
 

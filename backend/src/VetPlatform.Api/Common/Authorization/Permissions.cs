@@ -25,13 +25,15 @@ public static class Permissions
 {
     public const string UsersRead = "users.read";
     public const string UsersManage = "users.manage";
+    public const string ClientsRead = "clients.read";
+    public const string ClientsManage = "clients.manage";
 
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
-        [Role.Admin] = new[] { UsersRead, UsersManage }.ToFrozenSet(),
-        [Role.Veterinarian] = FrozenSet<string>.Empty,
-        [Role.Nurse] = FrozenSet<string>.Empty,
-        [Role.Receptionist] = FrozenSet<string>.Empty,
+        [Role.Admin] = new[] { UsersRead, UsersManage, ClientsRead, ClientsManage }.ToFrozenSet(),
+        [Role.Veterinarian] = new[] { ClientsRead }.ToFrozenSet(),
+        [Role.Nurse] = new[] { ClientsRead }.ToFrozenSet(),
+        [Role.Receptionist] = new[] { ClientsRead, ClientsManage }.ToFrozenSet(),
         [Role.Inventory] = FrozenSet<string>.Empty,
     }.ToFrozenDictionary();
 
