@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.5.0
-  summary: Implemented endpoints as of milestone B-05.
+  version: 0.6.0
+  summary: Implemented endpoints as of milestone B-06.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (patients, appointments,
-    clinical, billing, inventory, reports) are listed in `API.md` sections 6-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (appointments,
+    clinical, billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -23,6 +23,7 @@ tags:
   - name: Auth
   - name: Users
   - name: Clients
+  - name: Patients
   - name: Operations
 security:
   - sessionCookie: []
@@ -396,6 +397,128 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/patients:
+    get:
+      tags: [Patients]
+      operationId: listPatients
+      summary: List the clinic's patients
+      description: Requires `patients.read`. Lists all statuses unless `status` is given; ties are broken by id in the sort direction.
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring of the patient's name or the owner's first, last or full name, or a substring of the microchip number ignoring spaces, dashes and dots. `%` and `_` match literally.
+          schema: { type: string, maxLength: 100 }
+        - name: clientId
+          in: query
+          description: Only this owner's patients. An unknown id returns an empty page.
+          schema: { type: string, format: uuid }
+        - name: species
+          in: query
+          schema: { $ref: '#/components/schemas/Species' }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/PatientStatus' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [name, -name, createdAt, -createdAt, updatedAt, -updatedAt]
+            default: name
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of patients.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PatientPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Patients]
+      operationId: createPatient
+      summary: Create a patient in the caller's clinic
+      description: |
+        Requires `patients.manage`. New patients are `Active`. `clientId` must be an active client of the clinic
+        (otherwise 422 on `clientId`, same message for unknown, inactive and other clinics' clients). Microchip numbers
+        are normalised and unique within the clinic (409). Server-side problems are reported together in one 422.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePatientRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/patients/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Patient' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/patients/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PatientId'
+    get:
+      tags: [Patients]
+      operationId: getPatient
+      summary: Get one patient
+      description: Requires `patients.read`. Patients of other clinics are 404.
+      responses:
+        '200':
+          description: The patient.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Patient' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Patients]
+      operationId: updatePatient
+      summary: Partially update or transfer a patient
+      description: |
+        Requires `patients.manage`. Omitted or null fields are unchanged, except `dateOfBirth`, `weightKg` and
+        `dateOfDeath`, which an explicit null clears; `""` clears optional text. `clientId` transfers to another
+        active client of the clinic. `dateOfDeath` needs status `Deceased`; leaving `Deceased` clears it. Patients
+        are never deleted (DELETE is 405 METHOD_NOT_ALLOWED).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePatientRequest' }
+      responses:
+        '200':
+          description: Updated patient.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Patient' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -445,6 +568,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    PatientId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Page:
       name: page
       in: query
@@ -464,7 +592,20 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage]
+    Species:
+      type: string
+      enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
+    Sex:
+      type: string
+      enum: [Male, Female, Unknown]
+    ReproductiveStatus:
+      type: string
+      description: Neutered covers spayed and castrated.
+      enum: [Intact, Neutered, Unknown]
+    PatientStatus:
+      type: string
+      enum: [Active, Inactive, Deceased]
     ClientStatus:
       type: string
       enum: [Active, Inactive]
@@ -492,7 +633,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        email: { type: string, format: email, description: Normalized (trimmed, lowercase). }
+        email: { type: string, format: email, description: 'Normalized (trimmed, lowercase).' }
         clinic:
           type: object
           required: [id, name]
@@ -652,6 +793,102 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/Client' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Patient:
+      type: object
+      additionalProperties: false
+      required: [id, name, species, breed, sex, reproductiveStatus, dateOfBirth, dateOfBirthEstimated, markings, microchipNumber, weightKg, status, dateOfDeath, notes, client, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 100 }
+        species: { $ref: '#/components/schemas/Species' }
+        breed: { type: [string, 'null'], maxLength: 100 }
+        sex: { $ref: '#/components/schemas/Sex' }
+        reproductiveStatus: { $ref: '#/components/schemas/ReproductiveStatus' }
+        dateOfBirth: { type: [string, 'null'], format: date }
+        dateOfBirthEstimated: { type: boolean, description: Always false when dateOfBirth is null. }
+        markings: { type: [string, 'null'], maxLength: 200 }
+        microchipNumber: { type: [string, 'null'], pattern: '^[A-Z0-9]{1,20}$', description: 'Normalised (no separators, upper-case).' }
+        weightKg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 2000, description: 'At most 3 decimals, no trailing zeros.' }
+        status: { $ref: '#/components/schemas/PatientStatus' }
+        dateOfDeath: { type: [string, 'null'], format: date, description: Only set while status is Deceased. }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        client:
+          type: object
+          additionalProperties: false
+          required: [id, firstName, lastName]
+          description: The primary owner.
+          properties:
+            id: { type: string, format: uuid }
+            firstName: { type: string }
+            lastName: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreatePatientRequest:
+      type: object
+      required: [clientId, name, species]
+      description: Optional text fields may be omitted, null or blank; all three store null. Values are trimmed.
+      properties:
+        clientId: { type: string, format: uuid, description: An active client of the caller's clinic. }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        species: { $ref: '#/components/schemas/Species' }
+        breed: { type: [string, 'null'], maxLength: 100 }
+        sex:
+          oneOf:
+            - $ref: '#/components/schemas/Sex'
+            - type: 'null'
+        reproductiveStatus:
+          oneOf:
+            - $ref: '#/components/schemas/ReproductiveStatus'
+            - type: 'null'
+        dateOfBirth: { type: [string, 'null'], format: date, description: Not in the future. }
+        dateOfBirthEstimated: { type: [boolean, 'null'] }
+        markings: { type: [string, 'null'], maxLength: 200 }
+        microchipNumber: { type: [string, 'null'], maxLength: 40, description: 'Spaces, dashes and dots are ignored; the rest must be 1 to 20 letters or digits.' }
+        weightKg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 2000, description: At most 3 decimals. }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+
+    UpdatePatientRequest:
+      type: object
+      description: Omitted or null fields are unchanged, except dateOfBirth, weightKg and dateOfDeath (explicit null clears). An empty string clears optional text.
+      properties:
+        clientId: { type: [string, 'null'], format: uuid, description: Transfers the patient to another active client. }
+        name: { type: [string, 'null'], minLength: 1, maxLength: 100 }
+        species:
+          oneOf:
+            - $ref: '#/components/schemas/Species'
+            - type: 'null'
+        breed: { type: [string, 'null'], maxLength: 100 }
+        sex:
+          oneOf:
+            - $ref: '#/components/schemas/Sex'
+            - type: 'null'
+        reproductiveStatus:
+          oneOf:
+            - $ref: '#/components/schemas/ReproductiveStatus'
+            - type: 'null'
+        dateOfBirth: { type: [string, 'null'], format: date, description: Explicit null clears it. }
+        dateOfBirthEstimated: { type: [boolean, 'null'] }
+        markings: { type: [string, 'null'], maxLength: 200 }
+        microchipNumber: { type: [string, 'null'], maxLength: 40, description: Empty string clears it. }
+        weightKg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 2000, description: Explicit null clears it. }
+        status:
+          description: Leaving Deceased clears dateOfDeath.
+          oneOf:
+            - $ref: '#/components/schemas/PatientStatus'
+            - type: 'null'
+        dateOfDeath: { type: [string, 'null'], format: date, description: 'Needs status Deceased; not in the future or before dateOfBirth. Explicit null clears it.' }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+
+    PatientPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Patient' }
         pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:
