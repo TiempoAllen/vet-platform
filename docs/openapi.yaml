@@ -529,7 +529,8 @@ paths:
       description: |
         Requires `patients.read`. Unknown or other clinics' patients are 404. Entries have a fixed `details` shape per
         `type`; clients must ignore types they do not know, because later milestones add types without a version
-        change. Ties on `occurredAt` are broken by `id`, descending.
+        change. Ties on `occurredAt` are broken by `id`, then `type`, descending (uuids compare as lowercase hex
+        strings).
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -842,14 +843,9 @@ components:
         dateOfDeath: { type: [string, 'null'], format: date, description: Only set while status is Deceased. }
         notes: { type: [string, 'null'], maxLength: 4000 }
         client:
-          type: object
-          additionalProperties: false
-          required: [id, firstName, lastName]
           description: The primary owner.
-          properties:
-            id: { type: string, format: uuid }
-            firstName: { type: string }
-            lastName: { type: string }
+          allOf:
+            - $ref: '#/components/schemas/PatientClientSummary'
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
@@ -921,7 +917,10 @@ components:
     PatientHistoryEntry:
       type: object
       required: [id, type, occurredAt, actor, details]
-      description: Use `type` + `id` as the key. Ignore entries with an unknown `type`.
+      description: |
+        Use `type` + `id` as the key. Ignore entries with an unknown `type`. Deliberately no `discriminator`: generated
+        clients must accept unknown types as this base schema and narrow on `type` themselves. Known types and their
+        schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry.
       properties:
         id: { type: string, format: uuid, description: Id of the source record; unique per type. }
         type:
@@ -932,20 +931,13 @@ components:
         actor:
           description: The staff member who caused the entry, or null.
           oneOf:
-            - type: object
-              additionalProperties: false
-              required: [id, name]
-              properties:
-                id: { type: string, format: uuid }
-                name: { type: string }
+            - $ref: '#/components/schemas/PatientHistoryActor'
             - type: 'null'
         details:
           type: object
-          description: Shape fixed per type. See PatientRegisteredDetails.
-      discriminator:
-        propertyName: type
-        mapping:
-          PatientRegistered: '#/components/schemas/PatientRegisteredEntry'
+          description: Shape fixed per type; see the known entry schemas below.
+      x-known-types:
+        PatientRegistered: '#/components/schemas/PatientRegisteredEntry'
 
     PatientRegisteredEntry:
       allOf:
@@ -955,6 +947,23 @@ components:
             type: { const: PatientRegistered }
             details: { $ref: '#/components/schemas/PatientRegisteredDetails' }
 
+    PatientClientSummary:
+      type: object
+      additionalProperties: false
+      required: [id, firstName, lastName]
+      properties:
+        id: { type: string, format: uuid }
+        firstName: { type: string }
+        lastName: { type: string }
+
+    PatientHistoryActor:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
     PatientRegisteredDetails:
       type: object
       additionalProperties: false
@@ -963,13 +972,7 @@ components:
         client:
           description: The owner at registration with the client's current name; null if it can no longer be shown.
           oneOf:
-            - type: object
-              additionalProperties: false
-              required: [id, firstName, lastName]
-              properties:
-                id: { type: string, format: uuid }
-                firstName: { type: string }
-                lastName: { type: string }
+            - $ref: '#/components/schemas/PatientClientSummary'
             - type: 'null'
 
     PatientHistoryPage:

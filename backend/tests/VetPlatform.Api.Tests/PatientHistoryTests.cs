@@ -207,6 +207,35 @@ public sealed class PatientHistoryTests(DatabaseApiFactory factory) : IClassFixt
 
         var entry = Assert.Single(data);
         Assert.NotEqual(otherUser.Id, entry.GetProperty("actor").GetProperty("id").GetGuid());
+        Assert.Equal(1, (await HistoryAsync(http, patientId)).GetProperty("pagination").GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task AnotherClinicsUserOrClient_NamedOnThisClinicsEntry_IsNeverResolved()
+    {
+        var (http, user, _, patientId) = await ClinicWithPatientAsync();
+        var (_, otherUser, otherClient, _) = await ClinicWithPatientAsync();
+        await AddAuditEntryAsync(
+            user.ClinicId, otherUser.Id, patientId, $$"""{"clientId": "{{otherClient}}"}""", factory.Clock.GetUtcNow().AddMinutes(1));
+
+        var entry = (await HistoryAsync(http, patientId)).GetProperty("data")[0];
+
+        Assert.Equal(JsonValueKind.Null, entry.GetProperty("actor").ValueKind);
+        Assert.Equal(JsonValueKind.Null, entry.GetProperty("details").GetProperty("client").ValueKind);
+    }
+
+    [Fact]
+    public async Task TiesOnOccurredAt_AreBrokenByIdDescending()
+    {
+        var (http, user, _, patientId) = await ClinicWithPatientAsync();
+        var at = factory.Clock.GetUtcNow().AddMinutes(1);
+        await AddAuditEntryAsync(user.ClinicId, user.Id, patientId, null, at);
+        await AddAuditEntryAsync(user.ClinicId, user.Id, patientId, null, at);
+
+        var ids = (await HistoryAsync(http, patientId)).GetProperty("data").EnumerateArray()
+            .Take(2).Select(e => e.GetProperty("id").GetString()!).ToList();
+
+        Assert.Equal(ids.OrderByDescending(id => id, StringComparer.Ordinal), ids);
     }
 
     [Fact]

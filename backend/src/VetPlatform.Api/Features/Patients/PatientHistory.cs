@@ -61,6 +61,8 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
             .Where(entry => entry.EntityType == nameof(Patient)
                 && entry.EntityId == patientId
                 && entry.Action == AuditActions.PatientCreated)
+            // Documented order: occurredAt, then id, then type, all descending. With one source the type is
+            // constant; the UNION over several sources (ADR-007) must sort on all three.
             .OrderByDescending(entry => entry.OccurredAt)
             .ThenByDescending(entry => entry.Id);
 
