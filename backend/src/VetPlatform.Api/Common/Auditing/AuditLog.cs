@@ -58,6 +58,13 @@ public static class AuditActions
     public const string ClientUpdated = "client.updated";
     public const string PatientCreated = "patient.created";
     public const string PatientUpdated = "patient.updated";
+    public const string ClinicUpdated = "clinic.updated";
+    public const string WorkingHoursCreated = "working_hours.created";
+    public const string WorkingHoursUpdated = "working_hours.updated";
+    public const string WorkingHoursDeleted = "working_hours.deleted";
+    public const string ScheduleExceptionCreated = "schedule_exception.created";
+    public const string ScheduleExceptionUpdated = "schedule_exception.updated";
+    public const string ScheduleExceptionDeleted = "schedule_exception.deleted";
 }
 
 /// <summary>

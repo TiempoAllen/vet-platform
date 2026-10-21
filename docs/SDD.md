@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-07). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-08). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -137,7 +137,7 @@ erDiagram
   }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms
@@ -193,7 +193,8 @@ table append-only and stamp `recorded_at` from the database clock. Metadata neve
 emails. Action names so far:
 
 `auth.login_succeeded`, `auth.login_failed`, `auth.account_locked`, `auth.logout`, `auth.password_changed`,
-`auth.password_change_failed`, `auth.sessions_revoked`, `user.created`, `user.updated`, `user.roles_changed`, `client.created`, `client.updated`, `patient.created`, `patient.updated`.
+`auth.password_change_failed`, `auth.sessions_revoked`, `user.created`, `user.updated`, `user.roles_changed`, `client.created`, `client.updated`, `patient.created`, `patient.updated`, `clinic.updated`, `working_hours.created|updated|deleted`,
+`schedule_exception.created|updated|deleted`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 
@@ -244,7 +245,10 @@ Every module from B-05 onward follows this template; the milestone records any d
 | `settings.manage`, `audit.read` | ✓ | – | – | – | – |
 
 This table is a proposal to be confirmed per milestone with the user; `Permissions.cs` is the source of truth.
-The `clients.*` row was confirmed and implemented in B-05, the `patients.*` row in B-06.
+The `clients.*` row was confirmed and implemented in B-05, the `patients.*` row in B-06. B-08 added `schedules.read` (Admin, Veterinarian, Nurse, Receptionist),
+`schedules.manage` (Admin), `schedules.manage_own` (Veterinarian) and `settings.manage` (Admin). Endpoints whose
+finer rule lives in the service use `[RequireAnyPermission(...)]`, so a caller with none of the permissions is still
+refused before body validation.
 
 4. **Service** owns rules and transactions; it records audit entries before `SaveChanges`.
 5. **Controller** with `[RequirePermission]` on every action; unsafe actions only as controller actions.

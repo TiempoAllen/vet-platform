@@ -57,6 +57,7 @@ public static class AuthServiceCollectionExtensions
         // MapControllers().RequireAuthorization() in Program.cs. Role and permission checks are added in B-04.
         services.AddAuthorization();
         services.AddSingleton<IAuthorizationHandler, PermissionHandler>();
+        services.AddSingleton<IAuthorizationHandler, AnyPermissionHandler>();
 
         services.AddAntiforgery(CsrfProtection.Configure);
         services.AddSingleton<IAntiforgeryAdditionalDataProvider, SessionBoundAntiforgeryData>();

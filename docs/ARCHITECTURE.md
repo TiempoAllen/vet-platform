@@ -300,3 +300,48 @@ Choose the simplest solution that satisfies documented requirements, security, m
   never names (ADR-004), so a renamed client shows the new name on old entries.
 - **Staff names** (actor) are visible to every role with `patients.read`, as on a paper record; `users.read` still
   governs the staff list itself.
+
+### ADR-008: Clinic time zone and veterinarian schedules (decided in B-08)
+- **Time zone now, not in B-26** (confirmed): `clinics.time_zone` holds an IANA id (default `UTC`), set by
+  `create-admin --timezone` and `PATCH /api/clinic` (`settings.manage`). Working hours are local wall-clock times;
+  instants (exceptions, later appointments) are stored in UTC. Windows zone ids are refused so data stays portable.
+- **Who has a schedule** (confirmed): users with the `Veterinarian` role. Blocks and exceptions reference them through
+  a composite foreign key on `(clinic_id, user_id)`; `users` gained the unique `(clinic_id, id)` key for it.
+- **Permissions** (confirmed): `schedules.read` for Admin, Veterinarian, Nurse, Receptionist; `schedules.manage`
+  (anyone's, closures) for Admin; `schedules.manage_own` for Veterinarian. Write endpoints use
+  `[RequireAnyPermission(manage, manage_own)]` at the door and the service checks "own"; a role change applies on the
+  next request, without the user-management lock (no cross-row invariant here).
+- **SRS Q-3** (confirmed): 5-minute grid everywhere; no buffers (a per-clinic buffer can be a B-26 setting); B-09 lets
+  `appointments.manage` holders override a conflict with a required reason, audited.
+- **Weekly hours as versioned blocks:** day of week, start/end minute (1440 = `24:00`), effective dates. Overnight
+  shifts are two blocks. Overlaps are refused in the service under a row lock on the veterinarian (no exclusion
+  constraint yet; B-09 introduces `btree_gist` for appointments and can add one here).
+- **Exceptions** (confirmed): per veterinarian `Leave`, `Sickness`, `Training`, `Other`; clinic-wide `Closure` with no
+  veterinarian. Instants on the grid. Exceptions and blocks can be deleted: they are planning data, not clinical or
+  financial history, and every change is audited.
+- **Staff privacy:** an absence type and reason can be health information. Only `schedules.manage` holders and the
+  veterinarian concerned see them; others see `Unavailable` with no reason. Audit metadata never includes the reason,
+  and records the type only for closures, because a future audit reader may not hold `schedules.manage`.
+- **Bounds:** dates and instants must fall in 2000–2100 (keeps calendar arithmetic away from DateTime limits; year
+  0001 would be stored as `-infinity`); at most 200 weekly-hours blocks per veterinarian; the subtraction of exceptions
+  is a single linear pass, so overlapping exceptions cannot make the computation quadratic.
+- **Locking:** weekly-hours writes take `FOR NO KEY UPDATE` on the veterinarian's user row (it serialises schedule
+  writers but does not block foreign-key checks from other tables), only after the clinic-filtered lookup, and re-read
+  the account status under the lock. Concurrent update/delete of the same row maps to `409 CONFLICT` globally
+  (`DbUpdateConcurrencyException`).
+- **Computed working hours** (confirmed): a pure calculator expands blocks for each local date, converts to instants
+  in the clinic zone, merges, and subtracts the veterinarian's exceptions and all closures. Daylight saving: skipped
+  local times move forward to the next valid time; repeated local times are read as standard time. Responses carry
+  the local offset. B-09 reuses the calculator for booking validation and subtracts appointments for free slots.
+- **Strict instants:** every `DateTimeOffset` in a JSON body must carry an explicit offset (`StrictInstantConverter`);
+  otherwise .NET would assume the server's zone. Query-string instants use the same rule (`StrictInstant`).
+- **Accepted for now:**
+  - Changing the clinic time zone shifts all future working periods (they are local times); exceptions, being
+    instants, do not move. Documented in API.md section 4.1.
+  - Disabling a veterinarian keeps their blocks; computed hours still show them. B-09 must also refuse booking a
+    disabled veterinarian.
+  - The working-hours endpoint loads all blocks of the veterinarian that overlap the range and computes in memory;
+    bounded by the 62-day limit and the block cap. Exceptions are not capped (years of leave are legitimate); the
+    range query uses the `(clinic_id, veterinarian_id, ends_at)` index.
+  - `ix_users_clinic_id` is now redundant with the `(clinic_id, id)` key; dropping it (and the same pair on clients and
+    patients) is left to a later clean-up migration.
