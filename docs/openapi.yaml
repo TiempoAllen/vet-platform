@@ -13,7 +13,9 @@ info:
     - Every unsafe request (POST, PUT, PATCH, DELETE), including login and logout, needs the `X-XSRF-TOKEN` header
       equal to the `XSRF-TOKEN` cookie, obtained from `GET /api/auth/csrf`.
     - Every endpoint requires a signed-in user unless it declares `security: []`.
-    - Error precedence: 429, 401, 403 FORBIDDEN, 403 CSRF_TOKEN_INVALID, 400/422, then the endpoint's own result.
+    - Error precedence: 429, 401, 403 FORBIDDEN, 403 CSRF_TOKEN_INVALID, 400/422, then the endpoint's own result
+      (scheduling: a schedules.manage_own caller acting on another veterinarian's schedule gets its 403 after 400/422).
+    - A concurrent change or delete of the same record is 409 CONFLICT.
     - Every response carries `X-Request-Id`.
     - Enum values are accepted only as exact names (`Admin`, `Active`).
     - Instants must carry an explicit offset (`Z` or `+01:00`); dates are `YYYY-MM-DD`.
@@ -634,7 +636,7 @@ paths:
       tags: [Scheduling]
       operationId: createWeeklyHoursBlock
       summary: Add a weekly-hours block
-      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). 409 when it overlaps another block of the same day while both are in effect; 422 for a disabled veterinarian.'
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule. 403 comes before body validation only when the caller has neither manage permission; the not-your-own-schedule 403 comes after 400/422 body checks. 409 when it overlaps another block of the same day while both are in effect; 422 for a disabled veterinarian.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -668,7 +670,7 @@ paths:
       tags: [Scheduling]
       operationId: updateWeeklyHoursBlock
       summary: Change a weekly-hours block
-      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Omitted or null fields are unchanged; an explicit null effectiveTo clears it.'
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule. 403 comes before body validation only when the caller has neither manage permission; the not-your-own-schedule 403 comes after 400/422 body checks. Omitted or null fields are unchanged; an explicit null effectiveTo clears it.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -694,7 +696,7 @@ paths:
       tags: [Scheduling]
       operationId: deleteWeeklyHoursBlock
       summary: Remove a weekly-hours block
-      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Audited.'
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule. 403 comes before body validation only when the caller has neither manage permission; the not-your-own-schedule 403 comes after 400/422 body checks. Audited.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       responses:
@@ -716,8 +718,8 @@ paths:
         the veterinarian's exceptions and all clinic closures, as half-open intervals with the clinic's local offset.
         Appointments are not subtracted (B-09).
       parameters:
-        - { name: from, in: query, required: true, schema: { type: string, format: date } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+        - { name: from, in: query, required: true, description: 'YYYY-MM-DD, 2000-01-01..2100-12-31.', schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, description: 'YYYY-MM-DD, at most 62 days after from.', schema: { type: string, format: date } }
       responses:
         '200':
           description: Working periods.
@@ -758,7 +760,7 @@ paths:
       tags: [Scheduling]
       operationId: createScheduleException
       summary: Record an exception or a clinic closure
-      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Closures (no veterinarianId, type Closure) need `schedules.manage`.'
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule. 403 comes before body validation only when the caller has neither manage permission; the not-your-own-schedule 403 comes after 400/422 body checks. Closures (no veterinarianId, type Closure) need `schedules.manage`.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -806,7 +808,7 @@ paths:
       tags: [Scheduling]
       operationId: updateScheduleException
       summary: Change an exception
-      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). The veterinarian cannot change; a closure cannot become a personal exception or the reverse.'
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule. 403 comes before body validation only when the caller has neither manage permission; the not-your-own-schedule 403 comes after 400/422 body checks. The veterinarian cannot change; a closure cannot become a personal exception or the reverse.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -831,7 +833,7 @@ paths:
       tags: [Scheduling]
       operationId: deleteScheduleException
       summary: Cancel an exception
-      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Audited.'
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule. 403 comes before body validation only when the caller has neither manage permission; the not-your-own-schedule 403 comes after 400/422 body checks. Audited.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       responses:

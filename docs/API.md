@@ -420,8 +420,10 @@ and every instant must be on a 5-minute mark.
 
 Permissions: `schedules.read` (Admin, Veterinarian, Nurse, Receptionist) reads everything below.
 `schedules.manage` (Admin) changes anyone's schedule and clinic closures. `schedules.manage_own` (Veterinarian)
-changes only the caller's own hours and exceptions; for someone else's it is `403`. Callers with neither manage
-permission get `403` before any body validation.
+changes only the caller's own hours and exceptions: for any other veterinarian id (including unknown ids) and for
+closures it is `403`. Callers with neither manage permission get `403` before any body validation; the "not your own
+schedule" `403` is decided by the server after the body has been read, so a malformed body from such a caller may get
+`400`/`422` first.
 
 Veterinarians are the clinic's users holding the `Veterinarian` role. An id that is not one of them (another clinic's
 user, a nurse, unknown) is `404`. A disabled veterinarian's schedule can be read, edited and deleted, but nothing new
@@ -439,7 +441,8 @@ can be added for them (`422`, field `veterinarianId`).
 - `startTime` / `endTime`: `HH:mm` on the 5-minute grid; `endTime` may be `24:00` (midnight at the end of the day).
   A shift past midnight is two blocks (Friday 20:00–24:00 and Saturday 00:00–02:00).
 - `effectiveFrom` (default: today in the clinic's time zone) and `effectiveTo` (inclusive, `null` = open-ended) are
-  dates. To change someone's hours from a date, set `effectiveTo` on the old block and add a new one.
+  dates between 2000-01-01 and 2100-12-31. To change someone's hours from a date, set `effectiveTo` on the old block
+  and add a new one. A veterinarian can have at most 200 blocks in total (`409` beyond that; delete old versions).
 - Several blocks per day are allowed (09:00–12:30 and 13:30–17:00). Blocks of one veterinarian on the same day may
   not overlap in time while their dates overlap: `409 CONFLICT`.
 
@@ -464,14 +467,15 @@ blocks are not clinical history; changes are audited).
 - `veterinarianId` is `null` exactly when `type` is `Closure`; otherwise `422`.
 - **Privacy:** staff absences can be health information. Only `schedules.manage` holders and the veterinarian
   concerned see the real `type` and `reason`. Everyone else sees `"type": "Unavailable"` and `"reason": null`.
-  Closures are shown in full to everyone. `Unavailable` is never accepted as input.
+  Closures are shown in full to everyone. `Unavailable` is never accepted as input (`400`).
 - `startsAt` / `endsAt` are instants: ISO 8601 **with an explicit offset** (`Z` or `+01:00`) on the 5-minute grid,
-  `endsAt` after `startsAt`. Without an offset the request is `400`. Responses are in UTC. A whole local day is the
+  `endsAt` after `startsAt`, between 2000-01-01 and 2100-12-31. Without an offset the request is `400`. Responses are in UTC. A whole local day is the
   local midnight-to-midnight instants (the frontend converts using `GET /api/clinic`).
 - Exceptions may overlap each other.
 
 `GET /api/schedule-exceptions` (`schedules.read`): paginated, by `startsAt` then id.
-- `veterinarianId`: that veterinarian's exceptions **and** all closures.
+- `veterinarianId`: that veterinarian's exceptions **and** all closures. The id is not checked: an unknown id simply
+  matches only the closures.
 - `from` / `to`: instants (offset required; encode `+` as `%2B` in the query string); only exceptions ending after
   `from` / starting before `to`. Invalid values or `to` not after `from` are `422`.
 
@@ -484,7 +488,7 @@ exception or the reverse; `""` clears the reason) and `DELETE /api/schedule-exce
 **Computed working hours**
 
 `GET /api/veterinarians/:id/working-hours?from=YYYY-MM-DD&to=YYYY-MM-DD` (`schedules.read`): the actual working
-periods for the local calendar days `from` to `to` (inclusive, at most 62 days): weekly hours minus that
+periods for the local calendar days `from` to `to` (inclusive, at most 62 days, between 2000-01-01 and 2100-12-31): weekly hours minus that
 veterinarian's exceptions and all closures.
 
     { "veterinarianId": "uuid", "timeZone": "Europe/London", "from": "2026-06-01", "to": "2026-06-07",
@@ -498,7 +502,12 @@ veterinarian's exceptions and all closures.
 - Appointments are not subtracted yet; B-09 builds booking validation on this.
 
 Every create, update and delete of hours and exceptions is audited (`working_hours.*`, `schedule_exception.*`).
-Metadata holds the veterinarian, the type and the changed field names, never the reason.
+Metadata holds the veterinarian and the changed field names; the type only for closures; never the reason.
+
+`Location` headers (here and on every create) are URI references: they may be absolute or relative to the API.
+
+If two people change or delete the same record at the same moment, the loser gets `409 CONFLICT` ("changed or
+removed by someone else"); reload and retry.
 
 ## 8. Consultations
 `GET /api/patients/:id/consultations`

@@ -16,6 +16,24 @@ public static class ScheduleRules
     /// <summary>The longest range the computed working hours endpoint accepts, in days.</summary>
     public const int MaxWorkingHoursRangeDays = 62;
 
+    /// <summary>Most weekly-hours blocks (all versions) one veterinarian may have; keeps every read bounded.</summary>
+    public const int MaxBlocksPerVeterinarian = 200;
+
+    /// <summary>
+    /// Dates and instants must fall in 2000–2100. Keeps calendar arithmetic away from DateTime's limits (year 0001 is
+    /// stored as -infinity by Npgsql, year 9999 overflows) and catches typos such as 0202.
+    /// </summary>
+    public static readonly DateOnly MinSupportedDate = new(2000, 1, 1);
+
+    public static readonly DateOnly MaxSupportedDate = new(2100, 12, 31);
+
+    public const string SupportedRangeMessage = "Dates must be between 2000-01-01 and 2100-12-31.";
+
+    public static bool IsInSupportedRange(DateOnly date) => date >= MinSupportedDate && date <= MaxSupportedDate;
+
+    public static bool IsInSupportedRange(DateTimeOffset instant) =>
+        IsInSupportedRange(DateOnly.FromDateTime(instant.UtcDateTime));
+
     public static bool IsOnGranularity(int minuteOfDay) => minuteOfDay % GranularityMinutes == 0;
 
     /// <summary>On the grid in UTC; every real time zone offset is a multiple of 5 minutes, so also locally.</summary>
@@ -151,5 +169,6 @@ internal sealed class ScheduleExceptionConfiguration : IEntityTypeConfiguration<
         // Range queries: a veterinarian's exceptions (and closures, veterinarian null) overlapping a period.
         builder.HasIndex(exception => new { exception.ClinicId, exception.VeterinarianId, exception.StartsAt });
         builder.HasIndex(exception => new { exception.ClinicId, exception.StartsAt, exception.Id });
+        builder.HasIndex(exception => new { exception.ClinicId, exception.VeterinarianId, exception.EndsAt });
     }
 }

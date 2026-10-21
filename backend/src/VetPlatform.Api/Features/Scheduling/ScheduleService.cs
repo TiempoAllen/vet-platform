@@ -69,6 +69,13 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
         CheckBlock(block, problems);
         ThrowIfAny(problems);
         await EnsureNoOverlapAsync(block, cancellationToken);
+        if (await db.WorkingHours.CountAsync(b => b.VeterinarianId == veterinarianId, cancellationToken)
+            >= ScheduleRules.MaxBlocksPerVeterinarian)
+        {
+            throw new ApiException(
+                StatusCodes.Status409Conflict, ErrorCodes.Conflict,
+                $"A veterinarian can have at most {ScheduleRules.MaxBlocksPerVeterinarian} weekly-hours blocks; delete old ones first.");
+        }
 
         db.WorkingHours.Add(block);
         audit.Record(AuditActions.WorkingHoursCreated, nameof(WorkingHoursBlock), block.Id, new { veterinarianId });
@@ -219,7 +226,7 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
         db.ScheduleExceptions.Add(exception);
         audit.Record(
             AuditActions.ScheduleExceptionCreated, nameof(ScheduleException), exception.Id,
-            new { veterinarianId = exception.VeterinarianId, type = exception.Type });
+            AuditMetadata(exception));
         await db.SaveChangesAsync(cancellationToken);
         return ScheduleExceptionResponse.From(exception, showDetails: true);
     }
@@ -270,7 +277,7 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
         {
             audit.Record(
                 AuditActions.ScheduleExceptionUpdated, nameof(ScheduleException), exception.Id,
-                new { veterinarianId = exception.VeterinarianId, type = exception.Type, fields = changed });
+                AuditMetadata(exception, changed));
             await db.SaveChangesAsync(cancellationToken);
         }
 
@@ -284,9 +291,18 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
         db.ScheduleExceptions.Remove(exception);
         audit.Record(
             AuditActions.ScheduleExceptionDeleted, nameof(ScheduleException), exception.Id,
-            new { veterinarianId = exception.VeterinarianId, type = exception.Type });
+            AuditMetadata(exception));
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Names the veterinarian and changed fields. The type is recorded only for closures: a personal absence type
+    /// ("Sickness") is as private as its reason (ADR-008), and an audit reader may lack <c>schedules.manage</c>.
+    /// </summary>
+    private static object AuditMetadata(ScheduleException exception, List<string>? fields = null) =>
+        exception.Type == ScheduleExceptionType.Closure
+            ? new { veterinarianId = exception.VeterinarianId, type = exception.Type, fields }
+            : new { veterinarianId = exception.VeterinarianId, type = (ScheduleExceptionType?)null, fields };
 
     // ---------- Computed working hours ----------
 
@@ -334,20 +350,26 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
     /// <summary>404 unless the id is a veterinarian of this clinic; writes also need the account to be active (422).</summary>
     private async Task FindVeterinarianAsync(Guid id, bool requireActive, CancellationToken cancellationToken, bool lockRow = false)
     {
-        var veterinarian = await Veterinarians().SingleOrDefaultAsync(user => user.Id == id, cancellationToken)
-            ?? throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The veterinarian was not found.");
-
-        if (requireActive && veterinarian.Status != UserStatus.Active)
+        if (!await Veterinarians().AnyAsync(user => user.Id == id, cancellationToken))
         {
-            throw new ApiException(
-                StatusCodes.Status422UnprocessableEntity, ErrorCodes.ValidationError, "One or more fields are invalid.",
-                [new ApiErrorDetail("veterinarianId", "The veterinarian's account is disabled.")]);
+            throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The veterinarian was not found.");
         }
 
         if (lockRow)
         {
-            // Serialises changes to one veterinarian's weekly hours, so two overlapping blocks cannot both pass the check.
-            await db.Database.ExecuteSqlAsync($"SELECT 1 FROM users WHERE id = {id} FOR UPDATE", cancellationToken);
+            // Serialises changes to one veterinarian's weekly hours, so two overlapping blocks cannot both pass the
+            // check. Taken only after the clinic-filtered lookup, so no other clinic's row is ever locked. NO KEY UPDATE
+            // does not block foreign-key checks of other tables that reference the user.
+            await db.Database.ExecuteSqlAsync($"SELECT 1 FROM users WHERE id = {id} FOR NO KEY UPDATE", cancellationToken);
+        }
+
+        // Read after the lock, so a concurrent disable cannot slip between the check and the write.
+        if (requireActive
+            && !await Veterinarians().AnyAsync(user => user.Id == id && user.Status == UserStatus.Active, cancellationToken))
+        {
+            throw new ApiException(
+                StatusCodes.Status422UnprocessableEntity, ErrorCodes.ValidationError, "One or more fields are invalid.",
+                [new ApiErrorDetail("veterinarianId", "The veterinarian's account is disabled.")]);
         }
     }
 
@@ -410,6 +432,16 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
             problems.Add(new ApiErrorDetail("endTime", "The end time must be after the start time."));
         }
 
+        if (!ScheduleRules.IsInSupportedRange(block.EffectiveFrom))
+        {
+            problems.Add(new ApiErrorDetail("effectiveFrom", ScheduleRules.SupportedRangeMessage));
+        }
+
+        if (block.EffectiveTo is { } to && !ScheduleRules.IsInSupportedRange(to))
+        {
+            problems.Add(new ApiErrorDetail("effectiveTo", ScheduleRules.SupportedRangeMessage));
+        }
+
         if (block.EffectiveTo is { } effectiveTo && effectiveTo < block.EffectiveFrom)
         {
             problems.Add(new ApiErrorDetail("effectiveTo", "effectiveTo cannot be before effectiveFrom."));
@@ -418,6 +450,21 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
 
     private static void CheckRange(ScheduleException exception, List<ApiErrorDetail> problems)
     {
+        if (!ScheduleRules.IsInSupportedRange(exception.StartsAt))
+        {
+            problems.Add(new ApiErrorDetail("startsAt", ScheduleRules.SupportedRangeMessage));
+        }
+
+        if (!ScheduleRules.IsInSupportedRange(exception.EndsAt))
+        {
+            problems.Add(new ApiErrorDetail("endsAt", ScheduleRules.SupportedRangeMessage));
+        }
+
+        if (problems.Count > 0)
+        {
+            return;
+        }
+
         if (!ScheduleRules.IsOnGranularity(exception.StartsAt))
         {
             problems.Add(new ApiErrorDetail("startsAt", $"Must be on a {ScheduleRules.GranularityMinutes}-minute mark."));

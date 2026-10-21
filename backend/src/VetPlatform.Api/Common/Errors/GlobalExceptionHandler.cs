@@ -46,6 +46,16 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
                     httpContext, badRequest.StatusCode, badCode, badMessage, cancellationToken: cancellationToken);
                 return true;
 
+            case Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException:
+                logger.LogInformation("A record was changed or removed concurrently.");
+                await ErrorResponseWriter.WriteAsync(
+                    httpContext,
+                    StatusCodes.Status409Conflict,
+                    ErrorCodes.Conflict,
+                    "The record was changed or removed by someone else. Reload it and try again.",
+                    cancellationToken: cancellationToken);
+                return true;
+
             case Exception when IsUnstorableText(exception):
                 logger.LogInformation("Rejected a request containing text the database cannot store.");
                 await ErrorResponseWriter.WriteAsync(

@@ -73,21 +73,30 @@ public static class WorkingHoursCalculator
         return merged;
     }
 
-    /// <summary>Both inputs sorted and merged.</summary>
+    /// <summary>Both inputs sorted and merged, so one forward pass over each is enough (linear, not quadratic).</summary>
     private static List<Interval> Subtract(List<Interval> working, List<Interval> unavailable)
     {
         var result = new List<Interval>();
+        var next = 0;
         foreach (var period in working)
         {
-            var start = period.Start;
-            foreach (var gap in unavailable.Where(gap => gap.End > start && gap.Start < period.End))
+            while (next < unavailable.Count && unavailable[next].End <= period.Start)
             {
-                if (gap.Start > start)
+                next++;
+            }
+
+            var start = period.Start;
+            for (var i = next; i < unavailable.Count && unavailable[i].Start < period.End; i++)
+            {
+                if (unavailable[i].Start > start)
                 {
-                    result.Add(new Interval(start, gap.Start));
+                    result.Add(new Interval(start, unavailable[i].Start));
                 }
 
-                start = gap.End > start ? gap.End : start;
+                if (unavailable[i].End > start)
+                {
+                    start = unavailable[i].End;
+                }
             }
 
             if (start < period.End)

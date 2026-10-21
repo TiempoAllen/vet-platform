@@ -323,8 +323,8 @@ Implemented in B-08 (ADR-008). Every time and instant is on a 5-minute grid.
 - effective_from (`date`), effective_to (`date`, nullable, inclusive; CHECK ≥ effective_from)
 - created_at, updated_at
 
-No overlapping blocks for one veterinarian, day and overlapping dates: checked in the service under a row lock on the
-veterinarian's user row (an exclusion constraint would need `btree_gist`; revisit with B-09's appointment constraint).
+No overlapping blocks for one veterinarian, day and overlapping dates (at most 200 blocks per veterinarian): checked
+in the service under a `FOR NO KEY UPDATE` row lock on the veterinarian's user row (an exclusion constraint would need `btree_gist`; revisit with B-09's appointment constraint).
 Index (clinic_id, veterinarian_id, day_of_week, start_minute).
 
 ### ScheduleException (table `schedule_exceptions`)
@@ -335,7 +335,8 @@ Index (clinic_id, veterinarian_id, day_of_week, start_minute).
 - reason (max 500; may be staff health information, never copied into audit metadata)
 - created_at, updated_at
 
-Indexes (clinic_id, veterinarian_id, starts_at) and (clinic_id, starts_at, id).
+Indexes (clinic_id, veterinarian_id, starts_at), (clinic_id, veterinarian_id, ends_at) and (clinic_id, starts_at,
+id). Dates and instants are limited to 2000–2100 by the API.
 
 Appointment availability must account for existing appointments and schedule exceptions.
 
