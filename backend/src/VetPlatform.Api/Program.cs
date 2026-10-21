@@ -26,6 +26,7 @@ builder.Services.AddAuth(builder.Configuration);
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<ClientService>();
 builder.Services.AddScoped<PatientService>();
+builder.Services.AddScoped<PatientHistoryService>();
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection
 // attempt from stalling health probes.
