@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Diagnostics;
+using Npgsql;
 
 namespace VetPlatform.Api.Common.Errors;
 
@@ -45,6 +46,16 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
                     httpContext, badRequest.StatusCode, badCode, badMessage, cancellationToken: cancellationToken);
                 return true;
 
+            case Exception when IsUnstorableText(exception):
+                logger.LogInformation("Rejected a request containing text the database cannot store.");
+                await ErrorResponseWriter.WriteAsync(
+                    httpContext,
+                    StatusCodes.Status400BadRequest,
+                    ErrorCodes.BadRequest,
+                    "The request contains characters that cannot be stored.",
+                    cancellationToken: cancellationToken);
+                return true;
+
             default:
                 logger.LogError(
                     exception,
@@ -59,5 +70,22 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
                     cancellationToken: cancellationToken);
                 return true;
         }
+    }
+
+    /// <summary>
+    /// PostgreSQL refuses NUL characters in text (SQLSTATE 22021), whether they came in a JSON body or a query string.
+    /// EF Core wraps the error in a <c>DbUpdateException</c> on save, so the whole chain is searched.
+    /// </summary>
+    private static bool IsUnstorableText(Exception? exception)
+    {
+        for (; exception is not null; exception = exception.InnerException)
+        {
+            if (exception is PostgresException { SqlState: PostgresErrorCodes.CharacterNotInRepertoire })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

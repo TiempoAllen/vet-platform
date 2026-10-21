@@ -42,7 +42,12 @@ Error codes (stable; clients may switch on them): `BAD_REQUEST`, `UNAUTHENTICATE
 `RATE_LIMITED`, `INTERNAL_ERROR`.
 
 Status mapping for request-body problems: `422 VALIDATION_ERROR` when the body parses but field values are invalid;
-`400 BAD_REQUEST` when the body is missing or not valid JSON (parser details are not echoed).
+`400 BAD_REQUEST` when the body is missing or not valid JSON (parser details are not echoed), or when any text
+(body or query string) contains a NUL character, which cannot be stored.
+
+`details` may not list every invalid field: checks that compare or parse values (email format, enum query
+parameters, blank names in a PATCH) run only after the basic required/length checks pass. Show what is returned
+and expect further errors after the user corrects it.
 
 Request correlation: every response, success or error, carries an `X-Request-Id` header equal to the `requestId`
 in error bodies. A client may supply its own `X-Request-Id` (max 64 characters of `A-Z a-z 0-9 - _ .`);
@@ -104,7 +109,7 @@ in (a valid CSRF token is still required; on `403 CSRF_TOKEN_INVALID` refresh it
       "id": "uuid", "name": "Jo Vet", "email": "jo@clinic.example",
       "clinic": { "id": "uuid", "name": "Happy Paws" },
       "roles": ["Admin", "Veterinarian"],
-      "permissions": ["users.manage", "users.read"]
+      "permissions": ["clients.manage", "clients.read", "users.manage", "users.read"]
     }
 
 `email` is returned normalized (trimmed, lowercase). `roles` and `permissions` reflect the current state on every call
@@ -131,8 +136,13 @@ Implemented in B-04. All endpoints act on the caller's clinic only: users of oth
 
 **Roles** (fixed): `Admin`, `Veterinarian`, `Nurse`, `Receptionist`, `Inventory`. Users created or edited through
 the API hold one or more; `GET /api/auth/me` still returns empty arrays for a user with none.
-**Permissions** granted so far: `users.read`, `users.manage`, both to `Admin` only. Later milestones add permissions
-and grant them to roles; `GET /api/auth/me` lists the caller's.
+**Permissions** granted so far (later milestones add more; `GET /api/auth/me` lists the caller's):
+
+| Permission | Admin | Veterinarian | Nurse | Receptionist | Inventory |
+|---|:-:|:-:|:-:|:-:|:-:|
+| `users.read`, `users.manage` | ✓ | – | – | – | – |
+| `clients.read` | ✓ | ✓ | ✓ | ✓ | – |
+| `clients.manage` | ✓ | – | – | ✓ | – |
 
 **User object**
 
@@ -198,12 +208,66 @@ request is refused with `403 FORBIDDEN`.
 Every change made through these endpoints is written to the audit log.
 
 ## 5. Clients
-`GET /api/clients`
-`GET /api/clients/:id`
-`POST /api/clients`
-`PATCH /api/clients/:id`
+Implemented in B-05. Clients are the pet owners of the caller's clinic: other clinics' clients are `404 NOT_FOUND`,
+never `403`. Missing permission is `403 FORBIDDEN`. Clients are never deleted (there is no `DELETE`; it is `405`):
+deactivate them with `"status": "Inactive"`.
 
-Support pagination, search, filtering, and sorting as documented by the implementation.
+**Client object**
+
+    {
+      "id": "uuid", "firstName": "Jane", "lastName": "Doe",
+      "email": "jane@example.com" | null, "phone": "+1 555 0100" | null,
+      "addressLine1": "1 Main St" | null, "addressLine2": null, "city": "Springfield" | null,
+      "region": "IL" | null, "postalCode": "62701" | null, "country": "US" | null,
+      "preferredContactMethod": "Email" | "Phone" | "Sms" | null,
+      "notes": "..." | null, "status": "Active" | "Inactive",
+      "createdAt": "...", "updatedAt": "..."
+    }
+
+Every field is always present; absent values are `null`. `region` is a state, province or county. `country` is free
+text. `preferredContactMethod: null` means no stated preference.
+
+`GET /api/clients` (`clients.read`): paginated list (section 13). Includes inactive clients unless `status` is given.
+- `q`: case-insensitive substring match on first name, last name, full name ("Jane Doe"), email or phone (max 100
+  characters; `%` and `_` match literally). Phone matches the stored text, so "555 0100" does not match "5550100".
+- `status`: `Active` or `Inactive`.
+- `sort`: `name` (default: last name, then first name), `createdAt` or `updatedAt`; prefix one `-` for descending
+  (`--name` is invalid). Ties are broken by id in the same direction, so pages are stable.
+- Invalid values (unknown sort or status, `page < 1`, `pageSize` outside 1 to 100) are `422 VALIDATION_ERROR` with the
+  parameter as `field`.
+
+`GET /api/clients/:id` (`clients.read`): `200` client object, or `404`.
+
+`POST /api/clients` (`clients.manage`): creates an `Active` client in the caller's clinic. Any `clinicId` in the body
+is ignored.
+
+    { "firstName": "Jane", "lastName": "Doe", "email": "jane@example.com", "phone": "+1 555 0100",
+      "addressLine1": "1 Main St", "addressLine2": null, "city": "Springfield", "region": "IL",
+      "postalCode": "62701", "country": "US", "preferredContactMethod": "Email", "notes": null }
+
+Limits: `firstName` and `lastName` required, max 100 each; `email` optional, a valid address, max 254, stored
+trimmed and lowercased; `phone` max 32; `addressLine1`, `addressLine2` max 200; `city`, `region`, `country` max 100;
+`postalCode` max 20; `notes` max 4000. Limits apply to the value as sent, before trimming. All text is trimmed; an optional field that is omitted, `null` or blank is
+stored as `null`. Emails are **not** unique: members of one household may share one. The server's email check is
+deliberately loose (text, one `@`, text, e.g. `a@b` passes); the frontend may validate more strictly.
+
+- `201` with the client object and a `Location` header.
+- `422 VALIDATION_ERROR` when a field is missing, blank, too long or not a valid email (detail `field` names it).
+- `400 BAD_REQUEST` when the body is not valid JSON or `preferredContactMethod` is not exactly `Email`, `Phone` or
+  `Sms`.
+
+`PATCH /api/clients/:id` (`clients.manage`): partial update.
+
+    { "lastName": "Smith", "phone": "", "preferredContactMethod": null, "status": "Inactive" }
+
+- Text fields: omitted or `null` leaves the field unchanged; `""` (or only spaces) clears an optional field. `firstName` and
+  `lastName` cannot be cleared (`""` is `422`).
+- `preferredContactMethod`: omitted leaves it unchanged; an explicit `null` clears it.
+- `status`: `Active` or `Inactive`; unknown values are `400 BAD_REQUEST`.
+- `200` with the updated client object; `404` for an unknown client (or another clinic's); `422` as for create.
+
+Creating a client and every change to one is written to the audit log (`client.created`, `client.updated`). The entry
+names the changed fields but not their values.
 
 ## 6. Patients
 `GET /api/patients`
@@ -261,7 +325,7 @@ Stock-changing operations require appropriate permissions and auditability.
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.
 
 ## 13. Pagination
-List endpoints use this contract (implemented in B-04): query parameters `page` (default 1, minimum 1) and `pageSize`
+List endpoints use this contract (implemented in B-04): query parameters `page` (default 1, 1 to 1,000,000) and `pageSize`
 (default 25, 1 to 100); out-of-range values are `422 VALIDATION_ERROR`, not clamped. `total` is the number of
 matching items across all pages.
 

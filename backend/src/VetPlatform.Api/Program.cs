@@ -3,6 +3,7 @@ using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Security;
 using VetPlatform.Api.Features.Auth;
+using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Users;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,6 +23,7 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddPersistence();
 builder.Services.AddAuth(builder.Configuration);
 builder.Services.AddScoped<UserService>();
+builder.Services.AddScoped<ClientService>();
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection
 // attempt from stalling health probes.

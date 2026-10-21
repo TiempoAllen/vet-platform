@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.4.0
-  summary: Implemented endpoints as of milestone B-04.
+  version: 0.5.0
+  summary: Implemented endpoints as of milestone B-05.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (clients, patients, appointments,
-    clinical, billing, inventory, reports) are listed in `API.md` sections 5-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (patients, appointments,
+    clinical, billing, inventory, reports) are listed in `API.md` sections 6-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -22,6 +22,7 @@ servers:
 tags:
   - name: Auth
   - name: Users
+  - name: Clients
   - name: Operations
 security:
   - sessionCookie: []
@@ -285,6 +286,116 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/clients:
+    get:
+      tags: [Clients]
+      operationId: listClients
+      summary: List the clinic's clients
+      description: Requires `clients.read`. Lists active and inactive clients unless `status` is given; ties are broken by id.
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring of first name, last name, "first last", email or phone. `%` and `_` match literally.
+          schema: { type: string, maxLength: 100 }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ClientStatus' }
+        - name: sort
+          in: query
+          description: '`name` sorts by last name, then first name. Ties are broken by id in the same direction.'
+          schema:
+            type: string
+            enum: [name, -name, createdAt, -createdAt, updatedAt, -updatedAt]
+            default: name
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of clients.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Clients]
+      operationId: createClient
+      summary: Create a client in the caller's clinic
+      description: Requires `clients.manage`. New clients are `Active`. Emails need not be unique.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateClientRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/clients/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Client' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/clients/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ClientId'
+    get:
+      tags: [Clients]
+      operationId: getClient
+      summary: Get one client
+      description: Requires `clients.read`. Clients of other clinics are 404.
+      responses:
+        '200':
+          description: The client.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Client' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Clients]
+      operationId: updateClient
+      summary: Partially update a client
+      description: |
+        Requires `clients.manage`. Omitted or null text fields are unchanged; `""` clears an optional text field.
+        `preferredContactMethod` is unchanged when omitted and cleared by an explicit `null`. Deactivate with
+        `"status": "Inactive"`; clients are never deleted (DELETE is 405 METHOD_NOT_ALLOWED).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateClientRequest' }
+      responses:
+        '200':
+          description: Updated client.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Client' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -329,10 +440,15 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ClientId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Page:
       name: page
       in: query
-      schema: { type: integer, minimum: 1, default: 1 }
+      schema: { type: integer, minimum: 1, maximum: 1000000, default: 1 }
     PageSize:
       name: pageSize
       in: query
@@ -347,8 +463,14 @@ components:
       enum: [Active, Disabled]
     Permission:
       type: string
-      description: Stable permission name. Granted so far, both to Admin only.
-      enum: [users.read, users.manage]
+      description: Stable permission name. Grants per role are listed in API.md section 4.
+      enum: [users.read, users.manage, clients.read, clients.manage]
+    ClientStatus:
+      type: string
+      enum: [Active, Inactive]
+    ContactMethod:
+      type: string
+      enum: [Email, Phone, Sms]
 
     LoginRequest:
       type: object
@@ -450,6 +572,86 @@ components:
         data:
           type: array
           items: { $ref: '#/components/schemas/User' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Client:
+      type: object
+      additionalProperties: false
+      required: [id, firstName, lastName, email, phone, addressLine1, addressLine2, city, region, postalCode, country, preferredContactMethod, notes, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        firstName: { type: string, maxLength: 100 }
+        lastName: { type: string, maxLength: 100 }
+        email: { type: [string, 'null'], format: email, maxLength: 254, description: 'Normalized (trimmed, lowercase).' }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        addressLine1: { type: [string, 'null'], maxLength: 200 }
+        addressLine2: { type: [string, 'null'], maxLength: 200 }
+        city: { type: [string, 'null'], maxLength: 100 }
+        region: { type: [string, 'null'], maxLength: 100, description: 'State, province or county.' }
+        postalCode: { type: [string, 'null'], maxLength: 20 }
+        country: { type: [string, 'null'], maxLength: 100 }
+        preferredContactMethod:
+          oneOf:
+            - $ref: '#/components/schemas/ContactMethod'
+            - type: 'null'
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        status: { $ref: '#/components/schemas/ClientStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateClientRequest:
+      type: object
+      required: [firstName, lastName]
+      description: Optional text fields may be omitted, null or blank; all three store null. Values are trimmed.
+      properties:
+        firstName: { type: string, minLength: 1, maxLength: 100 }
+        lastName: { type: string, minLength: 1, maxLength: 100 }
+        email: { type: [string, 'null'], format: email, maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        addressLine1: { type: [string, 'null'], maxLength: 200 }
+        addressLine2: { type: [string, 'null'], maxLength: 200 }
+        city: { type: [string, 'null'], maxLength: 100 }
+        region: { type: [string, 'null'], maxLength: 100, description: 'State, province or county.' }
+        postalCode: { type: [string, 'null'], maxLength: 20 }
+        country: { type: [string, 'null'], maxLength: 100 }
+        preferredContactMethod:
+          oneOf:
+            - $ref: '#/components/schemas/ContactMethod'
+            - type: 'null'
+        notes: { type: [string, 'null'], maxLength: 4000 }
+
+    UpdateClientRequest:
+      type: object
+      description: Omitted or null text fields are unchanged; an empty string clears an optional one.
+      properties:
+        firstName: { type: [string, 'null'], minLength: 1, maxLength: 100 }
+        lastName: { type: [string, 'null'], minLength: 1, maxLength: 100 }
+        email: { type: [string, 'null'], format: email, maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        addressLine1: { type: [string, 'null'], maxLength: 200 }
+        addressLine2: { type: [string, 'null'], maxLength: 200 }
+        city: { type: [string, 'null'], maxLength: 100 }
+        region: { type: [string, 'null'], maxLength: 100, description: 'State, province or county.' }
+        postalCode: { type: [string, 'null'], maxLength: 20 }
+        country: { type: [string, 'null'], maxLength: 100 }
+        preferredContactMethod:
+          description: Omitted leaves it unchanged; null clears it.
+          oneOf:
+            - $ref: '#/components/schemas/ContactMethod'
+            - type: 'null'
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/ClientStatus'
+            - type: 'null'
+
+    ClientPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Client' }
         pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:
