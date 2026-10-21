@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.2, 2026-10-22, updated for B-06.
+Veterinary Management Platform. Version 1.3, 2026-10-22, updated for B-07.
 
 ## 1. Introduction
 
@@ -134,7 +134,7 @@ A user may hold several roles; their permissions are the union.
 | FR-PAT-1 | Authorised staff can create, view and update patients (name, species, breed, sex, reproductive status, date of birth, markings, microchip, weight, status, notes). | Done |
 | FR-PAT-2 | Each patient belongs to one primary client; the model must allow multiple responsible owners later. | Done (primary owner; extra owners via a later `patient_owners` table, ADR-006) |
 | FR-PAT-3 | Patient lists support search (including by client and microchip), filtering, sorting and pagination. | Done |
-| FR-PAT-4 | A patient history view aggregates consultations, diagnoses, treatments, prescriptions, vaccinations, attachments and billing. | Planned (B-07) |
+| FR-PAT-4 | A patient history view aggregates consultations, diagnoses, treatments, prescriptions, vaccinations, attachments and billing. | Partly done: timeline API with the `PatientRegistered` entry (B-07); each clinical and billing milestone adds its entry types |
 
 ### 3.5 Scheduling (FR-SCH) — B-08..B-10, F-07..F-09
 | ID | Requirement | Status |
