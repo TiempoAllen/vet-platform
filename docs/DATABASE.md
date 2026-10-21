@@ -72,16 +72,20 @@ Primary key (user_id, role). Foreign key to users with RESTRICT; rows are remove
 
 ## 4. Clients and patients
 ### Client
+Implemented in B-05 (table `clients`).
 - id
-- clinic_id
-- first_name
-- last_name
-- email
+- clinic_id (FK to clinics, RESTRICT)
+- first_name, last_name (required)
+- email (optional, stored lower-cased; **not** unique: households share addresses)
 - phone
-- address
-- preferred_contact_method
+- address: address_line1, address_line2, city, region (state/province/county), postal_code, country (all optional)
+- preferred_contact_method (`Email`, `Phone`, `Sms`, or null for no preference; CHECK constraint)
 - notes
-- status
+- status (`Active`, `Inactive`; CHECK constraint)
+- created_at, updated_at
+
+Indexes: (clinic_id, last_name, first_name, id) for the default sort, (clinic_id, created_at). Clients are never
+deleted; later tables (patients, appointments, invoices) reference them with RESTRICT.
 
 ### Patient
 - id

@@ -28,7 +28,7 @@ public sealed class TimestampsInterceptor(TimeProvider timeProvider) : SaveChang
             return;
         }
 
-        var now = timeProvider.GetUtcNow();
+        var now = ToDatabasePrecision(timeProvider.GetUtcNow());
         foreach (var entry in context.ChangeTracker.Entries<Entity>())
         {
             if (entry.State == EntityState.Added)
@@ -42,4 +42,11 @@ public sealed class TimestampsInterceptor(TimeProvider timeProvider) : SaveChang
             }
         }
     }
+
+    /// <summary>
+    /// Truncates to whole microseconds, the precision of PostgreSQL <c>timestamptz</c>. Without it a response built
+    /// from the saved entity would carry 100 ns ticks that a later read of the same row no longer has.
+    /// </summary>
+    public static DateTimeOffset ToDatabasePrecision(DateTimeOffset value) =>
+        value.AddTicks(-(value.Ticks % TimeSpan.TicksPerMicrosecond));
 }

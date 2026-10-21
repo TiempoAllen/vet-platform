@@ -148,21 +148,25 @@ Tests live in `backend/tests/VetPlatform.Api.Tests/`.
 | FR-USR-5 | `UsersTests.DisablingAUser_SignsThemOutAndBlocksSignIn`; `B04ReviewTests.ReEnablingAUser_DoesNotReviveTheirOldSessions` |
 | FR-USR-6 | `UsersTests.AnAdministrator_CannotDisableThemselves`, `TheLastActiveAdministrator_CannotBeDemoted_OrDisabled`, `TwoAdministratorsDemotingEachOtherAtOnce_LeaveOneAdministrator` |
 | FR-USR-7 | `UsersTests.RoleChanges_ApplyToTheVeryNextRequest` |
-| FR-AUD-1 | `UsersTests.UserChanges_AreAudited_WithActorClinicAndRequestId`, `AuthenticationEvents_AreAudited`; `B04ReviewTests.FailedSignInFromASignedInBrowser_IsNotAttributedToTheSignedInUser` |
+| FR-CLI-1 | `ClientsTests.Create_Returns201WithLocation_AndNormalisesInput`, `Create_WithOnlyNames_LeavesEverythingElseEmpty`, `Create_RejectsInvalidFields_With422`, `Create_RejectsUnknownContactMethod_With400`, `Update_*`, `Get_UnknownClient_Is404`, `AdministratorsAndReceptionists_CanManageClients`, `ClinicalStaff_CanReadClients_ButNotChangeThem` |
+| FR-CLI-2 | `ClientsTests.List_SearchesNamesEmailAndPhone_CaseInsensitively`, `List_FiltersByStatus_AndSortsByName`, `List_SortsByCreatedAt_AndPages`, `List_RejectsInvalidParameters_With422` |
+| FR-CLI-3 | `ClientsTests.Clients_CannotBeDeleted`, `Update_CanDeactivateAndReactivate` |
+| FR-AUD-1 | `UsersTests.UserChanges_AreAudited_WithActorClinicAndRequestId`, `AuthenticationEvents_AreAudited`; `B04ReviewTests.FailedSignInFromASignedInBrowser_IsNotAttributedToTheSignedInUser`; `ClientsTests.Changes_AreAudited_WithoutPersonalData` |
 | NFR-SEC-1 | `CsrfAndAccessTests.ControllerEndpoints_RequireSignInByDefault`, `Me_WithGarbageSessionCookie_Returns401` |
-| NFR-SEC-2 | `UsersTests.NonAdministrators_CannotReadOrManageUsers`, `Administrators_OnlyEverSeeTheirOwnClinicsUsers`, `OtherClinicsUsers_AreNotFound_ForEveryOperation`, `CreatedUsers_AlwaysBelongToTheCreatorsClinic`, `WithoutACurrentClinic_ClinicOwnedQueriesReturnNothing`, `SavingAnotherClinicsRow_FromWithinAClinicRequest_Throws`; `AuthTests.ForgedCookie_PairingAValidSessionWithAnotherIdentity_IsRejected` |
+| NFR-SEC-2 | `UsersTests.NonAdministrators_CannotReadOrManageUsers`, `Administrators_OnlyEverSeeTheirOwnClinicsUsers`, `OtherClinicsUsers_AreNotFound_ForEveryOperation`, `CreatedUsers_AlwaysBelongToTheCreatorsClinic`, `WithoutACurrentClinic_ClinicOwnedQueriesReturnNothing`, `SavingAnotherClinicsRow_FromWithinAClinicRequest_Throws`; `ClientsTests.UsersWithoutClientAccess_CannotReadOrManageClients`, `Staff_OnlyEverSeeTheirOwnClinicsClients`, `OtherClinicsClients_AreNotFound_AndUnchanged`, `CreatedClients_BelongToTheCreatorsClinic_WhateverTheBodySays`; `AuthTests.ForgedCookie_PairingAValidSessionWithAnotherIdentity_IsRejected` |
 | NFR-SEC-3 | `CsrfAndAccessTests.CsrfEndpoint_*`, `UnsafeRequest_*`, `EveryUnsafeMethod_RequiresACsrfToken`, `EveryUnsafeEndpoint_IsAControllerAction_SoTheCsrfFilterCoversIt`, `Login_WithoutCsrfToken_IsRejectedBeforeCredentialsAreChecked`; `AuthTests.CsrfToken_*`, `AfterSessionExpiry_TheStaleCsrfTokenIsRejected_*` |
 | NFR-SEC-4 | `AuthTests.Login_WithValidCredentials_SetsHardenedSessionCookie_AndMeReturnsTheUser` |
 | NFR-SEC-5 | `PasswordAndBootstrapTests.ChangePassword_EnforcesThePasswordPolicy`; `UsersTests.Create_RejectsInvalidInput` |
 | NFR-SEC-6 | `AuthTests.Credentials_AreNeverWrittenToLogs`; `RequestLoggingTests.QueryStringValues_AreNeverLogged` |
 | NFR-SEC-7 | `UsersTests.AuditLog_IsAppendOnly_InTheDatabase`; `B04ReviewTests.AuditRecordedAt_IsAlwaysTheDatabaseClock`, `AuditEntries_CannotReferenceUnknownClinicsOrUsers`, `RollingBackPastB04_IsRefusedWhileTheAuditLogHasEntries` |
 | NFR-SEC-8 | `ErrorHandlingTests.*` |
-| NFR-REL-2 | `AuthTests.Database_RejectsInvalidUserValues`, `Database_RejectsAnEmailDifferingOnlyInCase_EvenWhenAWriterSkipsNormalisation` |
+| NFR-REL-2 | `AuthTests.Database_RejectsInvalidUserValues`, `Database_RejectsAnEmailDifferingOnlyInCase_EvenWhenAWriterSkipsNormalisation`; `ClientsTests.Database_RejectsInvalidClientValues` |
 | NFR-REL-5 | `DatabaseTests.Health_IsAnonymousAndReportsHealthy_WhenDatabaseIsReachable`; `HealthEndpointTests.Health_Returns503Unhealthy_WhenDatabaseIsUnreachable` |
 | NFR-OPS-1 | `RequestIdTests.*` |
 | NFR-OPS-4 | `PersistenceConfigurationTests.Model_HasNoChangesMissingFromMigrations`; `DatabaseTests.Migrations_ApplyToAnEmptyDatabase_AndLeaveNothingPending` |
 | NFR-OPS-5 | `PersistenceConfigurationTests.Startup_Fails_WhenConnectionStringIsMissing` |
 | Contract (API.md section 4) | `B04ReviewTests.UserObject_HasExactlyTheDocumentedFields`, `SetRoles_AcceptsOnlyExactRoleNames`, `Patch_AcceptsOnlyExactStatusNames` |
+| Contract (API.md section 5) | `ClientsTests.ClientObject_HasExactlyTheDocumentedFields`, `Me_ListsClientPermissions` |
 
 Requirements marked Planned in `SRS.md` are added to this matrix by the milestone that implements them.
 
