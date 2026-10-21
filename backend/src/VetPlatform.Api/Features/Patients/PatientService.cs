@@ -30,7 +30,7 @@ public sealed class PatientService(AppDbContext db, ITenantContext tenant, Audit
             var term = query.Q.Trim();
             var pattern = PagingExtensions.ContainsPattern(term);
             var chip = Patient.NormalizeMicrochip(term);
-            var chipPattern = chip is null ? null : PagingExtensions.ContainsPattern(chip);
+            var chipPattern = string.IsNullOrEmpty(chip) ? null : PagingExtensions.ContainsPattern(chip);
             patients = patients.Where(patient =>
                 EF.Functions.ILike(patient.Name, pattern, PagingExtensions.LikeEscape)
                 || EF.Functions.ILike(patient.Client!.FirstName, pattern, PagingExtensions.LikeEscape)
@@ -174,25 +174,19 @@ public sealed class PatientService(AppDbContext db, ITenantContext tenant, Audit
             Set("dateOfBirth", patient.DateOfBirth, request.DateOfBirth.Value, value => patient.DateOfBirth = value);
         }
 
-        if (request.DateOfBirthEstimated is { } estimated)
-        {
-            Set("dateOfBirthEstimated", patient.DateOfBirthEstimated, estimated, value => patient.DateOfBirthEstimated = value);
-        }
-
-        // An estimate flag without a date means nothing.
-        if (patient.DateOfBirth is null && patient.DateOfBirthEstimated)
-        {
-            patient.DateOfBirthEstimated = false;
-        }
+        // An estimate flag without a date means nothing, so it is false whenever there is no date.
+        var estimated = patient.DateOfBirth is not null && (request.DateOfBirthEstimated ?? patient.DateOfBirthEstimated);
+        Set("dateOfBirthEstimated", patient.DateOfBirthEstimated, estimated, value => patient.DateOfBirthEstimated = value);
 
         SetText("markings", request.Markings, patient.Markings, value => patient.Markings = value);
 
+        var microchipToCheck = (string?)null;
         if (request.MicrochipNumber is not null)
         {
             var microchip = CheckMicrochip(request.MicrochipNumber, problems);
-            if (microchip != patient.MicrochipNumber && microchip is not null && Patient.IsValidMicrochip(microchip))
+            if (microchip != patient.MicrochipNumber && microchip is not null)
             {
-                await EnsureMicrochipIsFreeAsync(microchip, exceptPatientId: patient.Id, cancellationToken);
+                microchipToCheck = microchip;
             }
 
             Set("microchipNumber", patient.MicrochipNumber, microchip, value => patient.MicrochipNumber = value);
@@ -223,6 +217,11 @@ public sealed class PatientService(AppDbContext db, ITenantContext tenant, Audit
         CheckDateOfDeath(patient, problems);
         SetText("notes", request.Notes, patient.Notes, value => patient.Notes = value);
         ThrowIfAny(problems);
+
+        if (microchipToCheck is not null)
+        {
+            await EnsureMicrochipIsFreeAsync(microchipToCheck, exceptPatientId: patient.Id, cancellationToken);
+        }
 
         if (changed.Count > 0)
         {
@@ -334,11 +333,16 @@ public sealed class PatientService(AppDbContext db, ITenantContext tenant, Audit
             await db.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException exception)
-            when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            when (exception.InnerException is PostgresException
+                  {
+                      SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: MicrochipIndexName,
+                  })
         {
             throw MicrochipTaken(); // lost a race with a concurrent create or update using the same chip
         }
     }
+
+    private const string MicrochipIndexName = "ix_patients_clinic_id_microchip_number";
 
     private static void ThrowIfAny(List<ApiErrorDetail> problems)
     {

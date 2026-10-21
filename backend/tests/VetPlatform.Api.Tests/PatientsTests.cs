@@ -481,6 +481,33 @@ public sealed class PatientsTests(DatabaseApiFactory factory) : IClassFixture<Da
         Assert.Equal(["Rex"], await ListNamesAsync(http, "q=jane%20doe"));
         Assert.Equal(["Rex"], await ListNamesAsync(http, "q=003-456"));
         Assert.Equal(["Polly_1"], await ListNamesAsync(http, "q=_"));
+        Assert.Empty(await ListNamesAsync(http, "q=-")); // separators alone must not match every chip
+    }
+
+    [Fact]
+    public async Task List_ByAnotherClinicsClient_IsEmpty()
+    {
+        var (httpA, _, clientA) = await ReceptionWithClientAsync();
+        var (httpB, _, clientB) = await ReceptionWithClientAsync();
+        await CreatePatientIdAsync(httpA, clientA);
+        await CreatePatientIdAsync(httpB, clientB);
+
+        var page = await httpA.GetFromJsonAsync<JsonElement>($"/api/patients?clientId={clientB}");
+
+        Assert.Equal(0, page.GetProperty("pagination").GetProperty("total").GetInt32());
+    }
+
+    [Fact]
+    public async Task Update_ReportsFieldErrorsBeforeAMicrochipConflict()
+    {
+        var (http, _, clientId) = await ReceptionWithClientAsync();
+        await CreatePatientAsync(http, new { clientId, name = "Rex", species = "Dog", microchipNumber = "222" });
+        var other = await CreatePatientIdAsync(http, clientId, "Max");
+
+        var response = await http.PatchAsJsonAsync($"/api/patients/{other}", new { microchipNumber = "222", weightKg = -1 });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("weightKg", Assert.Single((await ErrorOf(response)).Details).Field);
     }
 
     [Fact]
@@ -542,6 +569,9 @@ public sealed class PatientsTests(DatabaseApiFactory factory) : IClassFixture<Da
     [InlineData("UPDATE patients SET microchip_number = 'abc' WHERE id = {0}")]
     [InlineData("UPDATE patients SET name = ' ' WHERE id = {0}")]
     [InlineData("UPDATE patients SET date_of_death = '2024-01-01' WHERE id = {0}")]
+    [InlineData("UPDATE patients SET status = 'Deceased', date_of_birth = '2020-01-01', date_of_death = '2019-01-01' WHERE id = {0}")]
+    [InlineData("UPDATE patients SET weight_kg = 2000.001 WHERE id = {0}")]
+    [InlineData("UPDATE patients SET date_of_birth = NULL, date_of_birth_estimated = true WHERE id = {0}")]
     public async Task Database_RejectsInvalidPatientValues(string sql)
     {
         var (http, _, clientId) = await ReceptionWithClientAsync();
