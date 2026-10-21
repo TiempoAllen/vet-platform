@@ -354,7 +354,8 @@ other values are not recorded.
 Implemented in B-07 (design: `ARCHITECTURE.md` ADR-007).
 
 `GET /api/patients/:id/history` (`patients.read`): the patient's timeline, newest first, in the standard paginated
-envelope (section 13; `page`, `pageSize` only). Unknown or another clinic's patient is `404`.
+envelope (section 13; `page`, `pageSize` only). Unknown or another clinic's patient is `404`; missing
+`patients.read` is `403 FORBIDDEN`; out-of-range `page`/`pageSize` is `422 VALIDATION_ERROR`.
 
     {
       "data": [
@@ -374,7 +375,10 @@ envelope (section 13; `page`, `pageSize` only). Unknown or another clinic's pati
 - `details` has a fixed shape per `type`. **Ignore entries whose `type` you do not know**: later milestones add types
   (consultations, diagnoses, prescriptions, vaccinations, attachments, invoices, ...) without a version change.
   Later clinical types will also require `clinical.read`; entries the caller may not see are left out entirely.
-- Ties on `occurredAt` are broken by `id`, descending, so pages are stable.
+- Ties on `occurredAt` are broken by `id`, then `type`, descending, so pages are stable (ids compare like their
+  lowercase hex strings).
+- Generated clients must accept an unknown `type` as a plain entry rather than fail; `openapi.yaml` therefore has no
+  `discriminator` and lists the known types instead.
 
 Entry types so far:
 

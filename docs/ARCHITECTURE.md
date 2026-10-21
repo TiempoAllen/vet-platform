@@ -278,9 +278,13 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - **Scope** (confirmed with the user): build the timeline API now and let each later milestone add entry types,
   rather than wait for the clinical tables. Readable with `patients.read`. The only entry type today is
   `PatientRegistered`; owner transfers, status and weight changes are deliberately not shown yet.
-- **Contract:** `GET /api/patients/{id}/history`, standard offset paging, newest first, entries
+- **Contract:** `GET /api/patients/{id}/history`, standard offset paging, newest first (ties: id, then type),
+  entries
   `{ id, type, occurredAt, actor, details }` with a fixed `details` shape per `type`. Clients must ignore unknown
-  types, so adding a type is not a breaking change (API.md section 14).
+  types, so adding a type is not a breaking change (API.md section 14). `openapi.yaml` lists known types without a
+  `discriminator`, because some generators throw on unknown discriminator values.
+- **Auditing reads:** not yet, while the only type is registration. Clinical types (B-11 onward) make reading the
+  history an audited event (SECURITY.md section 10).
 - **No new table.** Entries are read from their source records. Registration comes from the existing
   `patient.created` audit entries (served by the `(entity_type, entity_id)` index), so patients created in B-06 already
   have history. Clinical milestones add their own tables as sources.

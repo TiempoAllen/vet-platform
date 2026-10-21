@@ -95,6 +95,11 @@ Payment creation, refunds, invoice adjustments, and balance calculations require
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 
+The patient history (B-07) names the staff member behind each entry to everyone with `patients.read`, as a paper
+record would; only names of the caller's own clinic are ever resolved (ADR-007). History reads are not audited while
+the only entry type is patient registration; when clinical entry types are added, each is gated by `clinical.read`
+inside the query and reading clinical history becomes an audited event.
+
 ## 11. Audit logging
 Record important security and business actions such as:
 - authentication events
