@@ -133,11 +133,13 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
     {
         var clinic = await ClinicAsync();
 
-        var created = await CreatedAsync(await AddBlockAsync(clinic.Vet, clinic.VetUser.Id, new
+        var response = await AddBlockAsync(clinic.Vet, clinic.VetUser.Id, new
         {
             dayOfWeek = "Monday", startTime = "09:00", endTime = "17:30", effectiveFrom = "2026-11-01",
-        }));
+        });
+        var created = await CreatedAsync(response);
         var id = created.GetProperty("id").GetGuid();
+        Assert.EndsWith($"/api/veterinarians/{clinic.VetUser.Id}/weekly-hours/{id}", response.Headers.Location!.ToString());
 
         Assert.Equal("09:00", created.GetProperty("startTime").GetString());
         Assert.Equal("17:30", created.GetProperty("endTime").GetString());
@@ -178,6 +180,65 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
             HttpStatusCode.OK,
             (await nurse.GetAsync($"/api/veterinarians/{clinic.VetUser.Id}/weekly-hours")).StatusCode);
         await CreatedAsync(await AddBlockAsync(clinic.Admin, otherVet.Id, body));
+    }
+
+    [Fact]
+    public async Task Vets_CannotTouchAnotherVetsExceptionOrAClosure()
+    {
+        var clinic = await ClinicAsync();
+        var otherVet = await factory.CreateColleagueAsync(clinic.AdminUser, roles: Role.Veterinarian);
+        async Task<Guid> Add(Guid? vet, string type) =>
+            (await CreatedAsync(await AddExceptionAsync(clinic.Admin, new
+            {
+                veterinarianId = vet, type, startsAt = "2026-11-02T00:00:00Z", endsAt = "2026-11-03T00:00:00Z",
+            }))).GetProperty("id").GetGuid();
+        var theirs = await Add(otherVet.Id, "Leave");
+        var closure = await Add(null, "Closure");
+
+        foreach (var id in new[] { theirs, closure })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Vet.PatchAsJsonAsync($"/api/schedule-exceptions/{id}", new { reason = "x" })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Vet.DeleteAsync($"/api/schedule-exceptions/{id}")).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await clinic.Admin.GetAsync($"/api/schedule-exceptions/{theirs}")).StatusCode);
+    }
+
+    [Fact]
+    public async Task AVetsOwnIdWithAnotherVetsBlock_IsNotFound()
+    {
+        var clinic = await ClinicAsync();
+        var otherVet = await factory.CreateColleagueAsync(clinic.AdminUser, roles: Role.Veterinarian);
+        var theirBlock = (await CreatedAsync(await AddBlockAsync(clinic.Admin, otherVet.Id, new { dayOfWeek = "Monday", startTime = "09:00", endTime = "17:00" })))
+            .GetProperty("id").GetGuid();
+
+        var patch = await clinic.Vet.PatchAsJsonAsync($"/api/veterinarians/{clinic.VetUser.Id}/weekly-hours/{theirBlock}", new { endTime = "18:00" });
+        var delete = await clinic.Vet.DeleteAsync($"/api/veterinarians/{clinic.VetUser.Id}/weekly-hours/{theirBlock}");
+
+        Assert.Equal(HttpStatusCode.NotFound, patch.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, delete.StatusCode);
+        var list = await clinic.Admin.GetFromJsonAsync<JsonElement>($"/api/veterinarians/{otherVet.Id}/weekly-hours");
+        Assert.Equal("17:00", list.GetProperty("data")[0].GetProperty("endTime").GetString());
+    }
+
+    [Fact]
+    public async Task AnotherClinicsVetAndBlocks_AreNotFound_OnEveryPath()
+    {
+        var clinic = await ClinicAsync();
+        var other = await ClinicAsync();
+        var theirVet = other.VetUser.Id;
+        var theirBlock = (await CreatedAsync(await AddBlockAsync(other.Admin, theirVet, new { dayOfWeek = "Monday", startTime = "09:00", endTime = "17:00" })))
+            .GetProperty("id").GetGuid();
+
+        var responses = new[]
+        {
+            await clinic.Admin.PatchAsJsonAsync($"/api/veterinarians/{theirVet}/weekly-hours/{theirBlock}", new { endTime = "18:00" }),
+            await clinic.Admin.DeleteAsync($"/api/veterinarians/{theirVet}/weekly-hours/{theirBlock}"),
+            await clinic.Admin.GetAsync($"/api/veterinarians/{theirVet}/working-hours?from=2026-11-02&to=2026-11-08"),
+            await clinic.Admin.PatchAsJsonAsync($"/api/veterinarians/{clinic.VetUser.Id}/weekly-hours/{theirBlock}", new { endTime = "18:00" }),
+        };
+
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.NotFound, response.StatusCode));
     }
 
     [Fact]
@@ -226,6 +287,8 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
     [InlineData("""{ "dayOfWeek": "Monday", "startTime": "17:00", "endTime": "09:00" }""", "endTime")]
     [InlineData("""{ "dayOfWeek": "Monday", "startTime": "09:00", "endTime": "17:00", "effectiveFrom": "2026-05-01", "effectiveTo": "2026-04-30" }""", "effectiveTo")]
     [InlineData("""{ "startTime": "09:00", "endTime": "17:00" }""", "dayOfWeek")]
+    [InlineData("""{ "dayOfWeek": "Monday", "startTime": "\u0660\u0669:\u0660\u0660", "endTime": "17:00" }""", "startTime")]
+    [InlineData("""{ "dayOfWeek": "Monday", "startTime": "09:00", "endTime": "17:00", "effectiveFrom": "0001-01-01" }""", "effectiveFrom")]
     public async Task InvalidBlocks_Are422(string json, string field)
     {
         var clinic = await ClinicAsync();
@@ -291,6 +354,7 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
 
         var entry = Assert.Single(await factory.AuditEntriesAsync(id));
         Assert.DoesNotContain("Flu", entry.Metadata ?? "");
+        Assert.DoesNotContain("Sickness", entry.Metadata ?? "");
     }
 
     [Fact]
@@ -315,6 +379,8 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
     [InlineData("""{ "veterinarianId": "VET", "type": "Leave", "startsAt": "2026-11-02T09:02:00Z", "endsAt": "2026-11-02T10:00:00Z" }""", "startsAt")]
     [InlineData("""{ "veterinarianId": "VET", "type": "Leave", "startsAt": "2026-11-02T10:00:00Z", "endsAt": "2026-11-02T10:00:00Z" }""", "endsAt")]
     [InlineData("""{ "veterinarianId": "VET", "type": "Leave", "startsAt": "2026-11-02T09:00:00Z" }""", "endsAt")]
+    [InlineData("""{ "veterinarianId": "VET", "type": "Leave", "startsAt": "0001-01-01T00:00:00Z", "endsAt": "2026-11-02T10:00:00Z" }""", "startsAt")]
+    [InlineData("""{ "veterinarianId": "VET", "type": "Leave", "startsAt": "2026-11-02T09:00:00Z", "endsAt": "9999-12-31T00:00:00Z" }""", "endsAt")]
     public async Task InvalidExceptions_Are422(string json, string field)
     {
         var clinic = await ClinicAsync();
@@ -323,6 +389,19 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.Contains((await ErrorOf(response)).Details, d => d.Field == field);
+    }
+
+    [Fact]
+    public async Task UnavailableIsNotAnInputType_Is400()
+    {
+        var clinic = await ClinicAsync();
+
+        var response = await AddExceptionAsync(clinic.Admin, new
+        {
+            veterinarianId = clinic.VetUser.Id, type = "Unavailable", startsAt = "2026-11-02T00:00:00Z", endsAt = "2026-11-03T00:00:00Z",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Theory]
@@ -381,6 +460,9 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
         });
         var body = await moved.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(DateTimeOffset.Parse("2026-11-08T23:00:00Z"), body.GetProperty("startsAt").GetDateTimeOffset());
+
+        var cleared = await clinic.Vet.PatchAsJsonAsync($"/api/schedule-exceptions/{id}", new { reason = "" });
+        Assert.Equal(JsonValueKind.Null, (await cleared.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("reason").ValueKind);
 
         var toClosure = await clinic.Admin.PatchAsJsonAsync($"/api/schedule-exceptions/{id}", new { type = "Closure" });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, toClosure.StatusCode);
@@ -442,6 +524,8 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
     [InlineData("from=2026-06-08&to=2026-06-01", "to")]
     [InlineData("from=2026-01-01&to=2026-03-04", "to")]
     [InlineData("from=1/6/2026&to=2026-06-07", "from")]
+    [InlineData("from=0001-01-01&to=0001-01-02", "from")]
+    [InlineData("from=9999-12-30&to=9999-12-31", "to")]
     public async Task WorkingHours_ValidateTheRange(string query, string field)
     {
         var clinic = await ClinicAsync();
@@ -458,6 +542,8 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
     [InlineData("UPDATE schedule_exceptions SET veterinarian_id = NULL WHERE id = {0}")]
     [InlineData("UPDATE schedule_exceptions SET starts_at = starts_at + interval '1 minute' WHERE id = {0}")]
     [InlineData("UPDATE schedule_exceptions SET ends_at = starts_at WHERE id = {0}")]
+    [InlineData("UPDATE schedule_exceptions SET type = 'Closure' WHERE id = {0}")]
+    [InlineData("UPDATE schedule_exceptions SET starts_at = starts_at + interval '1 microsecond' WHERE id = {0}")]
     public async Task Database_RejectsInvalidExceptions(string sql)
     {
         var clinic = await ClinicAsync();
@@ -475,6 +561,7 @@ public sealed class SchedulingTests(DatabaseApiFactory factory) : IClassFixture<
     [InlineData("UPDATE working_hours SET start_minute = 3 WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
     [InlineData("UPDATE working_hours SET end_minute = 1445 WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
     [InlineData("UPDATE working_hours SET day_of_week = 'Funday' WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
+    [InlineData("UPDATE working_hours SET effective_to = effective_from - 1 WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
     public async Task Database_RejectsInvalidBlocks(string sql, string sqlState)
     {
         var clinic = await ClinicAsync();

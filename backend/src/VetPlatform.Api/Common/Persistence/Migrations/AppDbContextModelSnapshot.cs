@@ -574,6 +574,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "StartsAt", "Id")
                         .HasDatabaseName("ix_schedule_exceptions_clinic_id_starts_at_id");
 
+                    b.HasIndex("ClinicId", "VeterinarianId", "EndsAt")
+                        .HasDatabaseName("ix_schedule_exceptions_clinic_id_veterinarian_id_ends_at");
+
                     b.HasIndex("ClinicId", "VeterinarianId", "StartsAt")
                         .HasDatabaseName("ix_schedule_exceptions_clinic_id_veterinarian_id_starts_at");
 

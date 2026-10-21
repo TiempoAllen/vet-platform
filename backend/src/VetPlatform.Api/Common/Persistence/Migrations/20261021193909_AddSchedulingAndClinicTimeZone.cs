@@ -100,6 +100,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 columns: new[] { "clinic_id", "starts_at", "id" });
 
             migrationBuilder.CreateIndex(
+                name: "ix_schedule_exceptions_clinic_id_veterinarian_id_ends_at",
+                table: "schedule_exceptions",
+                columns: new[] { "clinic_id", "veterinarian_id", "ends_at" });
+
+            migrationBuilder.CreateIndex(
                 name: "ix_schedule_exceptions_clinic_id_veterinarian_id_starts_at",
                 table: "schedule_exceptions",
                 columns: new[] { "clinic_id", "veterinarian_id", "starts_at" });

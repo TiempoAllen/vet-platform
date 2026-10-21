@@ -26,7 +26,7 @@ public static partial class TimeOfDay
     public static string Format(int minuteOfDay) =>
         $"{minuteOfDay / 60:00}:{minuteOfDay % 60:00}";
 
-    [GeneratedRegex(@"^\d{2}:\d{2}$")]
+    [GeneratedRegex(@"^[0-9]{2}:[0-9]{2}$")]
     private static partial Regex Pattern();
 }
 
@@ -182,6 +182,16 @@ public sealed class WorkingHoursQuery : IValidatableObject
         if (!toValid)
         {
             yield return new ValidationResult("Expected a date as YYYY-MM-DD.", [nameof(To)]);
+        }
+
+        if (fromValid && !ScheduleRules.IsInSupportedRange(from))
+        {
+            yield return new ValidationResult(ScheduleRules.SupportedRangeMessage, [nameof(From)]);
+        }
+
+        if (toValid && !ScheduleRules.IsInSupportedRange(to))
+        {
+            yield return new ValidationResult(ScheduleRules.SupportedRangeMessage, [nameof(To)]);
         }
 
         if (fromValid && toValid && (to < from || to.DayNumber - from.DayNumber >= ScheduleRules.MaxWorkingHoursRangeDays))

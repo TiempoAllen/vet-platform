@@ -102,6 +102,21 @@ public sealed class WorkingHoursCalculatorTests
     }
 
     [Fact]
+    public void ManyOverlappingExceptions_AreSubtractedCorrectly()
+    {
+        var day = new DateOnly(2026, 11, 2);
+        var gaps = Enumerable.Range(0, 2000)
+            .Select(i => new Interval(Utc(2026, 11, 2, 10).AddMinutes(i % 60), Utc(2026, 11, 2, 11).AddMinutes(i % 60)))
+            .ToList();
+
+        var intervals = WorkingHoursCalculator.Compute([Block(DayOfWeek.Monday, 9 * 60, 17 * 60)], gaps, TimeZoneInfo.Utc, day, day);
+
+        Assert.Equal(
+            [new Interval(Utc(2026, 11, 2, 9), Utc(2026, 11, 2, 10)), new Interval(Utc(2026, 11, 2, 11, 59), Utc(2026, 11, 2, 17))],
+            intervals);
+    }
+
+    [Fact]
     public void ABlockEndingAt2400_EndsAtTheNextMidnight()
     {
         var intervals = WorkingHoursCalculator.Compute(

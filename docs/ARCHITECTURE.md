@@ -320,7 +320,15 @@ Choose the simplest solution that satisfies documented requirements, security, m
   veterinarian. Instants on the grid. Exceptions and blocks can be deleted: they are planning data, not clinical or
   financial history, and every change is audited.
 - **Staff privacy:** an absence type and reason can be health information. Only `schedules.manage` holders and the
-  veterinarian concerned see them; others see `Unavailable` with no reason. Audit metadata never includes the reason.
+  veterinarian concerned see them; others see `Unavailable` with no reason. Audit metadata never includes the reason,
+  and records the type only for closures, because a future audit reader may not hold `schedules.manage`.
+- **Bounds:** dates and instants must fall in 2000–2100 (keeps calendar arithmetic away from DateTime limits; year
+  0001 would be stored as `-infinity`); at most 200 weekly-hours blocks per veterinarian; the subtraction of exceptions
+  is a single linear pass, so overlapping exceptions cannot make the computation quadratic.
+- **Locking:** weekly-hours writes take `FOR NO KEY UPDATE` on the veterinarian's user row (it serialises schedule
+  writers but does not block foreign-key checks from other tables), only after the clinic-filtered lookup, and re-read
+  the account status under the lock. Concurrent update/delete of the same row maps to `409 CONFLICT` globally
+  (`DbUpdateConcurrencyException`).
 - **Computed working hours** (confirmed): a pure calculator expands blocks for each local date, converts to instants
   in the clinic zone, merges, and subtracts the veterinarian's exceptions and all closures. Daylight saving: skipped
   local times move forward to the next valid time; repeated local times are read as standard time. Responses carry
@@ -333,4 +341,7 @@ Choose the simplest solution that satisfies documented requirements, security, m
   - Disabling a veterinarian keeps their blocks; computed hours still show them. B-09 must also refuse booking a
     disabled veterinarian.
   - The working-hours endpoint loads all blocks of the veterinarian that overlap the range and computes in memory;
-    bounded by the 62-day limit.
+    bounded by the 62-day limit and the block cap. Exceptions are not capped (years of leave are legitimate); the
+    range query uses the `(clinic_id, veterinarian_id, ends_at)` index.
+  - `ix_users_clinic_id` is now redundant with the `(clinic_id, id)` key; dropping it (and the same pair on clients and
+    patients) is left to a later clean-up migration.
