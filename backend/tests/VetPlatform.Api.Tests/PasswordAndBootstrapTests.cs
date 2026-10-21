@@ -121,6 +121,29 @@ public sealed class PasswordAndBootstrapTests(DatabaseApiFactory factory) : ICla
         Assert.Equal(expectedExit, exitCode);
     }
 
+    [Theory]
+    [InlineData("Europe/London", 0)]
+    [InlineData("GMT Standard Time", 2)]
+    [InlineData("Nowhere/Special", 2)]
+    public async Task CreateAdmin_SetsTheClinicTimeZone_OnlyFromAnIanaId(string timeZone, int expectedExit)
+    {
+        await factory.MigrateAsync();
+        var email = $"owner-{Guid.NewGuid():N}@happypaws.example";
+
+        var exitCode = await CreateAdminCommand.RunAsync(
+            factory.Services,
+            ["--clinic", "Zoned Paws", "--name", "Jo Owner", "--email", email, "--timezone", timeZone],
+            new StringReader(NewPassword + Environment.NewLine),
+            new StringWriter());
+
+        Assert.Equal(expectedExit, exitCode);
+        await factory.UpdateDatabaseAsync(async db =>
+        {
+            var user = await db.Users.IgnoreQueryFilters().Include(u => u.Clinic).SingleOrDefaultAsync(u => u.Email == email);
+            Assert.Equal(expectedExit == 0 ? timeZone : null, user?.Clinic!.TimeZone);
+        });
+    }
+
     [Fact]
     public async Task CreateAdmin_RefusesAnEmailThatIsAlreadyTaken()
     {

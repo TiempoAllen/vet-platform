@@ -11,7 +11,8 @@ namespace VetPlatform.Api.Features.Users;
 /// <summary>
 /// Creates a new clinic and its first administrator from the command line (there is deliberately no public sign-up
 /// endpoint). The password is read from standard input, never from arguments, so it does not land in shell history:
-/// <code>dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Vet" --email jo@happypaws.example</code>
+/// <code>dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Vet" --email jo@happypaws.example --timezone Europe/London</code>
+/// <c>--timezone</c> (IANA) is optional and defaults to UTC.
 /// </summary>
 public static class CreateAdminCommand
 {
@@ -31,7 +32,7 @@ public static class CreateAdminCommand
             || !options.TryGetValue("email", out var rawEmail) || string.IsNullOrWhiteSpace(rawEmail))
         {
             await output.WriteLineAsync(
-                $"Usage: {Name} --clinic <clinic name> --name <admin name> --email <admin email>" +
+                $"Usage: {Name} --clinic <clinic name> --name <admin name> --email <admin email> [--timezone <IANA zone>]" +
                 "  (the password is read from stdin; never pass it as an argument)");
             return 2;
         }
@@ -41,6 +42,13 @@ public static class CreateAdminCommand
             || email.Length > User.EmailMaxLength || !new EmailAddressAttribute().IsValid(email))
         {
             await output.WriteLineAsync("Error: clinic name, admin name or email is too long or invalid.");
+            return 2;
+        }
+
+        var timeZone = options.GetValueOrDefault("timezone", ClinicTimeZone.Default);
+        if (!ClinicTimeZone.TryFind(timeZone, out _))
+        {
+            await output.WriteLineAsync("Error: the time zone must be an IANA id such as Europe/London.");
             return 2;
         }
 
@@ -72,7 +80,7 @@ public static class CreateAdminCommand
             return 1;
         }
 
-        var clinic = new Clinic { Name = clinicName.Trim() };
+        var clinic = new Clinic { Name = clinicName.Trim(), TimeZone = timeZone };
         var admin = new User
         {
             ClinicId = clinic.Id,
@@ -94,7 +102,7 @@ public static class CreateAdminCommand
         return 0;
     }
 
-    private static readonly string[] KnownOptions = ["clinic", "name", "email"];
+    private static readonly string[] KnownOptions = ["clinic", "name", "email", "timezone"];
 
     /// <summary>
     /// Parses <c>--key value</c> pairs for the known options; returns null on anything else. Unknown options are

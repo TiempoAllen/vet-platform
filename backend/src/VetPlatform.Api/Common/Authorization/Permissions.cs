@@ -29,13 +29,26 @@ public static class Permissions
     public const string ClientsManage = "clients.manage";
     public const string PatientsRead = "patients.read";
     public const string PatientsManage = "patients.manage";
+    public const string SchedulesRead = "schedules.read";
+
+    /// <summary>Change any veterinarian's working hours and exceptions, and clinic closures.</summary>
+    public const string SchedulesManage = "schedules.manage";
+
+    /// <summary>Change one's own working hours and exceptions (a veterinarian's own schedule).</summary>
+    public const string SchedulesManageOwn = "schedules.manage_own";
+
+    public const string SettingsManage = "settings.manage";
 
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
-        [Role.Admin] = new[] { UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage }.ToFrozenSet(),
-        [Role.Veterinarian] = new[] { ClientsRead, PatientsRead, PatientsManage }.ToFrozenSet(),
-        [Role.Nurse] = new[] { ClientsRead, PatientsRead, PatientsManage }.ToFrozenSet(),
-        [Role.Receptionist] = new[] { ClientsRead, ClientsManage, PatientsRead, PatientsManage }.ToFrozenSet(),
+        [Role.Admin] = new[]
+        {
+            UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
+            SchedulesManage, SettingsManage,
+        }.ToFrozenSet(),
+        [Role.Veterinarian] = new[] { ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn }.ToFrozenSet(),
+        [Role.Nurse] = new[] { ClientsRead, PatientsRead, PatientsManage, SchedulesRead }.ToFrozenSet(),
+        [Role.Receptionist] = new[] { ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead }.ToFrozenSet(),
         [Role.Inventory] = FrozenSet<string>.Empty,
     }.ToFrozenDictionary();
 
@@ -62,6 +75,35 @@ public sealed class RequirePermissionAttribute(string permission) : AuthorizeAtt
 }
 
 public sealed record PermissionRequirement(string Permission) : IAuthorizationRequirement;
+
+/// <summary>
+/// Requires at least one of several permissions: <c>[RequireAnyPermission(Permissions.SchedulesManage,
+/// Permissions.SchedulesManageOwn)]</c>. For endpoints whose finer check (e.g. "only your own") happens in the
+/// service; this keeps the 403 for callers with neither permission ahead of body validation.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public sealed class RequireAnyPermissionAttribute(params string[] permissions) : AuthorizeAttribute, IAuthorizationRequirementData
+{
+    public IReadOnlyList<string> Permissions { get; } = permissions;
+
+    public IEnumerable<IAuthorizationRequirement> GetRequirements() => [new AnyPermissionRequirement(Permissions)];
+}
+
+public sealed record AnyPermissionRequirement(IReadOnlyList<string> Permissions) : IAuthorizationRequirement;
+
+public sealed class AnyPermissionHandler : AuthorizationHandler<AnyPermissionRequirement>
+{
+    protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, AnyPermissionRequirement requirement)
+    {
+        var roles = VetPlatform.Api.Common.Authorization.Permissions.RolesOf(context.User).ToList();
+        if (requirement.Permissions.Any(permission => VetPlatform.Api.Common.Authorization.Permissions.Grant(roles, permission)))
+        {
+            context.Succeed(requirement);
+        }
+
+        return Task.CompletedTask;
+    }
+}
 
 public sealed class PermissionHandler : AuthorizationHandler<PermissionRequirement>
 {
