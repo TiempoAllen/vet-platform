@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.7.0
-  summary: Implemented endpoints as of milestone B-07.
+  version: 0.8.0
+  summary: Implemented endpoints as of milestone B-08.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (appointments,
@@ -16,6 +16,7 @@ info:
     - Error precedence: 429, 401, 403 FORBIDDEN, 403 CSRF_TOKEN_INVALID, 400/422, then the endpoint's own result.
     - Every response carries `X-Request-Id`.
     - Enum values are accepted only as exact names (`Admin`, `Active`).
+    - Instants must carry an explicit offset (`Z` or `+01:00`); dates are `YYYY-MM-DD`.
 servers:
   - url: https://localhost:7096
     description: Local development
@@ -24,6 +25,8 @@ tags:
   - name: Users
   - name: Clients
   - name: Patients
+  - name: Clinic
+  - name: Scheduling
   - name: Operations
 security:
   - sessionCookie: []
@@ -547,6 +550,297 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/clinic:
+    get:
+      tags: [Clinic]
+      operationId: getClinic
+      summary: The caller's clinic
+      description: Any signed-in user.
+      responses:
+        '200':
+          description: The clinic.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Clinic' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    patch:
+      tags: [Clinic]
+      operationId: updateClinic
+      summary: Change the clinic's time zone
+      description: Requires `settings.manage`. `timeZone` must be an IANA id (Windows ids are 422). Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateClinicRequest' }
+      responses:
+        '200':
+          description: Updated clinic.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Clinic' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/veterinarians:
+    get:
+      tags: [Scheduling]
+      operationId: listVeterinarians
+      summary: Active veterinarians, by name
+      description: Requires `schedules.read`.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of veterinarians.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VeterinarianPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/veterinarians/{veterinarianId}/weekly-hours:
+    parameters:
+      - $ref: '#/components/parameters/VeterinarianId'
+    get:
+      tags: [Scheduling]
+      operationId: listWeeklyHours
+      summary: All weekly-hours blocks of a veterinarian
+      description: Requires `schedules.read`. Not paginated; Monday first, then by start time.
+      responses:
+        '200':
+          description: The blocks.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkingHoursBlockList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Scheduling]
+      operationId: createWeeklyHoursBlock
+      summary: Add a weekly-hours block
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). 409 when it overlaps another block of the same day while both are in effect; 422 for a disabled veterinarian.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkingHoursBlockRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/veterinarians/{veterinarianId}/weekly-hours/{blockId}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkingHoursBlock' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/veterinarians/{veterinarianId}/weekly-hours/{blockId}:
+    parameters:
+      - $ref: '#/components/parameters/VeterinarianId'
+      - $ref: '#/components/parameters/BlockId'
+    patch:
+      tags: [Scheduling]
+      operationId: updateWeeklyHoursBlock
+      summary: Change a weekly-hours block
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Omitted or null fields are unchanged; an explicit null effectiveTo clears it.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateWorkingHoursBlockRequest' }
+      responses:
+        '200':
+          description: Updated block.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkingHoursBlock' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Scheduling]
+      operationId: deleteWeeklyHoursBlock
+      summary: Remove a weekly-hours block
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Audited.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: Deleted.
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/veterinarians/{veterinarianId}/working-hours:
+    parameters:
+      - $ref: '#/components/parameters/VeterinarianId'
+    get:
+      tags: [Scheduling]
+      operationId: getWorkingHours
+      summary: Actual working periods for a date range
+      description: |
+        Requires `schedules.read`. Weekly hours for the local days `from`..`to` (inclusive, at most 62 days), minus
+        the veterinarian's exceptions and all clinic closures, as half-open intervals with the clinic's local offset.
+        Appointments are not subtracted (B-09).
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Working periods.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkingHours' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/schedule-exceptions:
+    get:
+      tags: [Scheduling]
+      operationId: listScheduleExceptions
+      summary: Exceptions and closures
+      description: Requires `schedules.read`. By startsAt, then id. Details are masked as `Unavailable` for callers who are neither schedule managers nor the veterinarian concerned.
+      parameters:
+        - { name: veterinarianId, in: query, description: "That veterinarian's exceptions and all closures.", schema: { type: string, format: uuid } }
+        - { name: from, in: query, description: 'Instant with offset (encode + as %2B); exceptions ending after it.', schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: Instant with offset; exceptions starting before it. Must be after from., schema: { type: string, format: date-time } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of exceptions.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleExceptionPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Scheduling]
+      operationId: createScheduleException
+      summary: Record an exception or a clinic closure
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Closures (no veterinarianId, type Closure) need `schedules.manage`.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScheduleExceptionRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/schedule-exceptions/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleException' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/schedule-exceptions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ScheduleExceptionId'
+    get:
+      tags: [Scheduling]
+      operationId: getScheduleException
+      summary: One exception
+      description: Requires `schedules.read`. Other clinics' exceptions are 404.
+      responses:
+        '200':
+          description: The exception.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleException' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Scheduling]
+      operationId: updateScheduleException
+      summary: Change an exception
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). The veterinarian cannot change; a closure cannot become a personal exception or the reverse.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateScheduleExceptionRequest' }
+      responses:
+        '200':
+          description: Updated exception.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleException' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Scheduling]
+      operationId: deleteScheduleException
+      summary: Cancel an exception
+      description: 'Requires `schedules.manage`, or `schedules.manage_own` for the caller''s own schedule (403 otherwise, before body validation). Audited.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: Deleted.
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -601,6 +895,21 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    VeterinarianId:
+      name: veterinarianId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BlockId:
+      name: blockId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ScheduleExceptionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Page:
       name: page
       in: query
@@ -620,7 +929,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -664,10 +973,11 @@ components:
         email: { type: string, format: email, description: 'Normalized (trimmed, lowercase).' }
         clinic:
           type: object
-          required: [id, name]
+          required: [id, name, timeZone]
           properties:
             id: { type: string, format: uuid }
             name: { type: string }
+            timeZone: { type: string, description: IANA time zone id. }
         roles:
           type: array
           items: { $ref: '#/components/schemas/Role' }
@@ -983,6 +1293,162 @@ components:
           type: array
           items: { $ref: '#/components/schemas/PatientHistoryEntry' }
         pagination: { $ref: '#/components/schemas/Pagination' }
+
+    Clinic:
+      type: object
+      additionalProperties: false
+      required: [id, name, timeZone]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        timeZone: { type: string, description: IANA time zone id. }
+
+    UpdateClinicRequest:
+      type: object
+      properties:
+        timeZone: { type: [string, 'null'], maxLength: 64, description: 'IANA id, e.g. Europe/London.' }
+
+    DayOfWeek:
+      type: string
+      enum: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+
+    Veterinarian:
+      type: object
+      additionalProperties: false
+      required: [id, name, status]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { $ref: '#/components/schemas/UserStatus' }
+
+    VeterinarianPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Veterinarian' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    WorkingHoursBlock:
+      type: object
+      additionalProperties: false
+      required: [id, veterinarianId, dayOfWeek, startTime, endTime, effectiveFrom, effectiveTo, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        veterinarianId: { type: string, format: uuid }
+        dayOfWeek: { $ref: '#/components/schemas/DayOfWeek' }
+        startTime: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][05]$', description: Local HH:mm on the 5-minute grid. }
+        endTime: { type: string, pattern: '^(([01][0-9]|2[0-3]):[0-5][05]|24:00)$', description: Local HH:mm on the 5-minute grid; 24:00 allowed. }
+        effectiveFrom: { type: string, format: date }
+        effectiveTo: { type: [string, 'null'], format: date, description: Inclusive; null is open-ended. }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    WorkingHoursBlockList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/WorkingHoursBlock' }
+
+    CreateWorkingHoursBlockRequest:
+      type: object
+      required: [dayOfWeek, startTime, endTime]
+      properties:
+        dayOfWeek: { $ref: '#/components/schemas/DayOfWeek' }
+        startTime: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][05]$' }
+        endTime: { type: string, pattern: '^(([01][0-9]|2[0-3]):[0-5][05]|24:00)$' }
+        effectiveFrom: { type: [string, 'null'], format: date, description: Default today in the clinic time zone. }
+        effectiveTo: { type: [string, 'null'], format: date }
+
+    UpdateWorkingHoursBlockRequest:
+      type: object
+      description: Omitted or null fields are unchanged, except effectiveTo (explicit null clears it).
+      properties:
+        dayOfWeek:
+          oneOf:
+            - $ref: '#/components/schemas/DayOfWeek'
+            - type: 'null'
+        startTime: { type: [string, 'null'], pattern: '^([01][0-9]|2[0-3]):[0-5][05]$' }
+        endTime: { type: [string, 'null'], pattern: '^(([01][0-9]|2[0-3]):[0-5][05]|24:00)$' }
+        effectiveFrom: { type: [string, 'null'], format: date }
+        effectiveTo: { type: [string, 'null'], format: date }
+
+    ScheduleExceptionType:
+      type: string
+      description: Accepted in requests.
+      enum: [Leave, Sickness, Training, Other, Closure]
+
+    ScheduleException:
+      type: object
+      additionalProperties: false
+      required: [id, veterinarianId, type, startsAt, endsAt, reason, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        veterinarianId: { type: [string, 'null'], format: uuid, description: Null for clinic closures. }
+        type:
+          type: string
+          description: '`Unavailable` (with reason null) when the caller may not see the details; never accepted as input.'
+          enum: [Leave, Sickness, Training, Other, Closure, Unavailable]
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        reason: { type: [string, 'null'], maxLength: 500 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ScheduleExceptionPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduleException' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateScheduleExceptionRequest:
+      type: object
+      required: [type, startsAt, endsAt]
+      description: veterinarianId is null exactly for type Closure. Instants need an explicit offset and the 5-minute grid.
+      properties:
+        veterinarianId: { type: [string, 'null'], format: uuid }
+        type: { $ref: '#/components/schemas/ScheduleExceptionType' }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        reason: { type: [string, 'null'], maxLength: 500 }
+
+    UpdateScheduleExceptionRequest:
+      type: object
+      description: Omitted or null fields are unchanged; an empty reason clears it.
+      properties:
+        type:
+          oneOf:
+            - $ref: '#/components/schemas/ScheduleExceptionType'
+            - type: 'null'
+        startsAt: { type: [string, 'null'], format: date-time }
+        endsAt: { type: [string, 'null'], format: date-time }
+        reason: { type: [string, 'null'], maxLength: 500 }
+
+    WorkingHours:
+      type: object
+      additionalProperties: false
+      required: [veterinarianId, timeZone, from, to, intervals]
+      properties:
+        veterinarianId: { type: string, format: uuid }
+        timeZone: { type: string }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        intervals:
+          type: array
+          description: Sorted, half-open, merged where they touch.
+          items:
+            type: object
+            additionalProperties: false
+            required: [startAt, endAt]
+            properties:
+              startAt: { type: string, format: date-time }
+              endAt: { type: string, format: date-time }
 
     Health:
       type: object

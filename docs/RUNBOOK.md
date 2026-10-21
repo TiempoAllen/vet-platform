@@ -56,10 +56,11 @@ Check: `curl https://localhost:7096/api/health` returns `{"status":"Healthy"}`.
 2. Run, and type the password when prompted (it is not echoed; never pass it as an argument):
 
    ```bash
-   dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Owner" --email jo@happypaws.example
+   dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Owner" --email jo@happypaws.example --timezone Europe/London
    ```
 
-   In a non-interactive shell, pipe the password from a secret store on stdin.
+   In a non-interactive shell, pipe the password from a secret store on stdin. `--timezone` takes an IANA id
+   (default `UTC`); the administrator can change it later with `PATCH /api/clinic`. Windows zone ids are refused.
 3. Expected output: `Created clinic <id> and administrator <id>.` Exit codes: `0` ok, `1` email already exists,
    `2` invalid arguments or password (12–1024 characters, not the email).
 4. Send the administrator the password through a separate channel and ask them to change it at first sign-in

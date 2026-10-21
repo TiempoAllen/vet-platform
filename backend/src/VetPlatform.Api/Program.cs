@@ -5,6 +5,7 @@ using VetPlatform.Api.Common.Security;
 using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Patients;
+using VetPlatform.Api.Features.Scheduling;
 using VetPlatform.Api.Features.Users;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,7 +17,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services
     .AddControllers(options => options.Filters.Add<CsrfProtectionFilter>())
     // Enums travel only as their exact names ("Admin", "Active"), matching how they are stored and documented.
-    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new StrictEnumConverterFactory()))
+    // Instants must carry an explicit offset ("...Z" or "...+01:00"); otherwise the server's zone would be assumed.
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new StrictEnumConverterFactory());
+        options.JsonSerializerOptions.Converters.Add(new StrictInstantConverter());
+    })
     .ConfigureApiBehaviorOptions(ApiBehaviorConfiguration.Configure);
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
@@ -27,6 +33,7 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<ClientService>();
 builder.Services.AddScoped<PatientService>();
 builder.Services.AddScoped<PatientHistoryService>();
+builder.Services.AddScoped<ScheduleService>();
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection
 // attempt from stalling health probes.

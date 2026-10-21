@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.3, 2026-10-22, updated for B-07.
+Veterinary Management Platform. Version 1.4, 2026-10-22, updated for B-08.
 
 ## 1. Introduction
 
@@ -139,7 +139,7 @@ A user may hold several roles; their permissions are the union.
 ### 3.5 Scheduling (FR-SCH) — B-08..B-10, F-07..F-09
 | ID | Requirement | Status |
 |---|---|---|
-| FR-SCH-1 | Veterinarian weekly availability and schedule exceptions (leave, closures) can be recorded. | Planned (B-08) |
+| FR-SCH-1 | Veterinarian weekly availability and schedule exceptions (leave, closures) can be recorded. | Done (B-08; plus computed working hours) |
 | FR-SCH-2 | Appointments (patient, client, veterinarian, start, end, type, reason, notes) can be created, edited and rescheduled. | Planned (B-09) |
 | FR-SCH-3 | The server rejects appointments outside availability, inside exceptions, or overlapping another appointment of the same veterinarian, including under concurrent booking. | Planned (B-09) |
 | FR-SCH-4 | Appointment status follows a defined lifecycle: scheduled → checked-in → completed, or cancelled / no-show. Invalid transitions are rejected. | Planned (B-10) |
@@ -180,7 +180,7 @@ A user may hold several roles; their permissions are the union.
 |---|---|---|
 | FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Planned (B-23, B-24) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
-| FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Planned (B-26) |
+| FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); the rest B-26 |
 | FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Done for auth, users, clients and patients; rest Planned |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
@@ -257,7 +257,7 @@ Targets for a single clinic of up to 50 concurrent staff; verified in X-04.
 |---|---|---|
 | Q-1 | Frontend framework and component library. | F-01 |
 | Q-2 | File storage provider and maximum upload size. | B-15 |
-| Q-3 | Appointment slot granularity, buffer times, and whether double-booking can be overridden. | B-09 |
+| Q-3 | Appointment slot granularity, buffer times, and whether double-booking can be overridden. | **Answered (ADR-008):** 5-minute grid; no buffers (a per-clinic buffer may come with B-26); conflicts may be overridden by `appointments.manage` holders with a required, audited reason (B-09). |
 | Q-4 | Tax model (inclusive/exclusive, per-line rates) and rounding rules. | B-16 |
 | Q-5 | Whether stock may go negative and how controlled drugs are logged. | B-20 |
 | Q-6 | Email/SMS provider. | B-25 |

@@ -8,7 +8,9 @@ Base path: `/api`
 
 Use JSON for ordinary requests/responses.
 
-Use ISO-8601 timestamps with timezone information.
+Use ISO-8601 timestamps with timezone information. Instants sent to the API must carry an explicit offset (`Z` or
+`+01:00`); a value without one is `400 BAD_REQUEST` in a body and `422` in a query string. Calendar dates are
+`YYYY-MM-DD`.
 
 Use consistent HTTP semantics:
 - `200` successful read/update
@@ -107,7 +109,7 @@ in (a valid CSRF token is still required; on `403 CSRF_TOKEN_INVALID` refresh it
 
     {
       "id": "uuid", "name": "Jo Vet", "email": "jo@clinic.example",
-      "clinic": { "id": "uuid", "name": "Happy Paws" },
+      "clinic": { "id": "uuid", "name": "Happy Paws", "timeZone": "Europe/London" },
       "roles": ["Admin", "Veterinarian"],
       "permissions": ["clients.manage", "clients.read", "patients.manage", "patients.read", "users.manage", "users.read"]
     }
@@ -144,6 +146,10 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `clients.read` | ✓ | ✓ | ✓ | ✓ | – |
 | `clients.manage` | ✓ | – | – | ✓ | – |
 | `patients.read`, `patients.manage` | ✓ | ✓ | ✓ | ✓ | – |
+| `schedules.read` | ✓ | ✓ | ✓ | ✓ | – |
+| `schedules.manage` | ✓ | – | – | – | – |
+| `schedules.manage_own` | – | ✓ | – | – | – |
+| `settings.manage` | ✓ | – | – | – | – |
 
 **User object**
 
@@ -207,6 +213,17 @@ If the caller loses `users.manage` while a request is in flight (demoted or disa
 request is refused with `403 FORBIDDEN`.
 
 Every change made through these endpoints is written to the audit log.
+
+### 4.1 Clinic
+Implemented in B-08 (the other clinic settings follow in B-26).
+
+`GET /api/clinic` (any signed-in user): `{ "id": "uuid", "name": "Happy Paws", "timeZone": "Europe/London" }`.
+
+`PATCH /api/clinic` (`settings.manage`): `{ "timeZone": "Europe/London" }`.
+- `timeZone` is an IANA id. Windows ids ("GMT Standard Time") and unknown ids are `422` (field `timeZone`).
+- New clinics get the zone from `create-admin --timezone` (default `UTC`); clinics created before B-08 start as `UTC`.
+- Weekly working hours are local wall-clock times, so changing the zone shifts every future working period with it.
+- The change is audited (`clinic.updated`).
 
 ## 5. Clients
 Implemented in B-05. Clients are the pet owners of the caller's clinic: other clinics' clients are `404 NOT_FOUND`,
@@ -396,6 +413,92 @@ Entry types so far:
 `POST /api/appointments/:id/cancel`
 
 The backend must validate veterinarian availability and appointment conflicts.
+
+### 7.1 Veterinarian schedules
+Implemented in B-08 (design: `ARCHITECTURE.md` ADR-008). Scheduling uses a **5-minute grid**: every time of day
+and every instant must be on a 5-minute mark.
+
+Permissions: `schedules.read` (Admin, Veterinarian, Nurse, Receptionist) reads everything below.
+`schedules.manage` (Admin) changes anyone's schedule and clinic closures. `schedules.manage_own` (Veterinarian)
+changes only the caller's own hours and exceptions; for someone else's it is `403`. Callers with neither manage
+permission get `403` before any body validation.
+
+Veterinarians are the clinic's users holding the `Veterinarian` role. An id that is not one of them (another clinic's
+user, a nurse, unknown) is `404`. A disabled veterinarian's schedule can be read, edited and deleted, but nothing new
+can be added for them (`422`, field `veterinarianId`).
+
+`GET /api/veterinarians` (`schedules.read`): active veterinarians by name, paginated (section 13):
+`{ "id": "uuid", "name": "Jo Vet", "status": "Active" }`. Use it for calendar columns (`users.read` is admin-only).
+
+**Weekly hours** are the regular week in the clinic's local time:
+
+    { "id": "uuid", "veterinarianId": "uuid", "dayOfWeek": "Monday", "startTime": "09:00", "endTime": "17:30",
+      "effectiveFrom": "2026-11-01", "effectiveTo": null, "createdAt": "...", "updatedAt": "..." }
+
+- `dayOfWeek`: `Monday` … `Sunday` (exact names; otherwise `400`).
+- `startTime` / `endTime`: `HH:mm` on the 5-minute grid; `endTime` may be `24:00` (midnight at the end of the day).
+  A shift past midnight is two blocks (Friday 20:00–24:00 and Saturday 00:00–02:00).
+- `effectiveFrom` (default: today in the clinic's time zone) and `effectiveTo` (inclusive, `null` = open-ended) are
+  dates. To change someone's hours from a date, set `effectiveTo` on the old block and add a new one.
+- Several blocks per day are allowed (09:00–12:30 and 13:30–17:00). Blocks of one veterinarian on the same day may
+  not overlap in time while their dates overlap: `409 CONFLICT`.
+
+`GET /api/veterinarians/:id/weekly-hours` (`schedules.read`): `{ "data": [block, ...] }`, all blocks (past, current
+and future), Monday first, then by start time. Not paginated.
+
+`POST /api/veterinarians/:id/weekly-hours`: `{ "dayOfWeek", "startTime", "endTime", "effectiveFrom"?, "effectiveTo"? }`
+→ `201` with the block and a `Location` header. `422` for a missing day or time, a time not on the grid, an end not
+after the start, or `effectiveTo` before `effectiveFrom`.
+
+`PATCH /api/veterinarians/:id/weekly-hours/:blockId`: partial update; omitted or `null` fields are unchanged, except
+`effectiveTo`, which an explicit `null` clears. Same rules as create. `DELETE` the same path → `204` (schedule
+blocks are not clinical history; changes are audited).
+
+**Exceptions** are times a veterinarian is unavailable, or clinic-wide **closures** (no veterinarian):
+
+    { "id": "uuid", "veterinarianId": "uuid" | null,
+      "type": "Leave" | "Sickness" | "Training" | "Other" | "Closure" | "Unavailable",
+      "startsAt": "2026-11-02T00:00:00+00:00", "endsAt": "2026-11-03T00:00:00+00:00",
+      "reason": "..." | null, "createdAt": "...", "updatedAt": "..." }
+
+- `veterinarianId` is `null` exactly when `type` is `Closure`; otherwise `422`.
+- **Privacy:** staff absences can be health information. Only `schedules.manage` holders and the veterinarian
+  concerned see the real `type` and `reason`. Everyone else sees `"type": "Unavailable"` and `"reason": null`.
+  Closures are shown in full to everyone. `Unavailable` is never accepted as input.
+- `startsAt` / `endsAt` are instants: ISO 8601 **with an explicit offset** (`Z` or `+01:00`) on the 5-minute grid,
+  `endsAt` after `startsAt`. Without an offset the request is `400`. Responses are in UTC. A whole local day is the
+  local midnight-to-midnight instants (the frontend converts using `GET /api/clinic`).
+- Exceptions may overlap each other.
+
+`GET /api/schedule-exceptions` (`schedules.read`): paginated, by `startsAt` then id.
+- `veterinarianId`: that veterinarian's exceptions **and** all closures.
+- `from` / `to`: instants (offset required; encode `+` as `%2B` in the query string); only exceptions ending after
+  `from` / starting before `to`. Invalid values or `to` not after `from` are `422`.
+
+`GET /api/schedule-exceptions/:id` (`schedules.read`), `POST /api/schedule-exceptions`
+`{ "veterinarianId"?, "type", "startsAt", "endsAt", "reason"? }` (→ `201`, `Location`), `PATCH /api/schedule-exceptions/:id`
+`{ "type"?, "startsAt"?, "endsAt"?, "reason"? }` (the veterinarian cannot change; a closure cannot become a personal
+exception or the reverse; `""` clears the reason) and `DELETE /api/schedule-exceptions/:id` (→ `204`). Closures need
+`schedules.manage`. Another clinic's exception is `404`. `reason` max 500 characters.
+
+**Computed working hours**
+
+`GET /api/veterinarians/:id/working-hours?from=YYYY-MM-DD&to=YYYY-MM-DD` (`schedules.read`): the actual working
+periods for the local calendar days `from` to `to` (inclusive, at most 62 days): weekly hours minus that
+veterinarian's exceptions and all closures.
+
+    { "veterinarianId": "uuid", "timeZone": "Europe/London", "from": "2026-06-01", "to": "2026-06-07",
+      "intervals": [ { "startAt": "2026-06-01T09:00:00+01:00", "endAt": "2026-06-01T12:00:00+01:00" }, ... ] }
+
+- Intervals are sorted, half-open (`endAt` is the first minute not worked), merged where they touch, and carry the
+  clinic's local offset at that moment.
+- Daylight saving: a local time skipped when clocks go forward moves to the first valid time (a block entirely
+  inside the gap disappears); a repeated local time when clocks go back is read as standard time.
+- Missing or malformed dates (`YYYY-MM-DD` only), `to` before `from`, or more than 62 days are `422`.
+- Appointments are not subtracted yet; B-09 builds booking validation on this.
+
+Every create, update and delete of hours and exceptions is audited (`working_hours.*`, `schedule_exception.*`).
+Metadata holds the veterinarian, the type and the changed field names, never the reason.
 
 ## 8. Consultations
 `GET /api/patients/:id/consultations`
