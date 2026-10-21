@@ -224,6 +224,14 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("status");
 
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasDefaultValue("UTC")
+                        .HasColumnName("time_zone");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -300,6 +308,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_users");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_users_clinic_id_id");
 
                     b.HasIndex("ClinicId")
                         .HasDatabaseName("ix_users_clinic_id");
@@ -515,6 +526,133 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Scheduling.ScheduleException", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("EndsAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ends_at");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("StartsAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("starts_at");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("VeterinarianId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("veterinarian_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_schedule_exceptions");
+
+                    b.HasIndex("ClinicId", "StartsAt", "Id")
+                        .HasDatabaseName("ix_schedule_exceptions_clinic_id_starts_at_id");
+
+                    b.HasIndex("ClinicId", "VeterinarianId", "EndsAt")
+                        .HasDatabaseName("ix_schedule_exceptions_clinic_id_veterinarian_id_ends_at");
+
+                    b.HasIndex("ClinicId", "VeterinarianId", "StartsAt")
+                        .HasDatabaseName("ix_schedule_exceptions_clinic_id_veterinarian_id_starts_at");
+
+                    b.ToTable("schedule_exceptions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_schedule_exceptions_closure", "(type = 'Closure') = (veterinarian_id IS NULL)");
+
+                            t.HasCheckConstraint("ck_schedule_exceptions_granularity", "extract(epoch FROM starts_at) % 300 = 0 AND extract(epoch FROM ends_at) % 300 = 0");
+
+                            t.HasCheckConstraint("ck_schedule_exceptions_range", "ends_at > starts_at");
+
+                            t.HasCheckConstraint("ck_schedule_exceptions_type", "type IN ('Leave', 'Sickness', 'Training', 'Other', 'Closure')");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Scheduling.WorkingHoursBlock", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DayOfWeek")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("day_of_week");
+
+                    b.Property<DateOnly>("EffectiveFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("effective_from");
+
+                    b.Property<DateOnly?>("EffectiveTo")
+                        .HasColumnType("date")
+                        .HasColumnName("effective_to");
+
+                    b.Property<int>("EndMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("end_minute");
+
+                    b.Property<int>("StartMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("start_minute");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("VeterinarianId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("veterinarian_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_working_hours");
+
+                    b.HasIndex("ClinicId", "VeterinarianId", "DayOfWeek", "StartMinute")
+                        .HasDatabaseName("ix_working_hours_clinic_id_veterinarian_id_day_of_week_start_m");
+
+                    b.ToTable("working_hours", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_working_hours_day_of_week", "day_of_week IN ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')");
+
+                            t.HasCheckConstraint("ck_working_hours_effective", "effective_to IS NULL OR effective_to >= effective_from");
+
+                            t.HasCheckConstraint("ck_working_hours_minutes", "start_minute >= 0 AND end_minute <= 1440 AND start_minute < end_minute AND start_minute % 5 = 0 AND end_minute % 5 = 0");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.User", null)
@@ -592,6 +730,41 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_patients_clients_clinic_id_client_id");
 
                     b.Navigation("Client");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Scheduling.ScheduleException", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_schedule_exceptions_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "VeterinarianId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_schedule_exceptions_users_clinic_id_veterinarian_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Scheduling.WorkingHoursBlock", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_working_hours_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "VeterinarianId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_working_hours_users_clinic_id_veterinarian_id");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>

@@ -29,7 +29,9 @@ backend/
     Features/Auth/              login/logout/me/csrf/password endpoints, session validation, sign-in rules
     Features/Users/             user management endpoints, create-admin command
     Features/Clients/           client (pet owner) records
-    Features/Patients/          patient (animal) records
+    Features/Patients/          patient (animal) records and history timeline
+    Features/Clinics/           the caller's clinic (time zone)
+    Features/Scheduling/        veterinarians' weekly hours, exceptions, closures, computed working hours
     Common/Authorization/       roles, permissions, [RequirePermission]
     Common/Tenancy/             current clinic, clinic write guard (query filters live in AppDbContext)
     Common/Auditing/            audit log entity and AuditTrail
@@ -110,7 +112,7 @@ Cookie sessions validated against the database on every request; contract in `do
 Create a clinic and its first administrator (prompts for the password without echoing it; or pipe it on stdin):
 
 ```bash
-dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Owner" --email jo@happypaws.example
+dotnet run --project src/VetPlatform.Api -- create-admin --clinic "Happy Paws" --name "Jo Owner" --email jo@happypaws.example --timezone Europe/London
 ```
 
 Then sign in as that administrator and create the other staff through `POST /api/users`.

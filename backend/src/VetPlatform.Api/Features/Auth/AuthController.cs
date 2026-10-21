@@ -23,7 +23,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         [Required, EmailAddress, MaxLength(UserEntity.EmailMaxLength)] string? Email,
         [Required, MaxLength(1024)] string? Password);
 
-    public sealed record ClinicSummary(Guid Id, string Name);
+    public sealed record ClinicSummary(Guid Id, string Name, string TimeZone);
 
     public sealed record ChangePasswordRequest(
         [Required, MaxLength(1024)] string? CurrentPassword,
@@ -45,7 +45,7 @@ public sealed class AuthController(AuthService authService, IAntiforgery antifor
         {
             var roles = user.Roles.Select(role => role.Role).Order().ToList();
             return new(
-                user.Id, user.Name, user.Email, new ClinicSummary(user.Clinic!.Id, user.Clinic.Name),
+                user.Id, user.Name, user.Email, new ClinicSummary(user.Clinic!.Id, user.Clinic.Name, user.Clinic.TimeZone),
                 roles, Common.Authorization.Permissions.For(roles));
         }
     }

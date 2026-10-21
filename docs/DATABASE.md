@@ -22,7 +22,7 @@ Suggested fields:
 - legal/business name
 - contact information
 - address
-- timezone
+- timezone (implemented in B-08 as `time_zone`: IANA id, default `UTC`)
 - currency
 - tax configuration
 - settings
@@ -311,22 +311,32 @@ Stock should be derived from auditable movements/lots rather than arbitrary dire
 - unit_cost
 
 ## 9. Scheduling
-### VeterinarianAvailability
-- id
-- veterinarian_id
-- day_of_week
-- start_time
-- end_time
-- effective_from
-- effective_to nullable
+Implemented in B-08 (ADR-008). Every time and instant is on a 5-minute grid.
 
-### ScheduleException
-- id
-- veterinarian_id
-- starts_at
-- ends_at
-- type
-- reason
+### VeterinarianAvailability (table `working_hours`)
+- id, clinic_id (FK clinics, RESTRICT)
+- veterinarian_id: composite FK `(clinic_id, veterinarian_id) → users(clinic_id, id)` RESTRICT (users gained a
+  unique `(clinic_id, id)` key in B-08)
+- day_of_week (`Monday` … `Sunday`; CHECK)
+- start_minute, end_minute: minutes after local midnight (CHECK: 0 ≤ start < end ≤ 1440, both multiples of 5);
+  the API shows them as `HH:mm`, with 1440 as `24:00`
+- effective_from (`date`), effective_to (`date`, nullable, inclusive; CHECK ≥ effective_from)
+- created_at, updated_at
+
+No overlapping blocks for one veterinarian, day and overlapping dates (at most 200 blocks per veterinarian): checked
+in the service under a `FOR NO KEY UPDATE` row lock on the veterinarian's user row (an exclusion constraint would need `btree_gist`; revisit with B-09's appointment constraint).
+Index (clinic_id, veterinarian_id, day_of_week, start_minute).
+
+### ScheduleException (table `schedule_exceptions`)
+- id, clinic_id (FK clinics, RESTRICT)
+- veterinarian_id: nullable composite FK as above; null exactly for clinic closures (CHECK with type)
+- type (`Leave`, `Sickness`, `Training`, `Other`, `Closure`; CHECK)
+- starts_at, ends_at (`timestamptz`; CHECK ends_at > starts_at, both on the 5-minute grid)
+- reason (max 500; may be staff health information, never copied into audit metadata)
+- created_at, updated_at
+
+Indexes (clinic_id, veterinarian_id, starts_at), (clinic_id, veterinarian_id, ends_at) and (clinic_id, starts_at,
+id). Dates and instants are limited to 2000–2100 by the API.
 
 Appointment availability must account for existing appointments and schedule exceptions.
 

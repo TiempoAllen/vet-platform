@@ -71,6 +71,10 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.HasIndex(user => user.Email).IsUnique();
         builder.HasIndex(user => user.ClinicId);
 
+        // Unique (clinic_id, id) so clinic-owned rows that point at a user (schedules, later appointments) use a
+        // composite foreign key and cannot reference another clinic's staff (ADR-005).
+        builder.HasAlternateKey(user => new { user.ClinicId, user.Id });
+
         // Restrict, like every relationship to users: users are never deleted, only disabled. Role rows are removed
         // explicitly when roles change (the change itself is in the audit log).
         builder.HasMany(user => user.Roles)
