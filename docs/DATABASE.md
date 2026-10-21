@@ -94,22 +94,30 @@ are never deleted.
 another clinic's row (ADR-005).
 
 ### Patient
+Implemented in B-06 (table `patients`).
 - id
-- clinic_id
-- client_id
-- name
-- species
-- breed
-- sex
-- reproductive_status
-- date_of_birth
-- color/markings
-- microchip_number
-- weight/current_weight if appropriate
-- status
+- clinic_id (FK to clinics, RESTRICT)
+- client_id: the primary owner; composite FK `(clinic_id, client_id) → clients(clinic_id, id)` RESTRICT, so the owner is
+  always of the same clinic
+- name (required; CHECK: not blank)
+- species (`Dog`, `Cat`, `Bird`, `Rabbit`, `Rodent`, `Reptile`, `Horse`, `Other`; CHECK)
+- breed (free text)
+- sex (`Male`, `Female`, `Unknown`; CHECK)
+- reproductive_status (`Intact`, `Neutered`, `Unknown`; CHECK)
+- date_of_birth (`date`), date_of_birth_estimated (boolean)
+- markings (colour and markings, free text)
+- microchip_number (normalised: upper-case letters and digits only, CHECK; unique per clinic where not null)
+- weight_kg (`numeric(7,3)`, CHECK 0 < weight ≤ 2000): current weight; dated history comes with consultation vitals
+- status (`Active`, `Inactive`, `Deceased`; CHECK), date_of_death (CHECK: only with `Deceased`, not before birth)
 - notes
+- created_at, updated_at
 
-A patient belongs to one primary client in the initial release. Design for future support of multiple responsible owners if required.
+Keys and indexes: unique (clinic_id, id) for later composite FKs; unique (clinic_id, microchip_number) where not null;
+(clinic_id, name, id), (clinic_id, created_at, id), (clinic_id, updated_at, id) for the list sorts; (clinic_id,
+client_id, name) for a client's patients.
+
+A patient belongs to one primary client in the initial release. Multiple responsible owners, if required, become a
+`patient_owners` table (patient, client, role) beside `client_id`, which stays the primary owner (ADR-006).
 
 ## 5. Clinical records
 ### Appointment

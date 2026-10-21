@@ -99,7 +99,7 @@ public sealed class ClientsTests(DatabaseApiFactory factory) : IClassFixture<Dat
         var me = await client.GetFromJsonAsync<JsonElement>("/api/auth/me");
 
         Assert.Equal(
-            [Permissions.ClientsManage, Permissions.ClientsRead],
+            [Permissions.ClientsManage, Permissions.ClientsRead, Permissions.PatientsManage, Permissions.PatientsRead],
             me.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()));
     }
 
