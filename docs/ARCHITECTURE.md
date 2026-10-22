@@ -361,9 +361,12 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - **Overrides are explicit and recorded:** `allowConflicts` + `overrideReason` stores the reason and the exact list of
   accepted conflicts on the appointment (CHECK keeps them consistent) and in the audit entry. A later placement that
   is clean clears it; non-placement edits keep it. An override flag without conflicts records nothing.
-- **Race safety, two layers:** every placement locks the veterinarian's user row and then the patient's row
-  (`FOR NO KEY UPDATE`, always in that order, only after the clinic-filtered lookups), so the checks and the insert
-  are serialised per veterinarian and per patient. In the database, the exclusion constraint
+- **Race safety, two layers:** every placement locks rows in one fixed order: the appointment being edited (PATCH
+  only), then the veterinarian's user row, then the patient's row (`FOR NO KEY UPDATE`, each only after its
+  clinic-filtered lookup, and the appointment, role and status are re-read under the lock). Checks and writes are thus
+  serialised per appointment, per veterinarian and per patient, and two concurrent edits of one appointment cannot
+  combine into an unchecked placement. Conflict queries carry a redundant `start_at > start - 12 h` bound (the duration
+  CHECK guarantees it) so the `(…, start_at)` indexes bound both sides while the locks are held. In the database, the exclusion constraint
   `ex_appointments_veterinarian_no_overlap` (`btree_gist`) forbids overlapping un-overridden active bookings of one
   veterinarian outright; its violation is mapped to the same `409`. Overridden rows are exempt by design.
 - **Times:** stored UTC; responses use the clinic's local offset, matching the computed working hours.
@@ -374,3 +377,11 @@ Choose the simplest solution that satisfies documented requirements, security, m
   - The patient's owner may change after booking; existing appointments keep the earlier client.
   - Disabling a veterinarian does not touch their existing appointments; B-10 / the frontend should surface them.
   - `btree_gist` must be installable by the migration role (it is a trusted extension on PostgreSQL 13+; RUNBOOK).
+  - Overridden rows stay outside the exclusion constraint for as long as they carry an override, even if the clash
+    later disappears (e.g. the other booking is cancelled in B-10); the service check still covers them. B-10 should
+    re-run the placement where a transition makes that meaningful.
+  - The constraint's status list is raw SQL; `Appointment.ActiveStatuses` must stay in step (a test compares them).
+- **Lock compatibility (fixed in B-09):** user management's clinic lock is now `FOR NO KEY UPDATE`. As `FOR UPDATE`
+  it blocked every foreign-key check on the clinic row (each appointment insert) and could deadlock with a booking
+  that held a veterinarian lock. Deadlocks and serialization failures that still occur are `409 CONFLICT` ("try
+  again"), not `500`.

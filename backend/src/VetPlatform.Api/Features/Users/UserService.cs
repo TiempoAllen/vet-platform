@@ -233,7 +233,7 @@ public sealed class UserService(
     /// administrators demoting each other at the same moment cannot leave the clinic without an administrator.
     /// </summary>
     private Task LockClinicAsync(CancellationToken cancellationToken) =>
-        db.Database.ExecuteSqlAsync($"SELECT 1 FROM clinics WHERE id = {CurrentClinicId} FOR UPDATE", cancellationToken);
+        db.Database.ExecuteSqlAsync($"SELECT 1 FROM clinics WHERE id = {CurrentClinicId} FOR NO KEY UPDATE", cancellationToken);
 
     /// <summary>Re-checks under the clinic lock that the caller is still an active user allowed to manage users.</summary>
     private async Task EnsureActorCanManageUsersAsync(Guid actorUserId, CancellationToken cancellationToken)

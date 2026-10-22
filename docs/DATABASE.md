@@ -130,8 +130,8 @@ Implemented in B-09 (table `appointments`, ADR-009).
   `Grooming`, `Emergency`, `Other`; CHECK)
 - reason (max 500), notes (max 4000)
 - status (`Scheduled`, `CheckedIn`, `Completed`, `Cancelled`, `NoShow`; CHECK; transitions in B-10)
-- overridden_conflicts (`text[]`), override_reason (max 500): CHECK that the reason is set exactly when the list is
-  non-empty
+- overridden_conflicts (`text[]` of `OutsideWorkingHours`, `VeterinarianDoubleBooked`, `PatientDoubleBooked`;
+  CHECK), override_reason (max 500): CHECK that the reason is set exactly when the list is non-empty
 - created_at, updated_at
 
 Exclusion constraint `ex_appointments_veterinarian_no_overlap` (extension `btree_gist`): no two `Scheduled` or

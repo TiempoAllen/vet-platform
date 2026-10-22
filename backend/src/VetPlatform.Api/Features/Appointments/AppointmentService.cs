@@ -37,7 +37,9 @@ public sealed class AppointmentService(
 
         if (query.ParsedFrom is { } from)
         {
-            appointments = appointments.Where(a => a.EndAt > from);
+            // The start_at bound is redundant (no appointment exceeds MaxDuration) but lets the index bound the scan.
+            var earliestStart = from.AddMinutes(-Appointment.MaxDurationMinutes);
+            appointments = appointments.Where(a => a.EndAt > from && a.StartAt > earliestStart);
         }
 
         if (query.ParsedTo is { } to)
@@ -132,6 +134,16 @@ public sealed class AppointmentService(
         ThrowIfAny(problems);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        // Lock order everywhere: appointment, then veterinarian, then patient (create locks no appointment row). The row
+        // is locked only after the clinic-filtered lookup and read again afterwards, so two concurrent edits are
+        // serialised and the second one checks the placement the first one left.
+        if (!await db.Appointments.AsNoTracking().AnyAsync(a => a.Id == id, cancellationToken))
+        {
+            throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The appointment was not found.");
+        }
+
+        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM appointments WHERE id = {id} FOR NO KEY UPDATE", cancellationToken);
         var appointment = await FindAsync(id, tracking: true, cancellationToken);
         if (appointment.Status != AppointmentStatus.Scheduled)
         {
@@ -274,10 +286,13 @@ public sealed class AppointmentService(
             conflicts.Add(AppointmentConflict.OutsideWorkingHours);
         }
 
+        // The StartAt lower bound is redundant (no appointment exceeds MaxDuration) but keeps the index scan short,
+        // which matters because this runs while the veterinarian and patient rows are locked.
+        var earliestStart = start.AddMinutes(-Appointment.MaxDurationMinutes);
         var others = db.Appointments.AsNoTracking()
             .Where(other => other.Id != appointment.Id
                 && Appointment.ActiveStatuses.Contains(other.Status)
-                && other.StartAt < end && other.EndAt > start);
+                && other.StartAt < end && other.EndAt > start && other.StartAt > earliestStart);
 
         if (await others.AnyAsync(other => other.VeterinarianId == appointment.VeterinarianId, cancellationToken))
         {
@@ -364,8 +379,13 @@ public sealed class AppointmentService(
         }
 
         // Tracked, not AsNoTracking: it becomes the appointment's navigation and must not be inserted as a new row.
-        var veterinarian = exists ? await db.Users.SingleAsync(user => user.Id == id, cancellationToken) : null;
-        if (veterinarian is null || veterinarian.Status != UserStatus.Active)
+        // Role and status are read again after the lock, so a concurrent demotion or disable cannot slip through.
+        var veterinarian = exists
+            ? await db.Users.Include(user => user.Roles).SingleAsync(user => user.Id == id, cancellationToken)
+            : null;
+        if (veterinarian is null
+            || veterinarian.Status != UserStatus.Active
+            || veterinarian.Roles.All(role => role.Role != Role.Veterinarian))
         {
             problems.Add(new ApiErrorDetail("veterinarianId", "The veterinarian was not found or is not active."));
             return null;

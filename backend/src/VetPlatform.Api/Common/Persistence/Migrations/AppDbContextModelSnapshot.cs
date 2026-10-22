@@ -190,6 +190,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_appointments_granularity", "extract(epoch FROM start_at) % 300 = 0 AND extract(epoch FROM end_at) % 300 = 0");
 
+                            t.HasCheckConstraint("ck_appointments_overridden_conflicts", "overridden_conflicts <@ ARRAY['OutsideWorkingHours', 'VeterinarianDoubleBooked', 'PatientDoubleBooked']::text[]");
+
                             t.HasCheckConstraint("ck_appointments_override", "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");
 
                             t.HasCheckConstraint("ck_appointments_status", "status IN ('Scheduled', 'CheckedIn', 'Completed', 'Cancelled', 'NoShow')");

@@ -43,6 +43,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     table.UniqueConstraint("ak_appointments_clinic_id_id", x => new { x.clinic_id, x.id });
                     table.CheckConstraint("ck_appointments_duration", "end_at >= start_at + interval '5 minutes' AND end_at <= start_at + interval '720 minutes'");
                     table.CheckConstraint("ck_appointments_granularity", "extract(epoch FROM start_at) % 300 = 0 AND extract(epoch FROM end_at) % 300 = 0");
+                    table.CheckConstraint("ck_appointments_overridden_conflicts", "overridden_conflicts <@ ARRAY['OutsideWorkingHours', 'VeterinarianDoubleBooked', 'PatientDoubleBooked']::text[]");
                     table.CheckConstraint("ck_appointments_override", "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");
                     table.CheckConstraint("ck_appointments_status", "status IN ('Scheduled', 'CheckedIn', 'Completed', 'Cancelled', 'NoShow')");
                     table.CheckConstraint("ck_appointments_type", "type IN ('Consultation', 'Vaccination', 'FollowUp', 'Surgery', 'Dental', 'Grooming', 'Emergency', 'Other')");
@@ -105,7 +106,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
             // Not expressible in the EF model (ADR-009): two active, un-overridden appointments of one veterinarian
             // may never overlap. Half-open ranges, so back-to-back bookings are fine. Overridden bookings are exempt
-            // by design; the service still checks them under its row locks.
+            // by design; the service still checks them under its row locks. The status list must match
+            // Appointment.ActiveStatuses (a test compares them).
             migrationBuilder.Sql("""
                 ALTER TABLE appointments ADD CONSTRAINT ex_appointments_veterinarian_no_overlap
                 EXCLUDE USING gist (
