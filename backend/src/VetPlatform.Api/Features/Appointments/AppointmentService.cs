@@ -237,6 +237,166 @@ public sealed class AppointmentService(
         return AppointmentResponse.From(appointment, zone);
     }
 
+    // ---------- Status lifecycle (B-10, ADR-010) ----------
+
+    /// <summary>Scheduled → CheckedIn, only on the appointment's local day.</summary>
+    public Task<AppointmentResponse> CheckInAsync(Guid id, CancellationToken cancellationToken) =>
+        TransitionAsync(id, AuditActions.AppointmentCheckedIn, (appointment, context) =>
+        {
+            Require(appointment, "check in", AppointmentStatus.Scheduled);
+            if (context.LocalDay(appointment.StartAt) != context.Today)
+            {
+                throw Conflict("An appointment can only be checked in on its own day.");
+            }
+
+            appointment.Status = AppointmentStatus.CheckedIn;
+            appointment.CheckedInAt = context.Now;
+            return Task.CompletedTask;
+        }, cancellationToken);
+
+    /// <summary>CheckedIn → Scheduled, only on the day of the check-in.</summary>
+    public Task<AppointmentResponse> UndoCheckInAsync(Guid id, CancellationToken cancellationToken) =>
+        TransitionAsync(id, AuditActions.AppointmentCheckInUndone, (appointment, context) =>
+        {
+            Require(appointment, "undo the check-in of", AppointmentStatus.CheckedIn);
+            if (context.LocalDay(appointment.CheckedInAt!.Value) != context.Today)
+            {
+                throw Conflict("A check-in can only be undone on the day it was made.");
+            }
+
+            appointment.Status = AppointmentStatus.Scheduled;
+            appointment.CheckedInAt = null;
+            return Task.CompletedTask;
+        }, cancellationToken);
+
+    /// <summary>CheckedIn → Completed (final).</summary>
+    public Task<AppointmentResponse> CompleteAsync(Guid id, CancellationToken cancellationToken) =>
+        TransitionAsync(id, AuditActions.AppointmentCompleted, (appointment, context) =>
+        {
+            Require(appointment, "complete", AppointmentStatus.CheckedIn);
+            appointment.Status = AppointmentStatus.Completed;
+            appointment.CompletedAt = context.Now;
+            return Task.CompletedTask;
+        }, cancellationToken);
+
+    /// <summary>Scheduled or CheckedIn → Cancelled (final), recording who called it off.</summary>
+    public Task<AppointmentResponse> CancelAsync(Guid id, CancelAppointmentRequest request, CancellationToken cancellationToken) =>
+        TransitionAsync(id, AuditActions.AppointmentCancelled, (appointment, context) =>
+        {
+            Require(appointment, "cancel", AppointmentStatus.Scheduled, AppointmentStatus.CheckedIn);
+            appointment.Status = AppointmentStatus.Cancelled;
+            appointment.CancelledAt = context.Now;
+            appointment.CancelledBy = request.CancelledBy!.Value;
+            appointment.CancellationReason = NullIfBlank(request.Reason);
+            return Task.CompletedTask;
+        }, cancellationToken, metadata: a => new { cancelledBy = a.CancelledBy });
+
+    /// <summary>Scheduled → NoShow, only once the appointment has started.</summary>
+    public Task<AppointmentResponse> NoShowAsync(Guid id, CancellationToken cancellationToken) =>
+        TransitionAsync(id, AuditActions.AppointmentNoShow, (appointment, context) =>
+        {
+            Require(appointment, "mark as no-show", AppointmentStatus.Scheduled);
+            if (context.Now < appointment.StartAt)
+            {
+                throw Conflict("An appointment can only be marked as a no-show once it has started.");
+            }
+
+            appointment.Status = AppointmentStatus.NoShow;
+            appointment.NoShowAt = context.Now;
+            return Task.CompletedTask;
+        }, cancellationToken);
+
+    /// <summary>
+    /// NoShow → Scheduled, only on the day it was marked, and only if the slot has not been given to someone else in
+    /// the meantime (a no-show does not occupy the calendar, so it could have been).
+    /// </summary>
+    public Task<AppointmentResponse> UndoNoShowAsync(Guid id, CancellationToken cancellationToken) =>
+        TransitionAsync(id, AuditActions.AppointmentNoShowUndone, async (appointment, context) =>
+        {
+            Require(appointment, "undo the no-show of", AppointmentStatus.NoShow);
+            if (context.LocalDay(appointment.NoShowAt!.Value) != context.Today)
+            {
+                throw Conflict("A no-show can only be undone on the day it was marked.");
+            }
+
+            // Same lock order as placements: appointment (held), veterinarian, patient.
+            await db.Database.ExecuteSqlAsync(
+                $"SELECT 1 FROM users WHERE id = {appointment.VeterinarianId} FOR NO KEY UPDATE", cancellationToken);
+            await db.Database.ExecuteSqlAsync(
+                $"SELECT 1 FROM patients WHERE id = {appointment.PatientId} FOR NO KEY UPDATE", cancellationToken);
+
+            // Working hours are not re-judged (the booking was accepted then). Every clash is: a no-show frees the
+            // slot, and an override accepted at booking time was for other appointments, never for whoever has been
+            // booked into the freed slot since. Staff who still want both can re-book with an explicit override.
+            var clashes = (await ConflictsAsync(appointment, context.Zone, cancellationToken))
+                .Where(conflict => conflict != AppointmentConflict.OutsideWorkingHours)
+                .ToList();
+            if (clashes.Count > 0)
+            {
+                throw new ApiException(
+                    StatusCodes.Status409Conflict, ErrorCodes.Conflict,
+                    "The slot has been booked again since the no-show; the no-show cannot be undone.",
+                    clashes.Select(ConflictDetail).ToList());
+            }
+
+            appointment.Status = AppointmentStatus.Scheduled;
+            appointment.NoShowAt = null;
+        }, cancellationToken);
+
+    /// <summary>The clock and calendar a transition is judged by.</summary>
+    private sealed record TransitionContext(DateTimeOffset Now, TimeZoneInfo Zone)
+    {
+        public DateOnly Today => LocalDay(Now);
+
+        public DateOnly LocalDay(DateTimeOffset instant) =>
+            DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, Zone).DateTime);
+    }
+
+    /// <summary>
+    /// Locks the appointment row (after the clinic-filtered lookup), re-reads it, applies one transition, records the
+    /// actor and an audit entry, and saves. Concurrent transitions of one appointment are serialised, so the second
+    /// one is judged against the status the first one left.
+    /// </summary>
+    private async Task<AppointmentResponse> TransitionAsync(
+        Guid id,
+        string auditAction,
+        Func<Appointment, TransitionContext, Task> apply,
+        CancellationToken cancellationToken,
+        Func<Appointment, object>? metadata = null)
+    {
+        var zone = await ZoneAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (!await db.Appointments.AsNoTracking().AnyAsync(a => a.Id == id, cancellationToken))
+        {
+            throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The appointment was not found.");
+        }
+
+        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM appointments WHERE id = {id} FOR NO KEY UPDATE", cancellationToken);
+        var appointment = await FindAsync(id, tracking: true, cancellationToken);
+        var before = appointment.Status;
+
+        await apply(appointment, new TransitionContext(timeProvider.GetUtcNow(), zone));
+
+        appointment.StatusChangedByUserId = CallerId;
+        audit.Record(
+            auditAction, nameof(Appointment), appointment.Id,
+            new { from = before, to = appointment.Status, details = metadata?.Invoke(appointment) });
+        await SaveAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return AppointmentResponse.From(appointment, zone);
+    }
+
+    private static void Require(Appointment appointment, string action, params AppointmentStatus[] allowed)
+    {
+        if (!allowed.Contains(appointment.Status))
+        {
+            throw Conflict($"Cannot {action} an appointment that is {appointment.Status}.");
+        }
+    }
+
+    private static ApiException Conflict(string message) =>
+        new(StatusCodes.Status409Conflict, ErrorCodes.Conflict, message);
+
     // ---------- Placement rules ----------
 
     /// <summary>

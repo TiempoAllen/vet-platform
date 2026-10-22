@@ -8,6 +8,9 @@ public sealed record AppointmentPatientSummary(Guid Id, string Name, Species Spe
 
 public sealed record AppointmentPersonSummary(Guid Id, string Name);
 
+/// <summary>Present exactly when the appointment is Cancelled.</summary>
+public sealed record AppointmentCancellation(DateTimeOffset At, AppointmentCancelledBy By, string? Reason);
+
 /// <summary>Present when the appointment was placed despite conflicts.</summary>
 public sealed record AppointmentOverride(string Reason, IReadOnlyList<AppointmentConflict> Conflicts);
 
@@ -23,6 +26,10 @@ public sealed record AppointmentResponse(
     string? Reason,
     string? Notes,
     AppointmentStatus Status,
+    DateTimeOffset? CheckedInAt,
+    DateTimeOffset? CompletedAt,
+    DateTimeOffset? NoShowAt,
+    AppointmentCancellation? Cancellation,
     AppointmentOverride? Override,
     AppointmentPersonSummary? CreatedBy,
     DateTimeOffset CreatedAt,
@@ -45,12 +52,27 @@ public sealed record AppointmentResponse(
             appointment.Reason,
             appointment.Notes,
             appointment.Status,
+            Local(appointment.CheckedInAt, zone),
+            Local(appointment.CompletedAt, zone),
+            Local(appointment.NoShowAt, zone),
+            appointment.CancelledAt is { } cancelledAt
+                ? new AppointmentCancellation(
+                    TimeZoneInfo.ConvertTime(cancelledAt, zone), appointment.CancelledBy!.Value, appointment.CancellationReason)
+                : null,
             appointment.OverrideReason is { } reason ? new AppointmentOverride(reason, appointment.OverriddenConflicts) : null,
             appointment.CreatedBy is { } creator ? new AppointmentPersonSummary(creator.Id, creator.Name) : null,
             appointment.CreatedAt,
             appointment.UpdatedAt);
     }
+
+    private static DateTimeOffset? Local(DateTimeOffset? instant, TimeZoneInfo zone) =>
+        instant is { } value ? TimeZoneInfo.ConvertTime(value, zone) : null;
 }
+
+/// <summary><c>cancelledBy</c> says who called it off (Client or Clinic); the reason is optional.</summary>
+public sealed record CancelAppointmentRequest(
+    [Required] AppointmentCancelledBy? CancelledBy,
+    [MaxLength(Appointment.ReasonMaxLength)] string? Reason);
 
 public sealed class AppointmentListQuery : PageQuery, IValidatableObject
 {

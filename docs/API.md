@@ -403,10 +403,16 @@ Entry types so far:
 | `type` | When | `details` |
 |---|---|---|
 | `PatientRegistered` | The patient was created. | `client`: the owner at registration, with that client's **current** name; `null` if it can no longer be shown. |
+| `AppointmentCompleted` | An appointment was completed (`occurredAt` = `completedAt`). | `appointment`: `{ id, startAt, endAt, type, veterinarian: { id, name } }` |
+| `AppointmentCancelled` | An appointment was cancelled (`occurredAt` = cancellation time). | `appointment` as above, `cancelledBy`: `Client` or `Clinic`. The reason is not shown. |
+| `AppointmentNoShow` | An appointment was marked no-show. Disappears if the no-show is undone. | `appointment` as above |
+
+For appointment entries `id` is the appointment's id, `actor` is the staff member who made the change, and the
+instants are UTC. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
 
 ## 7. Appointments
-Implemented in B-09 (design: `ARCHITECTURE.md` ADR-009): booking, editing and rescheduling. Status changes
-(`POST /api/appointments/:id/check-in`, `/complete`, `/cancel`, no-show) follow in B-10. There is no `DELETE` (`405`).
+Implemented in B-09 (booking, editing, rescheduling; ADR-009) and B-10 (status lifecycle; ADR-010). There is no
+`DELETE` (`405`).
 Other clinics' appointments are `404`. Permissions: `appointments.read` and `appointments.manage` (Admin,
 Veterinarian, Nurse, Receptionist).
 
@@ -422,6 +428,8 @@ Veterinarian, Nurse, Receptionist).
       "type": "Consultation" | "Vaccination" | "FollowUp" | "Surgery" | "Dental" | "Grooming" | "Emergency" | "Other",
       "reason": "Limping" | null, "notes": "..." | null,
       "status": "Scheduled" | "CheckedIn" | "Completed" | "Cancelled" | "NoShow",
+      "checkedInAt": "..." | null, "completedAt": "..." | null, "noShowAt": "..." | null,
+      "cancellation": { "at": "...", "by": "Client" | "Clinic", "reason": "..." | null } | null,
       "override": { "reason": "Emergency", "conflicts": ["OutsideWorkingHours", "VeterinarianDoubleBooked", "PatientDoubleBooked"] } | null,
       "createdBy": { "id": "uuid", "name": "Sam Reception" } | null,
       "createdAt": "...", "updatedAt": "..."
@@ -430,8 +438,8 @@ Veterinarian, Nurse, Receptionist).
 - `client` is the patient's owner **when the appointment was booked** (or moved to that patient); it is set by the
   server and never sent. A later transfer of the patient does not change existing appointments.
 - `override` is present when the appointment was placed despite conflicts (see below); otherwise `null`.
-- B-09 only creates `Scheduled` appointments; the other statuses appear from B-10. Only `Scheduled` appointments can
-  be edited (`409` otherwise).
+- New appointments are `Scheduled`; the lifecycle below changes the status. Only `Scheduled` appointments can be
+  edited with `PATCH` (`409` otherwise).
 
 `GET /api/appointments` (`appointments.read`): paginated (section 13), by `startAt` then id.
 - `from` / `to`: instants with offset (encode `+` as `%2B`); appointments ending after `from` / starting before `to`.
@@ -491,6 +499,35 @@ Veterinarian, Nurse, Receptionist).
 
 Every create and change is audited (`appointment.created`, `appointment.updated`): patient and veterinarian ids,
 changed field names and the overridden conflicts. Reasons and notes are not copied into the audit log.
+
+**Status lifecycle** (B-10, ADR-010). Each change is its own `POST` with no body (except cancel), requires
+`appointments.manage`, and returns `200` with the appointment:
+
+| Action | From → to | Rule (clinic time zone) |
+|---|---|---|
+| `POST /api/appointments/:id/check-in` | `Scheduled` → `CheckedIn` | only on the appointment's local day |
+| `POST /api/appointments/:id/undo-check-in` | `CheckedIn` → `Scheduled` | only on the day of the check-in |
+| `POST /api/appointments/:id/complete` | `CheckedIn` → `Completed` | final |
+| `POST /api/appointments/:id/cancel` | `Scheduled` or `CheckedIn` → `Cancelled` | final; body below |
+| `POST /api/appointments/:id/no-show` | `Scheduled` → `NoShow` | only once the appointment has started |
+| `POST /api/appointments/:id/undo-no-show` | `NoShow` → `Scheduled` | only on the day it was marked, and only if the veterinarian and patient have not been booked into the slot again (`409` listing the clash) |
+
+- Cancel body: `{ "cancelledBy": "Client" | "Clinic", "reason": "..." | null }`. `cancelledBy` is required (`422`
+  when missing, `400` when not an exact name); `reason` max 500 (trimmed; blank stored as `null`).
+- `undo-no-show` refuses any veterinarian or patient clash, even of a kind the booking originally overrode: the
+  override covered other appointments, not whoever was booked into the freed slot since. Working hours are not
+  re-checked. To keep both, book again with an explicit override.
+- A change that is not allowed from the current status, or not at this time, is `409 CONFLICT` with a message saying
+  why. Other clinics' appointments are `404`.
+- Concurrent changes of one appointment are applied one after the other; the second is judged against the status the
+  first left (e.g. complete and cancel at once: one `200`, one `409`).
+- Fields: `checkedInAt` (kept after completion, and after a cancellation that followed check-in), `completedAt`,
+  `noShowAt`, and `cancellation: { "at", "by": "Client" | "Clinic", "reason" }` (only when `Cancelled`). These
+  instants carry the clinic's local offset like `startAt`. Undo clears the matching field.
+- `Cancelled` and `NoShow` appointments no longer occupy the calendar, so their slot can be booked again. Overrides
+  recorded on other bookings are left as they were.
+- Every change is audited (`appointment.checked_in`, `.check_in_undone`, `.completed`, `.cancelled`, `.no_show`,
+  `.no_show_undone`) with the old and new status and, for cancellations, `cancelledBy`; never the reason.
 
 ### 7.1 Veterinarian schedules
 Implemented in B-08 (design: `ARCHITECTURE.md` ADR-008). Scheduling uses a **5-minute grid**: every time of day
