@@ -63,7 +63,10 @@ public sealed class Appointment : Entity, IClinicOwned
 
     public User? CreatedBy { get; set; }
 
-    /// <summary>Statuses that occupy the veterinarian's and the patient's time.</summary>
+    /// <summary>
+    /// Statuses that occupy the veterinarian's and the patient's time. Keep in step with the WHERE clause of
+    /// <see cref="NoOverlapConstraint"/> (raw SQL in the AddAppointments migration; a test compares them).
+    /// </summary>
     public static readonly AppointmentStatus[] ActiveStatuses = [AppointmentStatus.Scheduled, AppointmentStatus.CheckedIn];
 }
 
@@ -122,6 +125,9 @@ internal sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appoin
             table.HasCheckConstraint(
                 "ck_appointments_override",
                 "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");
+            table.HasCheckConstraint(
+                "ck_appointments_overridden_conflicts",
+                $"overridden_conflicts <@ ARRAY[{string.Join(", ", Enum.GetNames<AppointmentConflict>().Select(n => $"'{n}'"))}]::text[]");
         });
         builder.Property(a => a.Type).HasConversion<string>().HasMaxLength(32);
         builder.Property(a => a.Status).HasConversion<string>().HasMaxLength(32);

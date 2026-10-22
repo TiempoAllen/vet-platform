@@ -484,6 +484,78 @@ public sealed class AppointmentsTests(DatabaseApiFactory factory) : IClassFixtur
     }
 
     [Fact]
+    public async Task Patch_WithAnotherClinicsPatientOrVet_Is422_AndListFiltersWithTheirIdsAreEmpty()
+    {
+        var clinic = await ClinicAsync();
+        var other = await ClinicAsync();
+        var id = (await CreatedAsync(await clinic.Desk.PostAsJsonAsync("/api/appointments", Booking(clinic, 9)))).GetProperty("id").GetGuid();
+        await CreatedAsync(await other.Desk.PostAsJsonAsync("/api/appointments", Booking(other, 9)));
+
+        foreach (var (body, field) in new (object, string)[]
+                 {
+                     (new { patientId = other.PatientId }, "patientId"),
+                     (new { veterinarianId = other.Vet.Id }, "veterinarianId"),
+                 })
+        {
+            var response = await clinic.Desk.PatchAsJsonAsync($"/api/appointments/{id}", body);
+            Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+            Assert.Equal(field, Assert.Single((await ErrorOf(response)).Details).Field);
+        }
+
+        foreach (var query in new[] { $"veterinarianId={other.Vet.Id}", $"patientId={other.PatientId}", $"clientId={other.ClientId}" })
+        {
+            var page = await clinic.Desk.GetFromJsonAsync<JsonElement>("/api/appointments?" + query);
+            Assert.Equal(0, page.GetProperty("pagination").GetProperty("total").GetInt32());
+        }
+
+        var unpaired = await clinic.Desk.PatchAsJsonAsync($"/api/appointments/{id}", new { allowConflicts = true });
+        Assert.Equal("overrideReason", Assert.Single((await ErrorOf(unpaired)).Details).Field);
+    }
+
+    [Fact]
+    public async Task ConcurrentEditsOfOneAppointment_AreSerialised_SoTheCombinationIsChecked()
+    {
+        var clinic = await ClinicAsync();
+        var morningVet = await factory.CreateColleagueAsync(clinic.AdminUser, roles: Role.Veterinarian);
+        foreach (var day in Enum.GetNames<DayOfWeek>())
+        {
+            await clinic.Admin.PostAsJsonAsync(
+                $"/api/veterinarians/{morningVet.Id}/weekly-hours",
+                new { dayOfWeek = day, startTime = "08:00", endTime = "12:00", effectiveFrom = "2026-01-01" });
+        }
+
+        var id = (await CreatedAsync(await clinic.Desk.PostAsJsonAsync("/api/appointments", Booking(clinic, 9)))).GetProperty("id").GetGuid();
+
+        // Each change alone is fine; together (morning vet at 15:00) they are outside working hours.
+        var results = await Task.WhenAll(
+            clinic.Desk.PatchAsJsonAsync($"/api/appointments/{id}", new { veterinarianId = morningVet.Id }),
+            clinic.Admin.PatchAsJsonAsync($"/api/appointments/{id}", new { startAt = At(7, 15), endAt = At(7, 15, 30) }));
+
+        Assert.Equal(1, results.Count(r => r.StatusCode == HttpStatusCode.OK));
+        Assert.Equal(1, results.Count(r => r.StatusCode == HttpStatusCode.Conflict));
+        var final = await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/appointments/{id}");
+        Assert.False(
+            final.GetProperty("veterinarian").GetProperty("id").GetGuid() == morningVet.Id
+            && final.GetProperty("startAt").GetDateTimeOffset() == DateTimeOffset.Parse(At(7, 15)));
+    }
+
+    [Fact]
+    public async Task ActiveStatuses_MatchTheExclusionConstraint()
+    {
+        await ClinicAsync();
+        string definition = "";
+        await factory.UpdateDatabaseAsync(async db =>
+        {
+            definition = await db.Database
+                .SqlQuery<string>($"SELECT pg_get_constraintdef(oid) AS \"Value\" FROM pg_constraint WHERE conname = {Api.Features.Appointments.Appointment.NoOverlapConstraint}")
+                .SingleAsync();
+        });
+
+        var listed = Enum.GetNames<Api.Features.Appointments.AppointmentStatus>().Where(name => definition.Contains($"'{name}'"));
+        Assert.Equal(Api.Features.Appointments.Appointment.ActiveStatuses.Select(s => s.ToString()), listed);
+    }
+
+    [Fact]
     public async Task Appointments_CannotBeDeleted()
     {
         var clinic = await ClinicAsync();
@@ -516,6 +588,7 @@ public sealed class AppointmentsTests(DatabaseApiFactory factory) : IClassFixtur
     [InlineData("UPDATE appointments SET override_reason = 'x' WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
     [InlineData("UPDATE appointments SET status = 'Lost' WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
     [InlineData("UPDATE appointments SET start_at = start_at + interval '1 minute' WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
+    [InlineData("UPDATE appointments SET overridden_conflicts = ARRAY['Hungry'], override_reason = 'x' WHERE id = {0}", PostgresErrorCodes.CheckViolation)]
     public async Task Database_RejectsInvalidAppointments(string sql, string sqlState)
     {
         var clinic = await ClinicAsync();

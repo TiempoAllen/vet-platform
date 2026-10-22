@@ -15,7 +15,8 @@ info:
     - Every endpoint requires a signed-in user unless it declares `security: []`.
     - Error precedence: 429, 401, 403 FORBIDDEN, 403 CSRF_TOKEN_INVALID, 400/422, then the endpoint's own result
       (scheduling: a schedules.manage_own caller acting on another veterinarian's schedule gets its 403 after 400/422).
-    - A concurrent change or delete of the same record is 409 CONFLICT.
+    - A concurrent change or delete of the same record, a deadlock or a serialization failure is 409 CONFLICT
+      (retry).
     - Every response carries `X-Request-Id`.
     - Enum values are accepted only as exact names (`Admin`, `Active`).
     - Instants must carry an explicit offset (`Z` or `+01:00`); dates are `YYYY-MM-DD`.
@@ -1609,7 +1610,7 @@ components:
             - $ref: '#/components/schemas/PatientClientSummary'
         veterinarian: { $ref: '#/components/schemas/PersonSummary' }
         startAt: { type: string, format: date-time, description: With the clinic's local offset. }
-        endAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time, description: With the clinic's local offset. }
         type: { $ref: '#/components/schemas/AppointmentType' }
         reason: { type: [string, 'null'], maxLength: 500 }
         notes: { type: [string, 'null'], maxLength: 4000 }

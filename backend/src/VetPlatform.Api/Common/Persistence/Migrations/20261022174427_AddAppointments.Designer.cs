@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261022172515_AddAppointments")]
+    [Migration("20261022174427_AddAppointments")]
     partial class AddAppointments
     {
         /// <inheritdoc />
@@ -192,6 +192,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                             t.HasCheckConstraint("ck_appointments_duration", "end_at >= start_at + interval '5 minutes' AND end_at <= start_at + interval '720 minutes'");
 
                             t.HasCheckConstraint("ck_appointments_granularity", "extract(epoch FROM start_at) % 300 = 0 AND extract(epoch FROM end_at) % 300 = 0");
+
+                            t.HasCheckConstraint("ck_appointments_overridden_conflicts", "overridden_conflicts <@ ARRAY['OutsideWorkingHours', 'VeterinarianDoubleBooked', 'PatientDoubleBooked']::text[]");
 
                             t.HasCheckConstraint("ck_appointments_override", "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");
 

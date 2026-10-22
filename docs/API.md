@@ -410,7 +410,8 @@ Implemented in B-09 (design: `ARCHITECTURE.md` ADR-009): booking, editing and re
 Other clinics' appointments are `404`. Permissions: `appointments.read` and `appointments.manage` (Admin,
 Veterinarian, Nurse, Receptionist).
 
-**Appointment object** (instants carry the clinic's local offset, like section 7.1's working hours)
+**Appointment object** (`startAt` and `endAt` carry the clinic's local offset, like section 7.1's working hours;
+`createdAt` / `updatedAt` are UTC)
 
     {
       "id": "uuid",
@@ -435,7 +436,7 @@ Veterinarian, Nurse, Receptionist).
 `GET /api/appointments` (`appointments.read`): paginated (section 13), by `startAt` then id.
 - `from` / `to`: instants with offset (encode `+` as `%2B`); appointments ending after `from` / starting before `to`.
   Invalid values or `to` not after `from` are `422`.
-- `veterinarianId`, `patientId`, `clientId`: exact matches (an unknown id gives an empty page).
+- `veterinarianId`, `patientId`, `clientId`: exact matches (an unknown id gives an empty page; not a GUID → `422`).
 - `status`: an exact status name (`422` otherwise).
 - All statuses are included unless `status` is given.
 
@@ -454,10 +455,11 @@ Veterinarian, Nurse, Receptionist).
 - Times: instants with an explicit offset (`400` without one), on the 5-minute grid, 5 minutes to 12 hours long (may
   cross midnight), between 2000 and 2100, and **not starting before today** (local midnight in the clinic's time zone,
   so a walk-in earlier today can still be recorded). Otherwise `422` (`startAt` / `endAt`).
-- `allowConflicts: true` needs an `overrideReason` (max 500); an `overrideReason` without it is `422`.
+- `allowConflicts: true` needs an `overrideReason` (max 500); an `overrideReason` without it is `422`. Omit
+  `overrideReason` or send `null` when not overriding (`""` counts as sent).
 - `201` with the appointment and a `Location` header.
 
-**Conflicts** are checked on create and whenever the patient, veterinarian or times change:
+**Conflicts** are checked on create and whenever the patient, veterinarian or times change (listed in this order):
 
 | Conflict | Meaning | `field` in the `409` |
 |---|---|---|
@@ -478,8 +480,13 @@ Veterinarian, Nurse, Receptionist).
     { "startAt": "2026-11-02T10:00:00Z", "endAt": "2026-11-02T10:30:00Z", "allowConflicts": true, "overrideReason": "Owner insists" }
 
 - Changing `patientId` (the client follows the new patient's owner), `veterinarianId`, `startAt` or `endAt` applies
-  the same rules and conflict checks as create. A placement without conflicts clears an earlier override; editing
-  only `type`, `reason` or `notes` keeps it.
+  the same rules and conflict checks as create **to the resulting placement**: the patient and veterinarian (sent or
+  current) must be active, and the start must not be before today, even when only one of them changes. A placement
+  without conflicts clears an earlier override; editing only `type`, `reason` or `notes` keeps it.
+- `allowConflicts` / `overrideReason` only take effect when the placement changes; otherwise they are ignored, but
+  must still be paired correctly. That pairing is checked first, before `404` / `409`.
+- Concurrent edits of the same appointment are applied one after the other; the second is checked against what the
+  first left, and may get `409`.
 - `200` with the appointment; `404` unknown; `409` not `Scheduled` or conflicts; `422` / `400` as for create.
 
 Every create and change is audited (`appointment.created`, `appointment.updated`): patient and veterinarian ids,
