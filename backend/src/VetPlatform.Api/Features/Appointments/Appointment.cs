@@ -63,6 +63,28 @@ public sealed class Appointment : Entity, IClinicOwned
 
     public User? CreatedBy { get; set; }
 
+    // ---- Lifecycle (B-10, ADR-010). A CHECK keeps these consistent with Status. ----
+
+    /// <summary>Set while CheckedIn, and kept when the visit is completed (or cancelled after check-in).</summary>
+    public DateTimeOffset? CheckedInAt { get; set; }
+
+    public DateTimeOffset? CompletedAt { get; set; }
+
+    public DateTimeOffset? NoShowAt { get; set; }
+
+    public DateTimeOffset? CancelledAt { get; set; }
+
+    /// <summary>Set exactly when Cancelled.</summary>
+    public AppointmentCancelledBy? CancelledBy { get; set; }
+
+    /// <summary>Only when Cancelled. Free text; not shown in the patient history.</summary>
+    public string? CancellationReason { get; set; }
+
+    /// <summary>The staff member behind the latest status change (null while never changed).</summary>
+    public Guid? StatusChangedByUserId { get; set; }
+
+    public User? StatusChangedBy { get; set; }
+
     /// <summary>
     /// Statuses that occupy the veterinarian's and the patient's time. Keep in step with the WHERE clause of
     /// <see cref="NoOverlapConstraint"/> (raw SQL in the AddAppointments migration; a test compares them).
@@ -91,6 +113,13 @@ public enum AppointmentStatus
     Completed,
     Cancelled,
     NoShow,
+}
+
+/// <summary>Who called the appointment off; feeds late-cancellation and no-show reports.</summary>
+public enum AppointmentCancelledBy
+{
+    Client,
+    Clinic,
 }
 
 /// <summary>Why a booking clashes. Each maps to the request field it concerns in a 409 response.</summary>
@@ -125,6 +154,21 @@ internal sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appoin
             table.HasCheckConstraint(
                 "ck_appointments_override",
                 "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");
+            table.HasCheckConstraint("ck_appointments_cancelled_by", "cancelled_by IN ('Client', 'Clinic')");
+            // Every status has exactly its own timestamps (ADR-010): e.g. Completed keeps its check-in time, Cancelled
+            // may keep one (cancelled after check-in), and nothing else carries completion or no-show data.
+            table.HasCheckConstraint(
+                "ck_appointments_lifecycle",
+                "CASE status " +
+                "WHEN 'Scheduled' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL " +
+                "WHEN 'CheckedIn' THEN checked_in_at IS NOT NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL " +
+                "WHEN 'Completed' THEN checked_in_at IS NOT NULL AND completed_at IS NOT NULL AND no_show_at IS NULL AND cancelled_at IS NULL " +
+                "WHEN 'NoShow' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NOT NULL AND cancelled_at IS NULL " +
+                "WHEN 'Cancelled' THEN completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NOT NULL " +
+                "ELSE false END");
+            table.HasCheckConstraint(
+                "ck_appointments_cancellation",
+                "(status = 'Cancelled') = (cancelled_by IS NOT NULL) AND (cancellation_reason IS NULL OR status = 'Cancelled')");
             table.HasCheckConstraint(
                 "ck_appointments_overridden_conflicts",
                 $"overridden_conflicts <@ ARRAY[{string.Join(", ", Enum.GetNames<AppointmentConflict>().Select(n => $"'{n}'"))}]::text[]");
@@ -134,6 +178,8 @@ internal sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appoin
         builder.Property(a => a.Reason).HasMaxLength(Appointment.ReasonMaxLength);
         builder.Property(a => a.Notes).HasMaxLength(Appointment.NotesMaxLength);
         builder.Property(a => a.OverrideReason).HasMaxLength(Appointment.ReasonMaxLength);
+        builder.Property(a => a.CancelledBy).HasConversion<string>().HasMaxLength(16);
+        builder.Property(a => a.CancellationReason).HasMaxLength(Appointment.ReasonMaxLength);
 
         // text[] of conflict names; a primitive collection, so EF stores the enum names directly.
         builder.PrimitiveCollection(a => a.OverriddenConflicts)
@@ -155,6 +201,10 @@ internal sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appoin
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(a => a.CreatedBy).WithMany()
             .HasForeignKey(a => new { a.ClinicId, a.CreatedByUserId })
+            .HasPrincipalKey(user => new { user.ClinicId, user.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(a => a.StatusChangedBy).WithMany()
+            .HasForeignKey(a => new { a.ClinicId, a.StatusChangedByUserId })
             .HasPrincipalKey(user => new { user.ClinicId, user.Id })
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Clinic>().WithMany().HasForeignKey(a => a.ClinicId).OnDelete(DeleteBehavior.Restrict);

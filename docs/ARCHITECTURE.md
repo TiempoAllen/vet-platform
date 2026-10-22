@@ -385,3 +385,30 @@ Choose the simplest solution that satisfies documented requirements, security, m
   it blocked every foreign-key check on the clinic row (each appointment insert) and could deadlock with a booking
   that held a veterinarian lock. Deadlocks and serialization failures that still occur are `409 CONFLICT` ("try
   again"), not `500`.
+
+### ADR-010: Appointment status lifecycle (decided in B-10)
+- **Transitions** (confirmed with the user): `Scheduled → CheckedIn → Completed`; `Scheduled` or `CheckedIn →
+  Cancelled`; `Scheduled → NoShow`; plus two same-day undos, `CheckedIn → Scheduled` and `NoShow → Scheduled`.
+  `Completed` and `Cancelled` are final. A table of explicit actions in the service, one endpoint per action, so each
+  rule and its error are visible; no generic "set status".
+- **Timing** (confirmed), always in the clinic time zone: check-in only on the appointment's local day; no-show only
+  after the start; complete only after check-in; undo only on the day of the step being undone; cancel any time
+  before completion. Violations and disallowed transitions are `409`.
+- **Cancellation** (confirmed): required `cancelledBy` (`Client` / `Clinic`) for late-cancellation and no-show
+  reporting, optional reason. The reason never goes to the audit log or the patient history.
+- **Permissions** (confirmed): every transition needs `appointments.manage`. The actor of the latest change is stored
+  (`status_changed_by_user_id`); the full trail is in the audit log.
+- **Consistency in the database:** a CHECK ties every status to exactly its timestamps, so no code path can leave a
+  `Completed` appointment without a completion time or a `Scheduled` one with a cancellation.
+- **Concurrency:** every transition locks the appointment row (after the clinic-filtered lookup) and re-reads it,
+  the same first lock as PATCH; `undo-no-show` additionally locks veterinarian then patient and re-checks clashes
+  (a no-show frees the slot, which may have been re-booked). Working hours are not re-judged on undo.
+- **Overrides on other bookings** (confirmed): left as recorded when a clash partner is cancelled or marked no-show;
+  they clear on that booking's next re-placement.
+- **Patient history:** `AppointmentCompleted`, `AppointmentCancelled`, `AppointmentNoShow` come from the appointments
+  table itself, the second history source. As ADR-007 planned, both sources are projected to (type, id, occurred_at)
+  and combined with `UNION ALL`, ordered and paged in SQL; the page's rows are then loaded per type. Readable with
+  `patients.read`; when clinical entry types arrive they are gated per source.
+- **Accepted for now:** timestamps of lifecycle steps come from the application clock (like `occurred_at` in the
+  audit log); there is no separate "arrived" vs "seen" time beyond check-in and completion.
+

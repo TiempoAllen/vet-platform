@@ -115,7 +115,7 @@ public sealed class AppointmentsTests(DatabaseApiFactory factory) : IClassFixtur
         Assert.Equal(
             [
                 "id", "patient", "client", "veterinarian", "startAt", "endAt", "type", "reason", "notes", "status",
-                "override", "createdBy", "createdAt", "updatedAt",
+                "checkedInAt", "completedAt", "noShowAt", "cancellation", "override", "createdBy", "createdAt", "updatedAt",
             ],
             body.EnumerateObject().Select(p => p.Name));
 
@@ -409,7 +409,7 @@ public sealed class AppointmentsTests(DatabaseApiFactory factory) : IClassFixtur
     {
         var clinic = await ClinicAsync();
         var id = (await CreatedAsync(await clinic.Desk.PostAsJsonAsync("/api/appointments", Booking(clinic, 9)))).GetProperty("id").GetGuid();
-        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync("UPDATE appointments SET status = 'Completed' WHERE id = {0}", id));
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync("UPDATE appointments SET status = 'Completed', checked_in_at = now(), completed_at = now() WHERE id = {0}", id));
 
         var response = await clinic.Desk.PatchAsJsonAsync($"/api/appointments/{id}", new { notes = "late edit" });
 
