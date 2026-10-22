@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.4, 2026-10-22, updated for B-08.
+Veterinary Management Platform. Version 1.5, 2026-10-23, updated for B-09.
 
 ## 1. Introduction
 
@@ -140,8 +140,8 @@ A user may hold several roles; their permissions are the union.
 | ID | Requirement | Status |
 |---|---|---|
 | FR-SCH-1 | Veterinarian weekly availability and schedule exceptions (leave, closures) can be recorded. | Done (B-08; plus computed working hours) |
-| FR-SCH-2 | Appointments (patient, client, veterinarian, start, end, type, reason, notes) can be created, edited and rescheduled. | Planned (B-09) |
-| FR-SCH-3 | The server rejects appointments outside availability, inside exceptions, or overlapping another appointment of the same veterinarian, including under concurrent booking. | Planned (B-09) |
+| FR-SCH-2 | Appointments (patient, client, veterinarian, start, end, type, reason, notes) can be created, edited and rescheduled. | Done (B-09; the client is derived from the patient) |
+| FR-SCH-3 | The server rejects appointments outside availability, inside exceptions, or overlapping another appointment of the same veterinarian, including under concurrent booking. | Done (B-09; also patient clashes; override with reason per Q-3) |
 | FR-SCH-4 | Appointment status follows a defined lifecycle: scheduled → checked-in → completed, or cancelled / no-show. Invalid transitions are rejected. | Planned (B-10) |
 | FR-SCH-5 | Calendar day and week views, filterable by veterinarian. | Planned (F-07) |
 

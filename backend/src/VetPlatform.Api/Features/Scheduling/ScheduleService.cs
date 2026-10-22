@@ -315,7 +315,24 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
         var clinic = await db.Clinics.AsNoTracking().SingleAsync(c => c.Id == CurrentClinicId, cancellationToken);
         var zone = ClinicTimeZone.Of(clinic);
         var (from, to) = (query.ParsedFrom, query.ParsedTo);
+        var intervals = await WorkingIntervalsAsync(veterinarianId, zone, from, to, cancellationToken);
+        return new WorkingHoursResponse(
+            veterinarianId, clinic.TimeZone, from, to,
+            intervals.Select(i => new WorkingHoursInterval(TimeZoneInfo.ConvertTime(i.Start, zone), TimeZoneInfo.ConvertTime(i.End, zone)))
+                .ToList());
+    }
 
+    /// <summary>
+    /// The veterinarian's working periods (UTC) for the local days <paramref name="from"/>..<paramref name="to"/>:
+    /// weekly hours minus their exceptions and all clinic closures. Shared with appointment booking (B-09).
+    /// </summary>
+    public async Task<List<Interval>> WorkingIntervalsAsync(
+        Guid veterinarianId,
+        TimeZoneInfo zone,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken)
+    {
         // Generous window in instants: local days can start up to 14 h before or after UTC midnight.
         var windowStart = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(-1);
         var windowEnd = new DateTimeOffset(to.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero).AddDays(2);
@@ -331,11 +348,7 @@ public sealed class ScheduleService(AppDbContext db, ITenantContext tenant, Audi
             .Select(e => new Interval(e.StartsAt, e.EndsAt))
             .ToListAsync(cancellationToken);
 
-        var intervals = WorkingHoursCalculator.Compute(blocks, unavailable, zone, from, to);
-        return new WorkingHoursResponse(
-            veterinarianId, clinic.TimeZone, from, to,
-            intervals.Select(i => new WorkingHoursInterval(TimeZoneInfo.ConvertTime(i.Start, zone), TimeZoneInfo.ConvertTime(i.End, zone)))
-                .ToList());
+        return WorkingHoursCalculator.Compute(blocks, unavailable, zone, from, to);
     }
 
     // ---------- Helpers ----------

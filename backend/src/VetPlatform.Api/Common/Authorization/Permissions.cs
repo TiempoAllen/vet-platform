@@ -38,17 +38,27 @@ public static class Permissions
     public const string SchedulesManageOwn = "schedules.manage_own";
 
     public const string SettingsManage = "settings.manage";
+    public const string AppointmentsRead = "appointments.read";
+
+    /// <summary>Book, edit and reschedule appointments, including overriding conflicts with a reason (Q-3).</summary>
+    public const string AppointmentsManage = "appointments.manage";
 
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
         {
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
-            SchedulesManage, SettingsManage,
+            SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage,
         }.ToFrozenSet(),
-        [Role.Veterinarian] = new[] { ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn }.ToFrozenSet(),
-        [Role.Nurse] = new[] { ClientsRead, PatientsRead, PatientsManage, SchedulesRead }.ToFrozenSet(),
-        [Role.Receptionist] = new[] { ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead }.ToFrozenSet(),
+        [Role.Veterinarian] = new[]
+        {
+            ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn, AppointmentsRead, AppointmentsManage,
+        }.ToFrozenSet(),
+        [Role.Nurse] = new[] { ClientsRead, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage }.ToFrozenSet(),
+        [Role.Receptionist] = new[]
+        {
+            ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage,
+        }.ToFrozenSet(),
         [Role.Inventory] = FrozenSet<string>.Empty,
     }.ToFrozenDictionary();
 

@@ -121,18 +121,23 @@ A patient belongs to one primary client in the initial release. Multiple respons
 
 ## 5. Clinical records
 ### Appointment
-- id
-- clinic_id
-- patient_id
-- client_id
-- veterinarian_id
-- start_at
-- end_at
-- appointment_type
-- reason
-- status
-- notes
-- created_by
+Implemented in B-09 (table `appointments`, ADR-009).
+- id, clinic_id (FK clinics, RESTRICT); unique (clinic_id, id) for later composite FKs (consultations, invoices)
+- patient_id, client_id, veterinarian_id, created_by_user_id: composite FKs `(clinic_id, x) → patients / clients /
+  users (clinic_id, id)`, RESTRICT. client_id is the patient's owner at booking, set by the server.
+- start_at, end_at (`timestamptz`; CHECK: 5-minute grid, 5 minutes to 12 hours)
+- type (`appointment_type` in the original list; `Consultation`, `Vaccination`, `FollowUp`, `Surgery`, `Dental`,
+  `Grooming`, `Emergency`, `Other`; CHECK)
+- reason (max 500), notes (max 4000)
+- status (`Scheduled`, `CheckedIn`, `Completed`, `Cancelled`, `NoShow`; CHECK; transitions in B-10)
+- overridden_conflicts (`text[]`), override_reason (max 500): CHECK that the reason is set exactly when the list is
+  non-empty
+- created_at, updated_at
+
+Exclusion constraint `ex_appointments_veterinarian_no_overlap` (extension `btree_gist`): no two `Scheduled` or
+`CheckedIn` appointments of one veterinarian with overlapping `[start_at, end_at)` unless one of them carries an
+override. Indexes (clinic_id, start_at, id), (clinic_id, veterinarian_id, start_at), (clinic_id, patient_id,
+start_at), (clinic_id, client_id, start_at).
 
 ### Consultation
 - id

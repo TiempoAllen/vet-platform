@@ -67,6 +67,11 @@ Check: `curl https://localhost:7096/api/health` returns `{"status":"Healthy"}`.
    (`POST /api/auth/password`; the UI will offer this from F-03).
 
 ### 4.2 Apply database migrations (deployment step)
+
+From B-09 the migrations create the `btree_gist` extension (a trusted extension on PostgreSQL 13+, so the database
+owner can create it without superuser). If the migration role cannot, have a superuser run
+`CREATE EXTENSION IF NOT EXISTS btree_gist;` in the database first.
+
 The app never migrates on startup.
 
 ```bash
