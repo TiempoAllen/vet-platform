@@ -95,6 +95,24 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancellation_reason");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<string>("CancelledBy")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("cancelled_by");
+
+                    b.Property<DateTimeOffset?>("CheckedInAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("checked_in_at");
+
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -102,6 +120,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Property<Guid>("ClinicId")
                         .HasColumnType("uuid")
                         .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -114,6 +136,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Property<DateTimeOffset>("EndAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("end_at");
+
+                    b.Property<DateTimeOffset?>("NoShowAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("no_show_at");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(4000)
@@ -149,6 +175,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("status");
 
+                    b.Property<Guid?>("StatusChangedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("status_changed_by_user_id");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -172,6 +202,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "CreatedByUserId")
                         .HasDatabaseName("ix_appointments_clinic_id_created_by_user_id");
 
+                    b.HasIndex("ClinicId", "StatusChangedByUserId")
+                        .HasDatabaseName("ix_appointments_clinic_id_status_changed_by_user_id");
+
                     b.HasIndex("ClinicId", "ClientId", "StartAt")
                         .HasDatabaseName("ix_appointments_clinic_id_client_id_start_at");
 
@@ -186,9 +219,15 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.ToTable("appointments", null, t =>
                         {
+                            t.HasCheckConstraint("ck_appointments_cancellation", "(status = 'Cancelled') = (cancelled_by IS NOT NULL) AND (cancellation_reason IS NULL OR status = 'Cancelled')");
+
+                            t.HasCheckConstraint("ck_appointments_cancelled_by", "cancelled_by IN ('Client', 'Clinic')");
+
                             t.HasCheckConstraint("ck_appointments_duration", "end_at >= start_at + interval '5 minutes' AND end_at <= start_at + interval '720 minutes'");
 
                             t.HasCheckConstraint("ck_appointments_granularity", "extract(epoch FROM start_at) % 300 = 0 AND extract(epoch FROM end_at) % 300 = 0");
+
+                            t.HasCheckConstraint("ck_appointments_lifecycle", "CASE status WHEN 'Scheduled' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'CheckedIn' THEN checked_in_at IS NOT NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'Completed' THEN checked_in_at IS NOT NULL AND completed_at IS NOT NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'NoShow' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NOT NULL AND cancelled_at IS NULL WHEN 'Cancelled' THEN completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NOT NULL ELSE false END");
 
                             t.HasCheckConstraint("ck_appointments_overridden_conflicts", "overridden_conflicts <@ ARRAY['OutsideWorkingHours', 'VeterinarianDoubleBooked', 'PatientDoubleBooked']::text[]");
 
@@ -813,6 +852,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_appointments_patients_clinic_id_patient_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "StatusChangedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "StatusChangedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_appointments_users_clinic_id_status_changed_by_user_id");
+
                     b.HasOne("VetPlatform.Api.Features.Identity.User", "Veterinarian")
                         .WithMany()
                         .HasForeignKey("ClinicId", "VeterinarianId")
@@ -826,6 +872,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("CreatedBy");
 
                     b.Navigation("Patient");
+
+                    b.Navigation("StatusChangedBy");
 
                     b.Navigation("Veterinarian");
                 });
