@@ -75,6 +75,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 table: "appointments",
                 sql: "CASE status WHEN 'Scheduled' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'CheckedIn' THEN checked_in_at IS NOT NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'Completed' THEN checked_in_at IS NOT NULL AND completed_at IS NOT NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'NoShow' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NOT NULL AND cancelled_at IS NULL WHEN 'Cancelled' THEN completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NOT NULL ELSE false END");
 
+            migrationBuilder.AddCheckConstraint(
+                name: "ck_appointments_lifecycle_order",
+                table: "appointments",
+                sql: "(completed_at IS NULL OR completed_at >= checked_in_at) AND (cancelled_at IS NULL OR checked_in_at IS NULL OR cancelled_at >= checked_in_at)");
+
             migrationBuilder.AddForeignKey(
                 name: "fk_appointments_users_clinic_id_status_changed_by_user_id",
                 table: "appointments",
@@ -105,6 +110,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
             migrationBuilder.DropCheckConstraint(
                 name: "ck_appointments_lifecycle",
+                table: "appointments");
+
+            migrationBuilder.DropCheckConstraint(
+                name: "ck_appointments_lifecycle_order",
                 table: "appointments");
 
             migrationBuilder.DropColumn(

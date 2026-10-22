@@ -513,7 +513,10 @@ changed field names and the overridden conflicts. Reasons and notes are not copi
 | `POST /api/appointments/:id/undo-no-show` | `NoShow` → `Scheduled` | only on the day it was marked, and only if the veterinarian and patient have not been booked into the slot again (`409` listing the clash) |
 
 - Cancel body: `{ "cancelledBy": "Client" | "Clinic", "reason": "..." | null }`. `cancelledBy` is required (`422`
-  when missing, `400` when not an exact name); `reason` max 500.
+  when missing, `400` when not an exact name); `reason` max 500 (trimmed; blank stored as `null`).
+- `undo-no-show` refuses any veterinarian or patient clash, even of a kind the booking originally overrode: the
+  override covered other appointments, not whoever was booked into the freed slot since. Working hours are not
+  re-checked. To keep both, book again with an explicit override.
 - A change that is not allowed from the current status, or not at this time, is `409 CONFLICT` with a message saying
   why. Other clinics' appointments are `404`.
 - Concurrent changes of one appointment are applied one after the other; the second is judged against the status the

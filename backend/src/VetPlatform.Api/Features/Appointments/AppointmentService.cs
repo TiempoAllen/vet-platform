@@ -325,11 +325,11 @@ public sealed class AppointmentService(
             await db.Database.ExecuteSqlAsync(
                 $"SELECT 1 FROM patients WHERE id = {appointment.PatientId} FOR NO KEY UPDATE", cancellationToken);
 
-            // Working hours are not re-judged (the booking was accepted then); new clashes are, unless they were
-            // already accepted by the booking's override.
+            // Working hours are not re-judged (the booking was accepted then). Every clash is: a no-show frees the
+            // slot, and an override accepted at booking time was for other appointments, never for whoever has been
+            // booked into the freed slot since. Staff who still want both can re-book with an explicit override.
             var clashes = (await ConflictsAsync(appointment, context.Zone, cancellationToken))
-                .Where(conflict => conflict != AppointmentConflict.OutsideWorkingHours
-                    && !appointment.OverriddenConflicts.Contains(conflict))
+                .Where(conflict => conflict != AppointmentConflict.OutsideWorkingHours)
                 .ToList();
             if (clashes.Count > 0)
             {

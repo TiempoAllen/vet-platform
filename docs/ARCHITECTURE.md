@@ -399,16 +399,20 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - **Permissions** (confirmed): every transition needs `appointments.manage`. The actor of the latest change is stored
   (`status_changed_by_user_id`); the full trail is in the audit log.
 - **Consistency in the database:** a CHECK ties every status to exactly its timestamps, so no code path can leave a
-  `Completed` appointment without a completion time or a `Scheduled` one with a cancellation.
+  `Completed` appointment without a completion time or a `Scheduled` one with a cancellation; another CHECK keeps
+  completion and cancellation from predating check-in.
 - **Concurrency:** every transition locks the appointment row (after the clinic-filtered lookup) and re-reads it,
-  the same first lock as PATCH; `undo-no-show` additionally locks veterinarian then patient and re-checks clashes
-  (a no-show frees the slot, which may have been re-booked). Working hours are not re-judged on undo.
+  the same first lock as PATCH; `undo-no-show` additionally locks veterinarian then patient and refuses every
+  veterinarian or patient clash (a no-show frees the slot, which may have been re-booked; an override from booking
+  time covered other appointments, so it never excuses a new one). Working hours are not re-judged on undo.
 - **Overrides on other bookings** (confirmed): left as recorded when a clash partner is cancelled or marked no-show;
   they clear on that booking's next re-placement.
 - **Patient history:** `AppointmentCompleted`, `AppointmentCancelled`, `AppointmentNoShow` come from the appointments
   table itself, the second history source. As ADR-007 planned, both sources are projected to (type, id, occurred_at)
   and combined with `UNION ALL`, ordered and paged in SQL; the page's rows are then loaded per type. Readable with
-  `patients.read`; when clinical entry types arrive they are gated per source.
+  `patients.read`; this relies on every `patients.read` role also holding `appointments.read` (true today; otherwise
+  gate this source). When clinical entry types arrive they are gated per source. The query reads all of one patient's
+  finished appointments and sorts them (cheap at per-patient sizes; a partial index on finished statuses can follow).
 - **Accepted for now:** timestamps of lifecycle steps come from the application clock (like `occurred_at` in the
   audit log); there is no separate "arrived" vs "seen" time beyond check-in and completion.
 
