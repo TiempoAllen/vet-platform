@@ -67,6 +67,12 @@ public static class AuditActions
     public const string ScheduleExceptionDeleted = "schedule_exception.deleted";
     public const string AppointmentCreated = "appointment.created";
     public const string AppointmentUpdated = "appointment.updated";
+    public const string AppointmentCheckedIn = "appointment.checked_in";
+    public const string AppointmentCheckInUndone = "appointment.check_in_undone";
+    public const string AppointmentCompleted = "appointment.completed";
+    public const string AppointmentCancelled = "appointment.cancelled";
+    public const string AppointmentNoShow = "appointment.no_show";
+    public const string AppointmentNoShowUndone = "appointment.no_show_undone";
 }
 
 /// <summary>

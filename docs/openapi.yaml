@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.9.0
-  summary: Implemented endpoints as of milestone B-09.
+  version: 0.10.0
+  summary: Implemented endpoints as of milestone B-10.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (appointment status changes,
-    clinical, billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (clinical,
+    billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -955,6 +955,151 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/appointments/{id}/check-in:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    post:
+      tags: [Appointments]
+      operationId: checkInAppointment
+      summary: Check a patient in
+      description: 'Requires `appointments.manage`. Scheduled to CheckedIn, only on the appointment''s local day. Not allowed from the current status, or not at this time: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The appointment after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/appointments/{id}/undo-check-in:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    post:
+      tags: [Appointments]
+      operationId: undoAppointmentCheckIn
+      summary: Undo a check-in
+      description: 'Requires `appointments.manage`. CheckedIn to Scheduled, only on the day of the check-in. Not allowed from the current status, or not at this time: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The appointment after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/appointments/{id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    post:
+      tags: [Appointments]
+      operationId: completeAppointment
+      summary: Complete an appointment
+      description: 'Requires `appointments.manage`. CheckedIn to Completed (final). Not allowed from the current status: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The appointment after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/appointments/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    post:
+      tags: [Appointments]
+      operationId: cancelAppointment
+      summary: Cancel an appointment
+      description: 'Requires `appointments.manage`. Scheduled or CheckedIn to Cancelled (final). cancelledBy is required; the reason never reaches the audit log or the history. Not allowed from the current status: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelAppointmentRequest' }
+      responses:
+        '200':
+          description: The appointment after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/appointments/{id}/no-show:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    post:
+      tags: [Appointments]
+      operationId: markAppointmentNoShow
+      summary: Mark a no-show
+      description: 'Requires `appointments.manage`. Scheduled to NoShow, only once the appointment has started. Not allowed from the current status, or not at this time: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The appointment after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/appointments/{id}/undo-no-show:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    post:
+      tags: [Appointments]
+      operationId: undoAppointmentNoShow
+      summary: Undo a no-show
+      description: 'Requires `appointments.manage`. NoShow to Scheduled, only on the day it was marked and only if the veterinarian and patient were not booked into the slot again, regardless of any original override (409 lists the clash). Not allowed from the current status, or not at this time: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The appointment after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -1349,12 +1494,13 @@ components:
       description: |
         Use `type` + `id` as the key. Ignore entries with an unknown `type`. Deliberately no `discriminator`: generated
         clients must accept unknown types as this base schema and narrow on `type` themselves. Known types and their
-        schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry.
+        schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry; AppointmentCompleted and
+        AppointmentNoShow → PatientAppointmentEntry; AppointmentCancelled → PatientAppointmentCancelledEntry.
       properties:
         id: { type: string, format: uuid, description: Id of the source record; unique per type. }
         type:
           type: string
-          description: 'Known so far: PatientRegistered. More types are added by later milestones.'
+          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow. More types are added by later milestones.'
           examples: [PatientRegistered]
         occurredAt: { type: string, format: date-time }
         actor:
@@ -1367,6 +1513,9 @@ components:
           description: Shape fixed per type; see the known entry schemas below.
       x-known-types:
         PatientRegistered: '#/components/schemas/PatientRegisteredEntry'
+        AppointmentCompleted: '#/components/schemas/PatientAppointmentEntry'
+        AppointmentNoShow: '#/components/schemas/PatientAppointmentEntry'
+        AppointmentCancelled: '#/components/schemas/PatientAppointmentCancelledEntry'
 
     PatientRegisteredEntry:
       allOf:
@@ -1392,6 +1541,44 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+
+    PatientHistoryAppointment:
+      type: object
+      additionalProperties: false
+      required: [id, startAt, endAt, type, veterinarian]
+      properties:
+        id: { type: string, format: uuid }
+        startAt: { type: string, format: date-time, description: UTC. }
+        endAt: { type: string, format: date-time, description: UTC. }
+        type: { $ref: '#/components/schemas/AppointmentType' }
+        veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+
+    PatientAppointmentEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          properties:
+            type: { enum: [AppointmentCompleted, AppointmentNoShow] }
+            details:
+              type: object
+              additionalProperties: false
+              required: [appointment]
+              properties:
+                appointment: { $ref: '#/components/schemas/PatientHistoryAppointment' }
+
+    PatientAppointmentCancelledEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          properties:
+            type: { const: AppointmentCancelled }
+            details:
+              type: object
+              additionalProperties: false
+              required: [appointment, cancelledBy]
+              properties:
+                appointment: { $ref: '#/components/schemas/PatientHistoryAppointment' }
+                cancelledBy: { $ref: '#/components/schemas/AppointmentCancelledBy' }
 
     PatientRegisteredDetails:
       type: object
@@ -1575,8 +1762,19 @@ components:
 
     AppointmentStatus:
       type: string
-      description: Only Scheduled is produced in B-09; the rest appear with B-10.
+      description: Changed only through the lifecycle actions (POST /api/appointments/{id}/check-in etc.).
       enum: [Scheduled, CheckedIn, Completed, Cancelled, NoShow]
+
+    AppointmentCancelledBy:
+      type: string
+      enum: [Client, Clinic]
+
+    CancelAppointmentRequest:
+      type: object
+      required: [cancelledBy]
+      properties:
+        cancelledBy: { $ref: '#/components/schemas/AppointmentCancelledBy' }
+        reason: { type: [string, 'null'], maxLength: 500 }
 
     AppointmentConflict:
       type: string
@@ -1593,7 +1791,7 @@ components:
     Appointment:
       type: object
       additionalProperties: false
-      required: [id, patient, client, veterinarian, startAt, endAt, type, reason, notes, status, override, createdBy, createdAt, updatedAt]
+      required: [id, patient, client, veterinarian, startAt, endAt, type, reason, notes, status, checkedInAt, completedAt, noShowAt, cancellation, override, createdBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         patient:
@@ -1615,6 +1813,20 @@ components:
         reason: { type: [string, 'null'], maxLength: 500 }
         notes: { type: [string, 'null'], maxLength: 4000 }
         status: { $ref: '#/components/schemas/AppointmentStatus' }
+        checkedInAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset; kept after completion or a later cancellation. }
+        completedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        noShowAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        cancellation:
+          description: Present exactly when status is Cancelled.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [at, by, reason]
+              properties:
+                at: { type: string, format: date-time, description: With the clinic's local offset. }
+                by: { $ref: '#/components/schemas/AppointmentCancelledBy' }
+                reason: { type: [string, 'null'], maxLength: 500 }
+            - type: 'null'
         override:
           description: Present when the appointment was placed despite conflicts.
           oneOf:

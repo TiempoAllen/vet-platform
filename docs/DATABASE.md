@@ -129,7 +129,13 @@ Implemented in B-09 (table `appointments`, ADR-009).
 - type (`appointment_type` in the original list; `Consultation`, `Vaccination`, `FollowUp`, `Surgery`, `Dental`,
   `Grooming`, `Emergency`, `Other`; CHECK)
 - reason (max 500), notes (max 4000)
-- status (`Scheduled`, `CheckedIn`, `Completed`, `Cancelled`, `NoShow`; CHECK; transitions in B-10)
+- status (`Scheduled`, `CheckedIn`, `Completed`, `Cancelled`, `NoShow`; CHECK; transitions in the service, B-10)
+- checked_in_at, completed_at, no_show_at, cancelled_at (`timestamptz`), cancelled_by (`Client`/`Clinic`),
+  cancellation_reason (max 500), status_changed_by_user_id (composite FK to users): CHECK `ck_appointments_lifecycle`
+  gives every status exactly its own timestamps (e.g. `Completed` needs check-in and completion, `Scheduled` none);
+  CHECK `ck_appointments_cancellation` keeps cancelled_by (`ck_appointments_cancelled_by`) and the reason to
+  `Cancelled` rows; CHECK `ck_appointments_lifecycle_order` keeps completion and cancellation at or after check-in
+  (B-10)
 - overridden_conflicts (`text[]` of `OutsideWorkingHours`, `VeterinarianDoubleBooked`, `PatientDoubleBooked`;
   CHECK), override_reason (max 500): CHECK that the reason is set exactly when the list is non-empty
 - created_at, updated_at

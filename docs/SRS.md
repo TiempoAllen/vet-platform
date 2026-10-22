@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.5, 2026-10-23, updated for B-09.
+Veterinary Management Platform. Version 1.6, 2026-10-23, updated for B-10.
 
 ## 1. Introduction
 
@@ -134,7 +134,7 @@ A user may hold several roles; their permissions are the union.
 | FR-PAT-1 | Authorised staff can create, view and update patients (name, species, breed, sex, reproductive status, date of birth, markings, microchip, weight, status, notes). | Done |
 | FR-PAT-2 | Each patient belongs to one primary client; the model must allow multiple responsible owners later. | Done (primary owner; extra owners via a later `patient_owners` table, ADR-006) |
 | FR-PAT-3 | Patient lists support search (including by client and microchip), filtering, sorting and pagination. | Done |
-| FR-PAT-4 | A patient history view aggregates consultations, diagnoses, treatments, prescriptions, vaccinations, attachments and billing. | Partly done: timeline API with the `PatientRegistered` entry (B-07); each clinical and billing milestone adds its entry types |
+| FR-PAT-4 | A patient history view aggregates consultations, diagnoses, treatments, prescriptions, vaccinations, attachments and billing. | Partly done: timeline API (B-07) with registration and finished appointments (B-10); each clinical and billing milestone adds its entry types |
 
 ### 3.5 Scheduling (FR-SCH) — B-08..B-10, F-07..F-09
 | ID | Requirement | Status |
@@ -142,7 +142,7 @@ A user may hold several roles; their permissions are the union.
 | FR-SCH-1 | Veterinarian weekly availability and schedule exceptions (leave, closures) can be recorded. | Done (B-08; plus computed working hours) |
 | FR-SCH-2 | Appointments (patient, client, veterinarian, start, end, type, reason, notes) can be created, edited and rescheduled. | Done (B-09; the client is derived from the patient) |
 | FR-SCH-3 | The server rejects appointments outside availability, inside exceptions, or overlapping another appointment of the same veterinarian, including under concurrent booking. | Done (B-09; also patient clashes; override with reason per Q-3) |
-| FR-SCH-4 | Appointment status follows a defined lifecycle: scheduled → checked-in → completed, or cancelled / no-show. Invalid transitions are rejected. | Planned (B-10) |
+| FR-SCH-4 | Appointment status follows a defined lifecycle: scheduled → checked-in → completed, or cancelled / no-show. Invalid transitions are rejected. | Done (B-10; plus same-day undo of check-in and no-show, ADR-010) |
 | FR-SCH-5 | Calendar day and week views, filterable by veterinarian. | Planned (F-07) |
 
 ### 3.6 Clinical records (FR-CLN) — B-11..B-15, F-10..F-13
