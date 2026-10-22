@@ -150,6 +150,7 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `schedules.manage` | ✓ | – | – | – | – |
 | `schedules.manage_own` | – | ✓ | – | – | – |
 | `settings.manage` | ✓ | – | – | – | – |
+| `appointments.read`, `appointments.manage` | ✓ | ✓ | ✓ | ✓ | – |
 
 **User object**
 
@@ -404,15 +405,92 @@ Entry types so far:
 | `PatientRegistered` | The patient was created. | `client`: the owner at registration, with that client's **current** name; `null` if it can no longer be shown. |
 
 ## 7. Appointments
-`GET /api/appointments`
-`GET /api/appointments/:id`
-`POST /api/appointments`
-`PATCH /api/appointments/:id`
-`POST /api/appointments/:id/check-in`
-`POST /api/appointments/:id/complete`
-`POST /api/appointments/:id/cancel`
+Implemented in B-09 (design: `ARCHITECTURE.md` ADR-009): booking, editing and rescheduling. Status changes
+(`POST /api/appointments/:id/check-in`, `/complete`, `/cancel`, no-show) follow in B-10. There is no `DELETE` (`405`).
+Other clinics' appointments are `404`. Permissions: `appointments.read` and `appointments.manage` (Admin,
+Veterinarian, Nurse, Receptionist).
 
-The backend must validate veterinarian availability and appointment conflicts.
+**Appointment object** (`startAt` and `endAt` carry the clinic's local offset, like section 7.1's working hours;
+`createdAt` / `updatedAt` are UTC)
+
+    {
+      "id": "uuid",
+      "patient": { "id": "uuid", "name": "Rex", "species": "Dog" },
+      "client": { "id": "uuid", "firstName": "Jane", "lastName": "Doe" },
+      "veterinarian": { "id": "uuid", "name": "Jo Vet" },
+      "startAt": "2026-11-02T09:00:00+00:00", "endAt": "2026-11-02T09:30:00+00:00",
+      "type": "Consultation" | "Vaccination" | "FollowUp" | "Surgery" | "Dental" | "Grooming" | "Emergency" | "Other",
+      "reason": "Limping" | null, "notes": "..." | null,
+      "status": "Scheduled" | "CheckedIn" | "Completed" | "Cancelled" | "NoShow",
+      "override": { "reason": "Emergency", "conflicts": ["OutsideWorkingHours", "VeterinarianDoubleBooked", "PatientDoubleBooked"] } | null,
+      "createdBy": { "id": "uuid", "name": "Sam Reception" } | null,
+      "createdAt": "...", "updatedAt": "..."
+    }
+
+- `client` is the patient's owner **when the appointment was booked** (or moved to that patient); it is set by the
+  server and never sent. A later transfer of the patient does not change existing appointments.
+- `override` is present when the appointment was placed despite conflicts (see below); otherwise `null`.
+- B-09 only creates `Scheduled` appointments; the other statuses appear from B-10. Only `Scheduled` appointments can
+  be edited (`409` otherwise).
+
+`GET /api/appointments` (`appointments.read`): paginated (section 13), by `startAt` then id.
+- `from` / `to`: instants with offset (encode `+` as `%2B`); appointments ending after `from` / starting before `to`.
+  Invalid values or `to` not after `from` are `422`.
+- `veterinarianId`, `patientId`, `clientId`: exact matches (an unknown id gives an empty page; not a GUID → `422`).
+- `status`: an exact status name (`422` otherwise).
+- All statuses are included unless `status` is given.
+
+`GET /api/appointments/:id` (`appointments.read`): `200` or `404`.
+
+`POST /api/appointments` (`appointments.manage`):
+
+    { "patientId": "uuid", "veterinarianId": "uuid", "startAt": "2026-11-02T09:00:00Z", "endAt": "2026-11-02T09:30:00Z",
+      "type": "Consultation", "reason": "Limping", "notes": null,
+      "allowConflicts": false, "overrideReason": null }
+
+- Required: `patientId`, `veterinarianId`, `startAt`, `endAt`, `type`. `reason` max 500, `notes` max 4000 (trimmed;
+  blank stored as `null`).
+- `patientId` must be an **active** patient of the clinic, `veterinarianId` an **active** veterinarian of the clinic.
+  Otherwise `422` on that field, with one message for every case (unknown, inactive, other clinic, not a vet).
+- Times: instants with an explicit offset (`400` without one), on the 5-minute grid, 5 minutes to 12 hours long (may
+  cross midnight), between 2000 and 2100, and **not starting before today** (local midnight in the clinic's time zone,
+  so a walk-in earlier today can still be recorded). Otherwise `422` (`startAt` / `endAt`).
+- `allowConflicts: true` needs an `overrideReason` (max 500); an `overrideReason` without it is `422`. Omit
+  `overrideReason` or send `null` when not overriding (`""` counts as sent).
+- `201` with the appointment and a `Location` header.
+
+**Conflicts** are checked on create and whenever the patient, veterinarian or times change (listed in this order):
+
+| Conflict | Meaning | `field` in the `409` |
+|---|---|---|
+| `OutsideWorkingHours` | Not fully inside one of the veterinarian's working periods (section 7.1: weekly hours minus exceptions and closures) | `startAt` |
+| `VeterinarianDoubleBooked` | Overlaps another `Scheduled` or `CheckedIn` appointment of the veterinarian | `veterinarianId` |
+| `PatientDoubleBooked` | Overlaps another `Scheduled` or `CheckedIn` appointment of the patient | `patientId` |
+
+- Times are half-open: an appointment ending at 09:30 and one starting at 09:30 do not overlap.
+- Without an override, any conflict is `409 CONFLICT` listing **every** conflict found in `details` (each message
+  starts with the conflict name). Field errors (`422`) are reported before conflicts.
+- With `allowConflicts: true` and a reason, the appointment is saved and `override` records the reason and exactly
+  which conflicts were accepted. If there were none, nothing is recorded. Overrides are audited.
+- Two bookings racing for the same slot cannot both succeed: one gets `201`, the other `409`.
+
+`PATCH /api/appointments/:id` (`appointments.manage`): edit and reschedule. Omitted or `null` fields are unchanged;
+`""` clears `reason` or `notes`.
+
+    { "startAt": "2026-11-02T10:00:00Z", "endAt": "2026-11-02T10:30:00Z", "allowConflicts": true, "overrideReason": "Owner insists" }
+
+- Changing `patientId` (the client follows the new patient's owner), `veterinarianId`, `startAt` or `endAt` applies
+  the same rules and conflict checks as create **to the resulting placement**: the patient and veterinarian (sent or
+  current) must be active, and the start must not be before today, even when only one of them changes. A placement
+  without conflicts clears an earlier override; editing only `type`, `reason` or `notes` keeps it.
+- `allowConflicts` / `overrideReason` only take effect when the placement changes; otherwise they are ignored, but
+  must still be paired correctly. That pairing is checked first, before `404` / `409`.
+- Concurrent edits of the same appointment are applied one after the other; the second is checked against what the
+  first left, and may get `409`.
+- `200` with the appointment; `404` unknown; `409` not `Scheduled` or conflicts; `422` / `400` as for create.
+
+Every create and change is audited (`appointment.created`, `appointment.updated`): patient and veterinarian ids,
+changed field names and the overridden conflicts. Reasons and notes are not copied into the audit log.
 
 ### 7.1 Veterinarian schedules
 Implemented in B-08 (design: `ARCHITECTURE.md` ADR-008). Scheduling uses a **5-minute grid**: every time of day
@@ -499,7 +577,8 @@ veterinarian's exceptions and all closures.
 - Daylight saving: a local time skipped when clocks go forward moves to the first valid time (a block entirely
   inside the gap disappears); a repeated local time when clocks go back is read as standard time.
 - Missing or malformed dates (`YYYY-MM-DD` only), `to` before `from`, or more than 62 days are `422`.
-- Appointments are not subtracted yet; B-09 builds booking validation on this.
+- Appointments are not subtracted: this is when the veterinarian works, not when they are free. Booking (section 7)
+  checks both.
 
 Every create, update and delete of hours and exceptions is audited (`working_hours.*`, `schedule_exception.*`).
 Metadata holds the veterinarian and the changed field names; the type only for closures; never the reason.

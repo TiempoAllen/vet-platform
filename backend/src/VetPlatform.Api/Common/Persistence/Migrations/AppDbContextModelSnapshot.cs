@@ -21,6 +21,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "btree_gist");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
@@ -85,6 +86,118 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasDatabaseName("ix_audit_logs_entity_type_entity_id");
 
                     b.ToTable("audit_logs", (string)null);
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Appointments.Appointment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<DateTimeOffset>("EndAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("end_at");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("notes");
+
+                    b.PrimitiveCollection<string[]>("OverriddenConflicts")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("overridden_conflicts");
+
+                    b.Property<string>("OverrideReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("override_reason");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("StartAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("start_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("type");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("VeterinarianId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("veterinarian_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_appointments");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_appointments_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "CreatedByUserId")
+                        .HasDatabaseName("ix_appointments_clinic_id_created_by_user_id");
+
+                    b.HasIndex("ClinicId", "ClientId", "StartAt")
+                        .HasDatabaseName("ix_appointments_clinic_id_client_id_start_at");
+
+                    b.HasIndex("ClinicId", "PatientId", "StartAt")
+                        .HasDatabaseName("ix_appointments_clinic_id_patient_id_start_at");
+
+                    b.HasIndex("ClinicId", "StartAt", "Id")
+                        .HasDatabaseName("ix_appointments_clinic_id_start_at_id");
+
+                    b.HasIndex("ClinicId", "VeterinarianId", "StartAt")
+                        .HasDatabaseName("ix_appointments_clinic_id_veterinarian_id_start_at");
+
+                    b.ToTable("appointments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_appointments_duration", "end_at >= start_at + interval '5 minutes' AND end_at <= start_at + interval '720 minutes'");
+
+                            t.HasCheckConstraint("ck_appointments_granularity", "extract(epoch FROM start_at) % 300 = 0 AND extract(epoch FROM end_at) % 300 = 0");
+
+                            t.HasCheckConstraint("ck_appointments_overridden_conflicts", "overridden_conflicts <@ ARRAY['OutsideWorkingHours', 'VeterinarianDoubleBooked', 'PatientDoubleBooked']::text[]");
+
+                            t.HasCheckConstraint("ck_appointments_override", "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");
+
+                            t.HasCheckConstraint("ck_appointments_status", "status IN ('Scheduled', 'CheckedIn', 'Completed', 'Cancelled', 'NoShow')");
+
+                            t.HasCheckConstraint("ck_appointments_type", "type IN ('Consultation', 'Vaccination', 'FollowUp', 'Surgery', 'Dental', 'Grooming', 'Emergency', 'Other')");
+                        });
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Clients.Client", b =>
@@ -666,6 +779,55 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasForeignKey("ClinicId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_audit_logs_clinics_clinic_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Appointments.Appointment", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_appointments_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Clients.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ClientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_appointments_clients_clinic_id_client_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "CreatedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_appointments_users_clinic_id_created_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Patients.Patient", "Patient")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_appointments_patients_clinic_id_patient_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "Veterinarian")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "VeterinarianId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_appointments_users_clinic_id_veterinarian_id");
+
+                    b.Navigation("Client");
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("Patient");
+
+                    b.Navigation("Veterinarian");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Clients.Client", b =>

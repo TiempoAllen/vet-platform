@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using VetPlatform.Api.Common.Auditing;
+using VetPlatform.Api.Features.Appointments;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Patients;
@@ -49,6 +50,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
 
     public DbSet<ScheduleException> ScheduleExceptions => Set<ScheduleException>();
 
+    public DbSet<Appointment> Appointments => Set<Appointment>();
+
     /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
     public const string ClinicFilter = "Clinic";
 
@@ -57,6 +60,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // btree_gist lets an exclusion constraint combine "same veterinarian" (=) with "overlapping time" (&&) (B-09).
+        modelBuilder.HasPostgresExtension("btree_gist");
         modelBuilder.HasCollation(CaseInsensitiveCollation, locale: "und-u-ks-level2", provider: "icu", deterministic: false);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
