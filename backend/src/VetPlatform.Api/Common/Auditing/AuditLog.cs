@@ -65,6 +65,8 @@ public static class AuditActions
     public const string ScheduleExceptionCreated = "schedule_exception.created";
     public const string ScheduleExceptionUpdated = "schedule_exception.updated";
     public const string ScheduleExceptionDeleted = "schedule_exception.deleted";
+    public const string AppointmentCreated = "appointment.created";
+    public const string AppointmentUpdated = "appointment.updated";
 }
 
 /// <summary>
@@ -73,6 +75,12 @@ public static class AuditActions
 /// </summary>
 public sealed class AuditTrail(Persistence.AppDbContext db, IHttpContextAccessor httpContextAccessor, TimeProvider timeProvider)
 {
+    /// <summary>camelCase, with enums written by name ("Disabled", "VeterinarianDoubleBooked"), never as numbers.</summary>
+    private static readonly JsonSerializerOptions MetadataOptions = new(JsonSerializerOptions.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
+
     /// <summary>Records an action by the signed-in caller, in the caller's clinic.</summary>
     public void Record(string action, string? entityType = null, Guid? entityId = null, object? metadata = null)
     {
@@ -104,7 +112,7 @@ public sealed class AuditTrail(Persistence.AppDbContext db, IHttpContextAccessor
             EntityId = entityId,
             ActorUserId = actorUserId,
             ClinicId = clinicId,
-            Metadata = metadata is null ? null : JsonSerializer.Serialize(metadata, JsonSerializerOptions.Web),
+            Metadata = metadata is null ? null : JsonSerializer.Serialize(metadata, MetadataOptions),
             RequestId = httpContextAccessor.HttpContext?.TraceIdentifier,
         });
     }

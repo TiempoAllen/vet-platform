@@ -56,6 +56,16 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
                     cancellationToken: cancellationToken);
                 return true;
 
+            case Exception when IsTransientConflict(exception):
+                logger.LogWarning("A transaction was aborted by the database (deadlock or serialization failure).");
+                await ErrorResponseWriter.WriteAsync(
+                    httpContext,
+                    StatusCodes.Status409Conflict,
+                    ErrorCodes.Conflict,
+                    "The request collided with another change. Try again.",
+                    cancellationToken: cancellationToken);
+                return true;
+
             case Exception when IsUnstorableText(exception):
                 logger.LogInformation("Rejected a request containing text the database cannot store.");
                 await ErrorResponseWriter.WriteAsync(
@@ -86,6 +96,22 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
     /// PostgreSQL refuses NUL characters in text (SQLSTATE 22021), whether they came in a JSON body or a query string.
     /// EF Core wraps the error in a <c>DbUpdateException</c> on save, so the whole chain is searched.
     /// </summary>
+    private static bool IsTransientConflict(Exception? exception)
+    {
+        for (; exception is not null; exception = exception.InnerException)
+        {
+            if (exception is PostgresException
+                {
+                    SqlState: PostgresErrorCodes.DeadlockDetected or PostgresErrorCodes.SerializationFailure,
+                })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsUnstorableText(Exception? exception)
     {
         for (; exception is not null; exception = exception.InnerException)

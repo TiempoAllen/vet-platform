@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.8.0
-  summary: Implemented endpoints as of milestone B-08.
+  version: 0.9.0
+  summary: Implemented endpoints as of milestone B-09.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (appointments,
+    wins if the two disagree; update both in the same change. Planned endpoints (appointment status changes,
     clinical, billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
@@ -15,7 +15,8 @@ info:
     - Every endpoint requires a signed-in user unless it declares `security: []`.
     - Error precedence: 429, 401, 403 FORBIDDEN, 403 CSRF_TOKEN_INVALID, 400/422, then the endpoint's own result
       (scheduling: a schedules.manage_own caller acting on another veterinarian's schedule gets its 403 after 400/422).
-    - A concurrent change or delete of the same record is 409 CONFLICT.
+    - A concurrent change or delete of the same record, a deadlock or a serialization failure is 409 CONFLICT
+      (retry).
     - Every response carries `X-Request-Id`.
     - Enum values are accepted only as exact names (`Admin`, `Active`).
     - Instants must carry an explicit offset (`Z` or `+01:00`); dates are `YYYY-MM-DD`.
@@ -29,6 +30,7 @@ tags:
   - name: Patients
   - name: Clinic
   - name: Scheduling
+  - name: Appointments
   - name: Operations
 security:
   - sessionCookie: []
@@ -843,6 +845,116 @@ paths:
         '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/appointments:
+    get:
+      tags: [Appointments]
+      operationId: listAppointments
+      summary: List appointments
+      description: Requires `appointments.read`. By startAt, then id. All statuses unless `status` is given.
+      parameters:
+        - { name: from, in: query, description: 'Instant with offset (encode + as %2B); appointments ending after it.', schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: 'Instant with offset; appointments starting before it. Must be after from.', schema: { type: string, format: date-time } }
+        - { name: veterinarianId, in: query, schema: { type: string, format: uuid } }
+        - { name: patientId, in: query, schema: { type: string, format: uuid } }
+        - { name: clientId, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AppointmentStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of appointments.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppointmentPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Appointments]
+      operationId: createAppointment
+      summary: Book an appointment
+      description: |
+        Requires `appointments.manage`. The client is the patient's current owner (not sent). Patient and
+        veterinarian must be active and of the clinic (422 otherwise). Times: explicit offset, 5-minute grid,
+        5 minutes to 12 hours, not before the start of today in the clinic's time zone.
+        Conflicts (409, every conflict listed; detail field startAt = OutsideWorkingHours, veterinarianId = VeterinarianDoubleBooked, patientId = PatientDoubleBooked; messages start with the conflict name) unless allowConflicts is true with an overrideReason, which records the accepted conflicts in `override`. Field errors (422) come first.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppointmentRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/appointments/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/appointments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AppointmentId'
+    get:
+      tags: [Appointments]
+      operationId: getAppointment
+      summary: One appointment
+      description: Requires `appointments.read`. Other clinics' appointments are 404.
+      responses:
+        '200':
+          description: The appointment.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Appointments]
+      operationId: updateAppointment
+      summary: Edit or reschedule an appointment
+      description: |
+        Requires `appointments.manage`. Only Scheduled appointments (409 otherwise). Omitted or null fields are
+        unchanged; an empty string clears reason or notes. Changing patient (the client follows), veterinarian or
+        times re-applies the create rules and conflict checks; a clean placement clears an earlier override.
+        Conflicts (409, every conflict listed; detail field startAt = OutsideWorkingHours, veterinarianId = VeterinarianDoubleBooked, patientId = PatientDoubleBooked; messages start with the conflict name) unless allowConflicts is true with an overrideReason, which records the accepted conflicts in `override`. Field errors (422) come first.
+        Appointments are never deleted (DELETE is 405).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAppointmentRequest' }
+      responses:
+        '200':
+          description: Updated appointment.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -912,6 +1024,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    AppointmentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Page:
       name: page
       in: query
@@ -931,7 +1048,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -1451,6 +1568,112 @@ components:
             properties:
               startAt: { type: string, format: date-time }
               endAt: { type: string, format: date-time }
+
+    AppointmentType:
+      type: string
+      enum: [Consultation, Vaccination, FollowUp, Surgery, Dental, Grooming, Emergency, Other]
+
+    AppointmentStatus:
+      type: string
+      description: Only Scheduled is produced in B-09; the rest appear with B-10.
+      enum: [Scheduled, CheckedIn, Completed, Cancelled, NoShow]
+
+    AppointmentConflict:
+      type: string
+      enum: [OutsideWorkingHours, VeterinarianDoubleBooked, PatientDoubleBooked]
+
+    PersonSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
+    Appointment:
+      type: object
+      additionalProperties: false
+      required: [id, patient, client, veterinarian, startAt, endAt, type, reason, notes, status, override, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        patient:
+          type: object
+          additionalProperties: false
+          required: [id, name, species]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            species: { $ref: '#/components/schemas/Species' }
+        client:
+          description: The patient's owner when the appointment was booked.
+          allOf:
+            - $ref: '#/components/schemas/PatientClientSummary'
+        veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        startAt: { type: string, format: date-time, description: With the clinic's local offset. }
+        endAt: { type: string, format: date-time, description: With the clinic's local offset. }
+        type: { $ref: '#/components/schemas/AppointmentType' }
+        reason: { type: [string, 'null'], maxLength: 500 }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        status: { $ref: '#/components/schemas/AppointmentStatus' }
+        override:
+          description: Present when the appointment was placed despite conflicts.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [reason, conflicts]
+              properties:
+                reason: { type: string, maxLength: 500 }
+                conflicts:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/AppointmentConflict' }
+            - type: 'null'
+        createdBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AppointmentPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Appointment' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateAppointmentRequest:
+      type: object
+      required: [patientId, veterinarianId, startAt, endAt, type]
+      properties:
+        patientId: { type: string, format: uuid }
+        veterinarianId: { type: string, format: uuid }
+        startAt: { type: string, format: date-time, description: Explicit offset; 5-minute grid; not before today. }
+        endAt: { type: string, format: date-time, description: 5 minutes to 12 hours after startAt. }
+        type: { $ref: '#/components/schemas/AppointmentType' }
+        reason: { type: [string, 'null'], maxLength: 500 }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        allowConflicts: { type: [boolean, 'null'] }
+        overrideReason: { type: [string, 'null'], maxLength: 500, description: Required with allowConflicts true; refused without it. }
+
+    UpdateAppointmentRequest:
+      type: object
+      description: Omitted or null fields are unchanged; an empty string clears reason or notes.
+      properties:
+        patientId: { type: [string, 'null'], format: uuid }
+        veterinarianId: { type: [string, 'null'], format: uuid }
+        startAt: { type: [string, 'null'], format: date-time }
+        endAt: { type: [string, 'null'], format: date-time }
+        type:
+          oneOf:
+            - $ref: '#/components/schemas/AppointmentType'
+            - type: 'null'
+        reason: { type: [string, 'null'], maxLength: 500 }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        allowConflicts: { type: [boolean, 'null'] }
+        overrideReason: { type: [string, 'null'], maxLength: 500 }
 
     Health:
       type: object
