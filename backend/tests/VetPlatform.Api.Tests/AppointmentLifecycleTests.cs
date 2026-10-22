@@ -200,6 +200,52 @@ public sealed class AppointmentLifecycleTests(DatabaseApiFactory factory) : ICla
     }
 
     [Fact]
+    public async Task UndoNoShow_IsRefused_EvenIfTheBookingHadOverriddenADoubleBooking()
+    {
+        var clinic = await ClinicAsync();
+        var existing = await BookAsync(clinic, patientId: await AddPatientAsync(clinic.Desk, "First"));
+        var overridden = await BookAsync(clinic); // overrides VeterinarianDoubleBooked against `existing`
+        await ActAsync(clinic.Desk, existing, "cancel", new { cancelledBy = "Clinic" });
+        await ActAsync(clinic.Desk, overridden, "no-show");
+        await BookAsync(clinic, patientId: await AddPatientAsync(clinic.Desk, "Newcomer")); // booked into the freed slot
+
+        var response = await clinic.Desk.PostAsJsonAsync($"/api/appointments/{overridden}/undo-no-show", new { });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(["veterinarianId"], (await ErrorOf(response)).Details.Select(d => d.Field));
+    }
+
+    [Fact]
+    public async Task LifecycleTimes_CarryTheClinicsOffset_AndHistoryTimesAreUtc()
+    {
+        var clinic = await ClinicAsync();
+        await clinic.Admin.PatchAsJsonAsync("/api/clinic", new { timeZone = "Asia/Tokyo" }); // UTC+9 all year
+        var id = await BookAsync(clinic, days: 7);
+
+        var cancelled = await ActAsync(clinic.Desk, id, "cancel", new { cancelledBy = "Client" });
+
+        Assert.EndsWith("+09:00", cancelled.GetProperty("cancellation").GetProperty("at").GetString());
+        var entry = (await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/patients/{clinic.PatientId}/history"))
+            .GetProperty("data")[0];
+        Assert.EndsWith("+00:00", entry.GetProperty("occurredAt").GetString());
+        Assert.EndsWith("+00:00", entry.GetProperty("details").GetProperty("appointment").GetProperty("startAt").GetString());
+    }
+
+    [Fact]
+    public async Task AnotherClinicsPatientHistory_WithFinishedAppointments_IsNotFound()
+    {
+        var clinic = await ClinicAsync();
+        var other = await ClinicAsync();
+        var theirs = await BookAsync(other);
+        await ActAsync(other.Desk, theirs, "check-in");
+        await ActAsync(other.Desk, theirs, "complete");
+
+        var response = await clinic.Desk.GetAsync($"/api/patients/{other.PatientId}/history");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
     public async Task UndoCheckIn_SameDayOnly()
     {
         var clinic = await ClinicAsync();
@@ -330,6 +376,8 @@ public sealed class AppointmentLifecycleTests(DatabaseApiFactory factory) : ICla
     [InlineData("UPDATE appointments SET cancelled_by = 'Client' WHERE id = {0}")]
     [InlineData("UPDATE appointments SET cancellation_reason = 'x' WHERE id = {0}")]
     [InlineData("UPDATE appointments SET status = 'Cancelled', cancelled_at = now() WHERE id = {0}")]
+    [InlineData("UPDATE appointments SET status = 'Cancelled', cancelled_at = now(), cancelled_by = 'Bogus' WHERE id = {0}")]
+    [InlineData("UPDATE appointments SET status = 'Completed', checked_in_at = now(), completed_at = now() - interval '1 hour' WHERE id = {0}")]
     public async Task Database_KeepsStatusAndTimestampsConsistent(string sql)
     {
         var clinic = await ClinicAsync();

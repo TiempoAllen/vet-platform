@@ -167,6 +167,10 @@ internal sealed class AppointmentConfiguration : IEntityTypeConfiguration<Appoin
                 "WHEN 'Cancelled' THEN completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NOT NULL " +
                 "ELSE false END");
             table.HasCheckConstraint(
+                "ck_appointments_lifecycle_order",
+                "(completed_at IS NULL OR completed_at >= checked_in_at) " +
+                "AND (cancelled_at IS NULL OR checked_in_at IS NULL OR cancelled_at >= checked_in_at)");
+            table.HasCheckConstraint(
                 "ck_appointments_cancellation",
                 "(status = 'Cancelled') = (cancelled_by IS NOT NULL) AND (cancellation_reason IS NULL OR status = 'Cancelled')");
             table.HasCheckConstraint(

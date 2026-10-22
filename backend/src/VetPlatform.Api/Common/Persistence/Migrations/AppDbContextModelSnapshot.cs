@@ -229,6 +229,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_appointments_lifecycle", "CASE status WHEN 'Scheduled' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'CheckedIn' THEN checked_in_at IS NOT NULL AND completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'Completed' THEN checked_in_at IS NOT NULL AND completed_at IS NOT NULL AND no_show_at IS NULL AND cancelled_at IS NULL WHEN 'NoShow' THEN checked_in_at IS NULL AND completed_at IS NULL AND no_show_at IS NOT NULL AND cancelled_at IS NULL WHEN 'Cancelled' THEN completed_at IS NULL AND no_show_at IS NULL AND cancelled_at IS NOT NULL ELSE false END");
 
+                            t.HasCheckConstraint("ck_appointments_lifecycle_order", "(completed_at IS NULL OR completed_at >= checked_in_at) AND (cancelled_at IS NULL OR checked_in_at IS NULL OR cancelled_at >= checked_in_at)");
+
                             t.HasCheckConstraint("ck_appointments_overridden_conflicts", "overridden_conflicts <@ ARRAY['OutsideWorkingHours', 'VeterinarianDoubleBooked', 'PatientDoubleBooked']::text[]");
 
                             t.HasCheckConstraint("ck_appointments_override", "(override_reason IS NULL) = (cardinality(overridden_conflicts) = 0)");

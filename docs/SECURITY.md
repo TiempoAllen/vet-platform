@@ -100,6 +100,11 @@ record would; only names of the caller's own clinic are ever resolved (ADR-007).
 the only entry type is patient registration; when clinical entry types are added, each is gated by `clinical.read`
 inside the query and reading clinical history becomes an audited event.
 
+Since B-10 the history also shows finished appointments (date, type, veterinarian, actor, who cancelled; never the
+cancellation reason). This relies on every role with `patients.read` also holding `appointments.read`, which is true
+today (Admin, Veterinarian, Nurse, Receptionist). A role change that breaks that overlap must gate the appointment
+source on `appointments.read` inside the history query (ADR-010).
+
 ## 11. Audit logging
 Record important security and business actions such as:
 - authentication events

@@ -5,8 +5,8 @@ info:
   summary: Implemented endpoints as of milestone B-10.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (
-    clinical, billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (clinical,
+    billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -1008,7 +1008,7 @@ paths:
       tags: [Appointments]
       operationId: completeAppointment
       summary: Complete an appointment
-      description: 'Requires `appointments.manage`. CheckedIn to Completed (final). Not allowed from the current status, or not at this time: 409.'
+      description: 'Requires `appointments.manage`. CheckedIn to Completed (final). Not allowed from the current status: 409.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       responses:
@@ -1031,7 +1031,7 @@ paths:
       tags: [Appointments]
       operationId: cancelAppointment
       summary: Cancel an appointment
-      description: 'Requires `appointments.manage`. Scheduled or CheckedIn to Cancelled (final). cancelledBy is required; the reason never reaches the audit log or the history. Not allowed from the current status, or not at this time: 409.'
+      description: 'Requires `appointments.manage`. Scheduled or CheckedIn to Cancelled (final). cancelledBy is required; the reason never reaches the audit log or the history. Not allowed from the current status: 409.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -1084,7 +1084,7 @@ paths:
       tags: [Appointments]
       operationId: undoAppointmentNoShow
       summary: Undo a no-show
-      description: 'Requires `appointments.manage`. NoShow to Scheduled, only on the day it was marked and only if the veterinarian and patient were not booked into the slot again (409 lists the clash). Not allowed from the current status, or not at this time: 409.'
+      description: 'Requires `appointments.manage`. NoShow to Scheduled, only on the day it was marked and only if the veterinarian and patient were not booked into the slot again, regardless of any original override (409 lists the clash). Not allowed from the current status, or not at this time: 409.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       responses:
@@ -1549,7 +1549,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         startAt: { type: string, format: date-time, description: UTC. }
-        endAt: { type: string, format: date-time }
+        endAt: { type: string, format: date-time, description: UTC. }
         type: { $ref: '#/components/schemas/AppointmentType' }
         veterinarian: { $ref: '#/components/schemas/PersonSummary' }
 
@@ -1813,9 +1813,9 @@ components:
         reason: { type: [string, 'null'], maxLength: 500 }
         notes: { type: [string, 'null'], maxLength: 4000 }
         status: { $ref: '#/components/schemas/AppointmentStatus' }
-        checkedInAt: { type: [string, 'null'], format: date-time, description: Kept after completion or a later cancellation. }
-        completedAt: { type: [string, 'null'], format: date-time }
-        noShowAt: { type: [string, 'null'], format: date-time }
+        checkedInAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset; kept after completion or a later cancellation. }
+        completedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        noShowAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
         cancellation:
           description: Present exactly when status is Cancelled.
           oneOf:
@@ -1823,7 +1823,7 @@ components:
               additionalProperties: false
               required: [at, by, reason]
               properties:
-                at: { type: string, format: date-time }
+                at: { type: string, format: date-time, description: With the clinic's local offset. }
                 by: { $ref: '#/components/schemas/AppointmentCancelledBy' }
                 reason: { type: [string, 'null'], maxLength: 500 }
             - type: 'null'
