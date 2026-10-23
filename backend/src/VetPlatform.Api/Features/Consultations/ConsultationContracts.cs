@@ -12,6 +12,38 @@ public sealed record ConsultationVitals(
     int? BodyConditionScore,
     int? PainScore);
 
+public sealed record DiagnosisResponse(
+    Guid Id,
+    string Name,
+    string? Code,
+    string? CodeSystem,
+    DiagnosisStatus Status,
+    bool IsPrimary,
+    string? Notes,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    public static DiagnosisResponse From(Diagnosis d) =>
+        new(d.Id, d.Name, d.Code, d.CodeSystem, d.Status, d.IsPrimary, d.Notes, d.CreatedAt, d.UpdatedAt);
+}
+
+public sealed record TreatmentResponse(
+    Guid Id,
+    string Name,
+    TreatmentType Type,
+    Guid? DiagnosisId,
+    string? Dose,
+    string? Route,
+    string? Frequency,
+    string? Duration,
+    string? Notes,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    public static TreatmentResponse From(Treatment t) =>
+        new(t.Id, t.Name, t.Type, t.DiagnosisId, t.Dose, t.Route, t.Frequency, t.Duration, t.Notes, t.CreatedAt, t.UpdatedAt);
+}
+
 public sealed record ConsultationAddendumResponse(Guid Id, string Text, AppointmentPersonSummary? Author, DateTimeOffset CreatedAt);
 
 /// <summary>A consultation as returned by the API (docs/API.md section 8). Clinical instants carry the clinic's offset.</summary>
@@ -31,6 +63,8 @@ public sealed record ConsultationResponse(
     string? Assessment,
     string? Plan,
     ConsultationVitals Vitals,
+    IReadOnlyList<DiagnosisResponse> Diagnoses,
+    IReadOnlyList<TreatmentResponse> Treatments,
     IReadOnlyList<ConsultationAddendumResponse> Addenda,
     AppointmentPersonSummary? CreatedBy,
     DateTimeOffset CreatedAt,
@@ -58,6 +92,10 @@ public sealed record ConsultationResponse(
             c.Plan,
             new ConsultationVitals(
                 Shortest(c.WeightKg), Shortest(c.TemperatureC), c.HeartRate, c.RespiratoryRate, c.BodyConditionScore, c.PainScore),
+            // Primary first, then in the order recorded.
+            c.Diagnoses.OrderByDescending(d => d.IsPrimary).ThenBy(d => d.CreatedAt).ThenBy(d => d.Id)
+                .Select(DiagnosisResponse.From).ToList(),
+            c.Treatments.OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).Select(TreatmentResponse.From).ToList(),
             c.Addenda.OrderBy(a => a.CreatedAt).ThenBy(a => a.Id)
                 .Select(a => new ConsultationAddendumResponse(a.Id, a.Text, Person(a.Author), TimeZoneInfo.ConvertTime(a.CreatedAt, zone)))
                 .ToList(),
@@ -130,6 +168,70 @@ public sealed class ConsultationListQuery : PageQuery, IValidatableObject
         {
             yield return new ValidationResult(
                 $"Status must be one of {StrictEnum.Names<ConsultationStatus>()}.", [nameof(Status)]);
+        }
+    }
+}
+
+/// <summary>Optional text fields may be omitted, null or blank; all three store nothing. Defaults: Provisional, not primary.</summary>
+public sealed record CreateDiagnosisRequest(
+    [Required, MaxLength(Diagnosis.NameMaxLength)] string? Name,
+    [MaxLength(Diagnosis.CodeMaxLength)] string? Code,
+    [MaxLength(Diagnosis.CodeMaxLength)] string? CodeSystem,
+    DiagnosisStatus? Status,
+    bool? IsPrimary,
+    [MaxLength(Diagnosis.NotesMaxLength)] string? Notes);
+
+/// <summary>
+/// Partial update; omitted or null fields are unchanged and <c>""</c> clears optional text. After the consultation is
+/// completed only <c>status</c> may be sent (veterinarians only).
+/// </summary>
+public sealed record UpdateDiagnosisRequest(
+    [MaxLength(Diagnosis.NameMaxLength)] string? Name,
+    [MaxLength(Diagnosis.CodeMaxLength)] string? Code,
+    [MaxLength(Diagnosis.CodeMaxLength)] string? CodeSystem,
+    DiagnosisStatus? Status,
+    bool? IsPrimary,
+    [MaxLength(Diagnosis.NotesMaxLength)] string? Notes);
+
+public sealed record CreateTreatmentRequest(
+    [Required, MaxLength(Treatment.NameMaxLength)] string? Name,
+    [Required] TreatmentType? Type,
+    Guid? DiagnosisId,
+    [MaxLength(Treatment.DetailMaxLength)] string? Dose,
+    [MaxLength(Treatment.DetailMaxLength)] string? Route,
+    [MaxLength(Treatment.DetailMaxLength)] string? Frequency,
+    [MaxLength(Treatment.DetailMaxLength)] string? Duration,
+    [MaxLength(Treatment.NotesMaxLength)] string? Notes);
+
+/// <summary>Partial update; <c>""</c> clears optional text; <c>diagnosisId</c> is cleared with an explicit null.</summary>
+public sealed record UpdateTreatmentRequest(
+    [MaxLength(Treatment.NameMaxLength)] string? Name,
+    TreatmentType? Type,
+    Optional<Guid?> DiagnosisId,
+    [MaxLength(Treatment.DetailMaxLength)] string? Dose,
+    [MaxLength(Treatment.DetailMaxLength)] string? Route,
+    [MaxLength(Treatment.DetailMaxLength)] string? Frequency,
+    [MaxLength(Treatment.DetailMaxLength)] string? Duration,
+    [MaxLength(Treatment.NotesMaxLength)] string? Notes);
+
+/// <summary>A diagnosis in the patient's problem list, with the consultation it came from.</summary>
+public sealed record PatientDiagnosisResponse(
+    DiagnosisResponse Diagnosis,
+    Guid ConsultationId,
+    DateTimeOffset ConsultationCompletedAt,
+    AppointmentPersonSummary Veterinarian);
+
+public sealed class PatientDiagnosisListQuery : PageQuery, IValidatableObject
+{
+    public string? Status { get; init; }
+
+    public DiagnosisStatus? ParsedStatus => StrictEnum.TryParse<DiagnosisStatus>(Status, out var status) ? status : null;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Status is not null && ParsedStatus is null)
+        {
+            yield return new ValidationResult($"Status must be one of {StrictEnum.Names<DiagnosisStatus>()}.", [nameof(Status)]);
         }
     }
 }

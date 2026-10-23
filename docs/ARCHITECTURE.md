@@ -452,3 +452,33 @@ Choose the simplest solution that satisfies documented requirements, security, m
   - Concurrent openings for the same appointment always hit the one-open-per-patient index first (same patient);
     the per-appointment index guards the sequential case.
 
+### ADR-012: Diagnoses and treatments (decided in B-12)
+- **Confirmed with the user:** editable while the consultation is in progress; after completion only a diagnosis's
+  status may change (Provisional → Confirmed / RuledOut), by veterinarians only; free-text name plus an optional,
+  unvalidated code and code system; statuses Provisional, Confirmed, RuledOut with one primary diagnosis per
+  consultation; structured treatments (type, dose, route, frequency, duration as free text, notes) with an optional
+  link to a diagnosis of the same consultation; a read-only, audited patient problem list; the diagnoses shown inside
+  the existing `ConsultationCompleted` history entry.
+- **Nested resources:** diagnoses and treatments only exist inside a consultation; every change is a sub-resource
+  call that returns the whole consultation, under the same row lock and audit as other consultation writes.
+- **Patient consistency in the database:** consultations gained a unique `(clinic_id, patient_id, id)` key and the
+  children reference it, so the database guarantees a diagnosis or treatment belongs to its consultation's patient
+  (and clinic). A treatment's diagnosis link uses `(clinic_id, consultation_id, diagnosis_id)`, so it cannot point at
+  another consultation's diagnosis. Removing a diagnosis unlinks its treatments first.
+- **Freeze in the database:** triggers on both tables follow the parent consultation's status, read `FOR SHARE` so
+  a concurrent completion is waited for (anything while in progress; for diagnoses of completed consultations only
+  `status`/`updated_at` may differ, compared as whole rows so future columns are covered too; nothing for discarded
+  ones). `TRUNCATE` is refused on both tables. The service applies the
+  same rules first and adds the veterinarian check, which the database cannot know.
+- **Primary diagnosis:** a partial unique index allows one primary per consultation. Making another one primary clears
+  the old flag in a first save inside the same transaction, because PostgreSQL checks the index row by row. All
+  validation runs before that save, and the swap is the last step of the change.
+- **For B-13:** if prescriptions link to a diagnosis, removing a diagnosis must unlink them too, and prescriptions
+  need the same follow-the-consultation trigger; if they can exist without a consultation, give them their own
+  (clinic_id, patient_id) foreign key to patients, because a composite key with a null part is not checked.
+- **History shows current status:** the history entry lists the consultation's diagnoses as they are now, so a later
+  confirmation is visible there; the audit log keeps when it changed.
+- **Accepted for now:** no terminology validation or picklists (codes are free text); diagnosis status changes after
+  sign-off do not add an addendum automatically (the audit entry records who and when); treatments do not touch
+  inventory until B-19+.
+
