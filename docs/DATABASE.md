@@ -175,7 +175,7 @@ Implemented in B-12 (table `diagnoses`, ADR-012).
 - name (max 200, CHECK not blank), code and code_system (max 50; CHECK: no code system without a code)
 - status (`Provisional`, `Confirmed`, `RuledOut`; CHECK), is_primary (partial unique index: one primary per
   consultation), notes (max 2000), created_by_user_id (composite FK to users), created_at, updated_at
-- unique (clinic_id, consultation_id, id) for treatment links; index (clinic_id, patient_id, created_at)
+- unique (clinic_id, consultation_id, id) for treatment links
 
 ### Treatment
 Implemented in B-12 (table `treatments`). `instructions`/dosage in the original list became dose, route, frequency,
@@ -186,8 +186,9 @@ duration and notes.
 - name (max 200, CHECK not blank), type (`Procedure`, `Medication`, `Fluids`, `Other`; CHECK), dose, route,
   frequency, duration (max 100 each), notes (max 2000), created_by_user_id, created_at, updated_at
 
-Triggers on both tables follow the consultation: anything while it is `InProgress`; on a `Completed` consultation only
-a diagnosis's status may change; nothing on a `Discarded` one. Rolling back refuses while rows exist.
+Triggers on both tables follow the consultation (reading its status `FOR SHARE`): anything while it is `InProgress`;
+on a `Completed` consultation only a diagnosis's status may change (every other column, compared as a whole row, must
+stay); nothing on a `Discarded` one. `TRUNCATE` is refused on both. Rolling back refuses while rows exist.
 
 ### Prescription
 - id

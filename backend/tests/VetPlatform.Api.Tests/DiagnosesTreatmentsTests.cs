@@ -109,6 +109,56 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
     }
 
     [Fact]
+    public async Task ACodeSystemWithoutACode_Is422_EvenWhenAlsoMakingItPrimary()
+    {
+        var clinic = await ClinicAsync();
+        var id = await OpenAsync(clinic);
+        await AddDiagnosisAsync(clinic.Vet, id, new { name = "First", isPrimary = true });
+        var second = Last(await AddDiagnosisAsync(clinic.Vet, id, new { name = "Second" }), "diagnoses", "Second");
+
+        var response = await clinic.Vet.PatchAsJsonAsync($"/api/consultations/{id}/diagnoses/{second}", new { codeSystem = "VeNom", isPrimary = true });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var read = await clinic.Vet.GetFromJsonAsync<JsonElement>($"/api/consultations/{id}");
+        Assert.Equal("First", read.GetProperty("diagnoses").EnumerateArray().Single(d => d.GetProperty("isPrimary").GetBoolean()).GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task Caps_Are409()
+    {
+        var clinic = await ClinicAsync();
+        var id = await OpenAsync(clinic);
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO diagnoses (id, clinic_id, consultation_id, patient_id, name, status, is_primary, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, id, patient_id, 'D' || n, 'Provisional', false, now(), now() FROM consultations, generate_series(1, 50) n WHERE id = {0}", id));
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO treatments (id, clinic_id, consultation_id, patient_id, name, type, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, id, patient_id, 'T' || n, 'Other', now(), now() FROM consultations, generate_series(1, 100) n WHERE id = {0}", id));
+
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Vet.PostAsJsonAsync($"/api/consultations/{id}/diagnoses", new { name = "One more" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Vet.PostAsJsonAsync($"/api/consultations/{id}/treatments", new { name = "One more", type = "Other" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task UnknownItems_Are404_EvenOnACompletedConsultation()
+    {
+        var clinic = await ClinicAsync();
+        var id = await OpenAsync(clinic);
+        await OkAsync(await clinic.Vet.PostAsync($"/api/consultations/{id}/complete", null));
+        var unknown = Guid.NewGuid();
+
+        var responses = new[]
+        {
+            await clinic.Vet.PatchAsJsonAsync($"/api/consultations/{id}/diagnoses/{unknown}", new { status = "Confirmed" }),
+            await clinic.Vet.DeleteAsync($"/api/consultations/{id}/diagnoses/{unknown}"),
+            await clinic.Vet.PatchAsJsonAsync($"/api/consultations/{id}/treatments/{unknown}", new { dose = "x" }),
+            await clinic.Vet.DeleteAsync($"/api/consultations/{id}/treatments/{unknown}"),
+        };
+
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.NotFound, r.StatusCode));
+    }
+
+    [Fact]
     public async Task RemovingADiagnosis_UnlinksItsTreatments()
     {
         var clinic = await ClinicAsync();
@@ -168,6 +218,9 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
         Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Admin.PostAsJsonAsync($"/api/consultations/{id}/diagnoses", new { name = "x" })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Desk.PostAsJsonAsync($"/api/consultations/{id}/treatments", new { name = "x", type = "Other" })).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Desk.GetAsync($"/api/patients/{clinic.PatientId}/diagnoses")).StatusCode);
+        var inventory = await factory.SignInAsync(await factory.CreateColleagueAsync(clinic.AdminUser, roles: Role.Inventory));
+        Assert.Equal(HttpStatusCode.Forbidden, (await inventory.PostAsJsonAsync($"/api/consultations/{id}/diagnoses", new { name = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await inventory.GetAsync($"/api/patients/{clinic.PatientId}/diagnoses")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await clinic.Admin.GetAsync($"/api/patients/{clinic.PatientId}/diagnoses")).StatusCode);
     }
 
@@ -196,6 +249,7 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
         Assert.All(frozen, response => Assert.Equal(HttpStatusCode.Conflict, response.StatusCode));
 
         Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Nurse.PatchAsJsonAsync($"/api/consultations/{id}/diagnoses/{diagnosis}", new { status = "Confirmed" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Nurse.PatchAsJsonAsync($"/api/consultations/{id}/diagnoses/{diagnosis}", new { notes = "x" })).StatusCode);
 
         var confirmed = await OkAsync(await clinic.Vet.PatchAsJsonAsync($"/api/consultations/{id}/diagnoses/{diagnosis}", new { status = "Confirmed" }));
         Assert.Equal("Confirmed", confirmed.GetProperty("diagnoses")[0].GetProperty("status").GetString());
@@ -246,6 +300,24 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
     }
 
     [Fact]
+    public async Task ProblemList_OrdersByMostRecentlyCompletedConsultation()
+    {
+        var clinic = await ClinicAsync();
+        var older = await OpenAsync(clinic);
+        await AddDiagnosisAsync(clinic.Vet, older, new { name = "Older" });
+        await OkAsync(await clinic.Vet.PostAsync($"/api/consultations/{older}/complete", null));
+        factory.Clock.Advance(TimeSpan.FromMinutes(10));
+        var newer = await OpenAsync(clinic);
+        await AddDiagnosisAsync(clinic.Vet, newer, new { name = "Newer B" });
+        await AddDiagnosisAsync(clinic.Vet, newer, new { name = "Newer A", isPrimary = true });
+        await OkAsync(await clinic.Vet.PostAsync($"/api/consultations/{newer}/complete", null));
+
+        var list = await clinic.Vet.GetFromJsonAsync<JsonElement>($"/api/patients/{clinic.PatientId}/diagnoses");
+
+        Assert.Equal(["Newer A", "Newer B", "Older"], list.GetProperty("data").EnumerateArray().Select(e => e.GetProperty("diagnosis").GetProperty("name").GetString()));
+    }
+
+    [Fact]
     public async Task History_ShowsTheConsultationsDiagnoses()
     {
         var clinic = await ClinicAsync();
@@ -270,6 +342,13 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
         Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.PostAsJsonAsync($"/api/consultations/{theirs}/diagnoses", new { name = "x" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.PostAsJsonAsync($"/api/consultations/{theirs}/treatments", new { name = "x", type = "Other" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.GetAsync($"/api/patients/{other.PatientId}/diagnoses")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.GetAsync($"/api/patients/{Guid.NewGuid()}/diagnoses")).StatusCode);
+
+        // Another clinic's item ids through this clinic's own consultation.
+        var theirDiagnosis = Last(await AddDiagnosisAsync(other.Vet, theirs, new { name = "Theirs" }), "diagnoses", "Theirs");
+        var mine = await OpenAsync(clinic);
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.PatchAsJsonAsync($"/api/consultations/{mine}/diagnoses/{theirDiagnosis}", new { name = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.DeleteAsync($"/api/consultations/{mine}/diagnoses/{theirDiagnosis}")).StatusCode);
     }
 
     // ---------- Database rules ----------
@@ -279,6 +358,9 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
     [InlineData("DELETE FROM diagnoses WHERE consultation_id = {0}", "42501")]
     [InlineData("UPDATE treatments SET dose = 'more' WHERE consultation_id = {0}", "42501")]
     [InlineData("INSERT INTO diagnoses (id, clinic_id, consultation_id, patient_id, name, status, is_primary, created_at, updated_at) SELECT gen_random_uuid(), clinic_id, id, patient_id, 'late', 'Provisional', false, now(), now() FROM consultations WHERE id = {0}", "42501")]
+    [InlineData("UPDATE diagnoses SET id = gen_random_uuid() WHERE consultation_id = {0}", "42501")]
+    [InlineData("TRUNCATE diagnoses CASCADE", "42501")]
+    [InlineData("TRUNCATE treatments", "42501")]
     public async Task Database_FreezesItemsOfCompletedConsultations(string sql, string sqlState)
     {
         var clinic = await ClinicAsync();

@@ -715,7 +715,8 @@ Diagnoses and treatments belong to one consultation and appear in the consultati
 `diagnoses` (primary first, then in the order recorded) and `treatments` (in the order recorded). Every change below
 returns `200` with the whole consultation, runs under the consultation's lock and is audited (`diagnosis.added`,
 `.updated`, `.removed`, `treatment.added`, `.updated`, `.removed`; ids and field names, never names or notes). An
-unknown consultation, diagnosis or treatment (or another clinic's, or one of another consultation) is `404`.
+unknown consultation, diagnosis or treatment (or another clinic's, or one of another consultation) is `404`, whatever
+the consultation's state. Item `createdAt` / `updatedAt` are UTC.
 
 **Diagnosis**: `{ "id", "name", "code" | null, "codeSystem" | null, "status": "Provisional" | "Confirmed" | "RuledOut",
 "isPrimary", "notes" | null, "createdAt", "updatedAt" }`. `name` is required (max 200). `code` and `codeSystem` (max
@@ -731,7 +732,7 @@ of the **same** consultation (`422` otherwise).
 | Endpoint | Permission | While `InProgress` | After `Completed` |
 |---|---|---|---|
 | `POST /api/consultations/:id/diagnoses` | `clinical.write` | adds (`422` on invalid fields) | `409` |
-| `PATCH /api/consultations/:id/diagnoses/:diagnosisId` | `clinical.write` | any field; omitted or `null` unchanged, `""` clears optional text | **only `status`**, and only by veterinarians (`consultations.complete`; otherwise `403`); any other field is `409` |
+| `PATCH /api/consultations/:id/diagnoses/:diagnosisId` | `clinical.write` | any field; omitted or `null` unchanged, `""` clears optional text | **only `status`**, and only by veterinarians (`consultations.complete`; otherwise `403`); any other field is `409` whoever sends it |
 | `DELETE /api/consultations/:id/diagnoses/:diagnosisId` | `clinical.write` | removes it; its treatments are unlinked, not removed | `409` |
 | `POST /api/consultations/:id/treatments` | `clinical.write` | adds | `409` |
 | `PATCH /api/consultations/:id/treatments/:treatmentId` | `clinical.write` | any field; `""` clears optional text; `"diagnosisId": null` unlinks | `409` |
@@ -741,7 +742,8 @@ A discarded consultation's items cannot change at all (`409`). At most 50 diagno
 consultation (`409`). The database enforces the same freeze, so these rules hold even outside the API.
 
 `GET /api/patients/:id/diagnoses` (`clinical.read`): the patient's **problem list**: diagnoses of completed
-consultations, newest consultation first (primary first within one), paginated. `status` filters by an exact status.
+consultations, most recently completed consultation first (`consultationCompletedAt` descending), primary first within
+one, paginated. An unknown or another clinic's patient is `404`. `status` filters by an exact status.
 Each item: `{ "diagnosis": { ... }, "consultationId", "consultationCompletedAt" (clinic offset), "veterinarian": { id, name } }`.
 In-progress and discarded consultations are left out. A clinical read: audited (`diagnosis.listed`).
 

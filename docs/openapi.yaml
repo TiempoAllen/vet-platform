@@ -1457,7 +1457,7 @@ paths:
       tags: [Consultations]
       operationId: listPatientDiagnoses
       summary: The patient's problem list
-      description: Requires `clinical.read`. Diagnoses of completed consultations, newest consultation first (primary first within one). Audited (diagnosis.listed).
+      description: Requires `clinical.read`. Diagnoses of completed consultations, most recently completed consultation first (consultationCompletedAt descending), primary first within one. Unknown patient 404. Audited (diagnosis.listed).
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/DiagnosisStatus' } }
         - $ref: '#/components/parameters/Page'
