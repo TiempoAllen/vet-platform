@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.6, 2026-10-23, updated for B-10.
+Veterinary Management Platform. Version 1.7, 2026-10-24, updated for B-11.
 
 ## 1. Introduction
 
@@ -148,14 +148,14 @@ A user may hold several roles; their permissions are the union.
 ### 3.6 Clinical records (FR-CLN) — B-11..B-15, F-10..F-13
 | ID | Requirement | Status |
 |---|---|---|
-| FR-CLN-1 | A veterinarian can open a consultation for a patient (optionally from an appointment) and record SOAP notes. | Planned (B-11) |
-| FR-CLN-2 | Completed consultations are not destructively edited; corrections preserve history (append-oriented). | Planned (B-11) |
+| FR-CLN-1 | A veterinarian can open a consultation for a patient (optionally from an appointment) and record SOAP notes. | Done (B-11; plus vitals) |
+| FR-CLN-2 | Completed consultations are not destructively edited; corrections preserve history (append-oriented). | Done (B-11; append-only addenda enforced by the database) |
 | FR-CLN-3 | Diagnoses and treatments can be recorded against a consultation. | Planned (B-12) |
 | FR-CLN-4 | Prescriptions (medication, dosage, route, frequency, duration, quantity, instructions) can be issued by authorised clinicians. | Planned (B-13) |
 | FR-CLN-5 | Vaccinations (vaccine, administered date, next due date, lot, manufacturer) can be recorded with or without a consultation. | Planned (B-14) |
 | FR-CLN-6 | Files (images, documents) can be attached to patients, clients or consultations, with type and size validation and private storage. | Planned (B-15) |
 | FR-CLN-7 | Clinical notes can be added to a patient. | Planned (B-15) |
-| FR-CLN-8 | Every clinical read and write path is permission-checked; changes are audited. | Planned |
+| FR-CLN-8 | Every clinical read and write path is permission-checked; changes are audited. | Done for consultations (reads and writes audited); continues per clinical milestone |
 
 ### 3.7 Billing (FR-BIL) — B-16..B-18, F-14, F-15
 | ID | Requirement | Status |

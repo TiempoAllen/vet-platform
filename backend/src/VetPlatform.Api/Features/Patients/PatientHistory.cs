@@ -6,6 +6,7 @@ using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Appointments;
+using VetPlatform.Api.Features.Consultations;
 
 namespace VetPlatform.Api.Features.Patients;
 
@@ -20,6 +21,9 @@ public enum PatientHistoryEntryType
     AppointmentCompleted,
     AppointmentCancelled,
     AppointmentNoShow,
+
+    /// <summary>Clinical: only for callers with <c>clinical.read</c>, and reading it is audited.</summary>
+    ConsultationCompleted,
 }
 
 /// <summary>Who caused an entry; null when there was no signed-in user (the CLI) or the account cannot be shown.</summary>
@@ -53,6 +57,18 @@ public sealed record PatientAppointmentDetails(PatientHistoryAppointment Appoint
 /// <summary>Details of <c>AppointmentCancelled</c>. The cancellation reason is deliberately not shown here.</summary>
 public sealed record PatientAppointmentCancelledDetails(PatientHistoryAppointment Appointment, AppointmentCancelledBy CancelledBy);
 
+/// <summary>The consultation a <c>ConsultationCompleted</c> entry is about; <c>assessment</c> is the clinical summary.</summary>
+public sealed record PatientHistoryConsultation(
+    Guid Id,
+    DateTimeOffset StartedAt,
+    DateTimeOffset CompletedAt,
+    Guid? AppointmentId,
+    AppointmentPersonSummary Veterinarian,
+    string? Assessment);
+
+/// <summary>Details of <c>ConsultationCompleted</c>.</summary>
+public sealed record PatientConsultationDetails(PatientHistoryConsultation Consultation);
+
 /// <summary>
 /// The patient history read model (B-07, ADR-007; appointment entries B-10, ADR-010): one newest-first timeline over
 /// every source of patient events. Each source is projected to (type, id, occurred_at); the sources are combined with
@@ -62,7 +78,7 @@ public sealed record PatientAppointmentCancelledDetails(PatientHistoryAppointmen
 /// Each source decides its own permission: entries a caller may not see (later, clinical ones without
 /// <c>clinical.read</c>) are left out of the union, so <c>total</c> and paging never reveal them.
 /// </remarks>
-public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant)
+public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant, AuditTrail audit)
 {
     /// <summary>The row every source is projected to before the union.</summary>
     private sealed class HistoryKey
@@ -74,9 +90,14 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         public required DateTimeOffset OccurredAt { get; init; }
     }
 
+    /// <param name="includeClinical">
+    /// Whether the caller holds <c>clinical.read</c>. Without it clinical sources are left out of the union, so they
+    /// are neither shown nor counted. With it, a page that contains clinical entries is an audited read.
+    /// </param>
     public async Task<PagedResponse<PatientHistoryEntry>> ListAsync(
         Guid patientId,
         PageQuery page,
+        bool includeClinical,
         CancellationToken cancellationToken)
     {
         // The patient query is clinic-filtered, so another clinic's patient is 404 like everywhere else.
@@ -89,6 +110,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         const string completed = nameof(PatientHistoryEntryType.AppointmentCompleted);
         const string cancelled = nameof(PatientHistoryEntryType.AppointmentCancelled);
         const string noShow = nameof(PatientHistoryEntryType.AppointmentNoShow);
+        const string consultationCompleted = nameof(PatientHistoryEntryType.ConsultationCompleted);
 
         var registrations = db.ForCurrentClinic(tenant)
             .Where(entry => entry.EntityType == nameof(Patient)
@@ -113,15 +135,25 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                     : a.NoShowAt!.Value,
             });
 
+        var sources = registrations.Concat(appointments);
+        if (includeClinical)
+        {
+            // Completed consultations only: in-progress notes are not yet a record, discarded ones never were.
+            sources = sources.Concat(db.Consultations
+                .Where(c => c.PatientId == patientId && c.Status == ConsultationStatus.Completed)
+                .Select(c => new HistoryKey { Type = consultationCompleted, Id = c.Id, OccurredAt = c.CompletedAt!.Value }));
+        }
+
         // Documented order: occurredAt, then id, then type, all descending.
-        var keys = await registrations.Concat(appointments)
+        var keys = await sources
             .OrderByDescending(key => key.OccurredAt)
             .ThenByDescending(key => key.Id)
             .ThenByDescending(key => key.Type)
             .ToPageAsync(page, key => key, cancellationToken);
 
         var auditIds = keys.Data.Where(k => k.Type == registered).Select(k => k.Id).ToList();
-        var appointmentIds = keys.Data.Where(k => k.Type != registered).Select(k => k.Id).ToList();
+        var appointmentIds = keys.Data.Where(k => k.Type is completed or cancelled or noShow).Select(k => k.Id).ToList();
+        var consultationIds = keys.Data.Where(k => k.Type == consultationCompleted).Select(k => k.Id).ToList();
         var auditEntries = auditIds.Count == 0
             ? []
             : await db.ForCurrentClinic(tenant).AsNoTracking()
@@ -134,9 +166,17 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                 .Where(a => appointmentIds.Contains(a.Id))
                 .ToDictionaryAsync(a => a.Id, cancellationToken);
 
+        var consultationRows = consultationIds.Count == 0
+            ? []
+            : await db.Consultations.AsNoTracking()
+                .Include(c => c.Veterinarian)
+                .Where(c => consultationIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, cancellationToken);
+
         var actors = await ActorsAsync(
             auditEntries.Values.Select(entry => entry.ActorUserId)
-                .Concat(appointmentRows.Values.Select(a => a.StatusChangedByUserId)),
+                .Concat(appointmentRows.Values.Select(a => a.StatusChangedByUserId))
+                .Concat(consultationRows.Values.Select(c => c.CompletedByUserId)),
             cancellationToken);
         var clients = await ClientsAsync(auditEntries.Values, cancellationToken);
 
@@ -153,6 +193,17 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                     new PatientRegisteredDetails(ClientIdOf(entry) is { } clientId ? clients.GetValueOrDefault(clientId) : null));
             }
 
+            if (type == PatientHistoryEntryType.ConsultationCompleted)
+            {
+                var consultation = consultationRows[key.Id];
+                return new PatientHistoryEntry(
+                    key.Id, type, key.OccurredAt, Actor(consultation.CompletedByUserId),
+                    new PatientConsultationDetails(new PatientHistoryConsultation(
+                        consultation.Id, consultation.StartedAt, consultation.CompletedAt!.Value, consultation.AppointmentId,
+                        new AppointmentPersonSummary(consultation.Veterinarian!.Id, consultation.Veterinarian.Name),
+                        consultation.Assessment)));
+            }
+
             var appointment = appointmentRows[key.Id];
             var summary = new PatientHistoryAppointment(
                 appointment.Id, appointment.StartAt, appointment.EndAt, appointment.Type,
@@ -162,6 +213,13 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                 : new PatientAppointmentDetails(summary);
             return new PatientHistoryEntry(key.Id, type, key.OccurredAt, Actor(appointment.StatusChangedByUserId), details);
         }).ToList();
+
+        // Reading clinical entries is a clinical read (SECURITY.md section 10): record which ones were shown.
+        if (consultationIds.Count > 0)
+        {
+            audit.Record(AuditActions.PatientHistoryViewed, nameof(Patient), patientId, new { consultationIds });
+            await db.SaveChangesAsync(cancellationToken);
+        }
 
         return new PagedResponse<PatientHistoryEntry>(entries, keys.Pagination);
     }
