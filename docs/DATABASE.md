@@ -163,7 +163,9 @@ Partial unique indexes: one `InProgress` consultation per (clinic_id, patient_id
 
 `consultation_addenda`: id, clinic_id, consultation_id (composite FK to consultations), author_user_id (composite FK
 to users), text (max 4000, CHECK not blank), created_at. **Append-only:** triggers reject UPDATE, DELETE and
-TRUNCATE, like `audit_logs`; rolling back the migration refuses while addenda exist.
+TRUNCATE, like `audit_logs`, and an INSERT unless the consultation is `Completed`. A further trigger rejects any UPDATE
+or DELETE of a consultation that is no longer `InProgress`. Rolling back the migration refuses while any consultation
+or addendum exists.
 
 ### Diagnosis
 - id

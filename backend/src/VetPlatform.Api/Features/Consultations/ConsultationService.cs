@@ -106,7 +106,7 @@ public sealed class ConsultationService(
             AppointmentId = request.AppointmentId,
             VeterinarianId = veterinarian!.Id,
             Veterinarian = veterinarian,
-            StartedAt = timeProvider.GetUtcNow(),
+            StartedAt = Now,
             Subjective = NullIfBlank(request.Subjective),
             Objective = NullIfBlank(request.Objective),
             Assessment = NullIfBlank(request.Assessment),
@@ -184,7 +184,7 @@ public sealed class ConsultationService(
         WriteAsync(id, AuditActions.ConsultationCompleted, async consultation =>
         {
             RequireInProgress(consultation, "completed");
-            var now = timeProvider.GetUtcNow();
+            var now = Now;
             consultation.Status = ConsultationStatus.Completed;
             consultation.CompletedAt = now < consultation.StartedAt ? consultation.StartedAt : now;
             consultation.CompletedByUserId = CallerId;
@@ -197,6 +197,7 @@ public sealed class ConsultationService(
                 await db.Database.ExecuteSqlAsync(
                     $"SELECT 1 FROM patients WHERE id = {consultation.PatientId} FOR NO KEY UPDATE", cancellationToken);
                 var patient = await db.Patients.SingleAsync(p => p.Id == consultation.PatientId, cancellationToken);
+                await db.Entry(patient).ReloadAsync(cancellationToken);
                 if (patient.WeightKg != weight)
                 {
                     patient.WeightKg = weight;
@@ -215,7 +216,7 @@ public sealed class ConsultationService(
         {
             RequireInProgress(consultation, "discarded");
             consultation.Status = ConsultationStatus.Discarded;
-            consultation.DiscardedAt = timeProvider.GetUtcNow();
+            consultation.DiscardedAt = Now < consultation.StartedAt ? consultation.StartedAt : Now;
             consultation.DiscardReason = request.Reason!.Trim();
             return Task.FromResult<object?>(new { patientId = consultation.PatientId });
         }, cancellationToken);
@@ -229,6 +230,12 @@ public sealed class ConsultationService(
                 throw Conflict("Addenda can only be added to completed consultations; edit the notes while in progress.");
             }
 
+            if (consultation.Addenda.Count >= ConsultationAddendum.MaxPerConsultation)
+            {
+                throw Conflict(
+                    $"A consultation can have at most {ConsultationAddendum.MaxPerConsultation} addenda; they can never be removed.");
+            }
+
             var addendum = new ConsultationAddendum
             {
                 ClinicId = consultation.ClinicId,
@@ -236,7 +243,7 @@ public sealed class ConsultationService(
                 AuthorUserId = CallerId,
                 Author = await db.Users.SingleAsync(u => u.Id == CallerId, cancellationToken),
                 Text = request.Text!.Trim(),
-                CreatedAt = timeProvider.GetUtcNow(),
+                CreatedAt = Now,
             };
             if (addendum.Text.Length == 0)
             {
@@ -335,6 +342,9 @@ public sealed class ConsultationService(
 
     private Guid CurrentClinicId =>
         tenant.ClinicId ?? throw new InvalidOperationException("Consultations require a current clinic.");
+
+    /// <summary>The clock at database precision, so a write's response equals a later read (see TimestampsInterceptor).</summary>
+    private DateTimeOffset Now => TimestampsInterceptor.ToDatabasePrecision(timeProvider.GetUtcNow());
 
     private Guid CallerId =>
         AuthClaims.GetUserId(httpContextAccessor.HttpContext!.User)

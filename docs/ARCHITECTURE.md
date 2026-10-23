@@ -425,9 +425,11 @@ Choose the simplest solution that satisfies documented requirements, security, m
   in-progress consultations can be discarded with a reason.
 - **Sign-off:** completion needs `consultations.complete`, held only by veterinarians, because completing is the
   clinical sign-off; a nurse can open and document on behalf of the veterinarian of record.
-- **Append-only in the database:** `consultation_addenda` has triggers that reject UPDATE, DELETE and TRUNCATE (same
-  pattern and same owner caveat as `audit_logs`, X-05). The consultation itself is frozen by the service: only
-  `InProgress` rows accept edits, and the lifecycle CHECK keeps status and timestamps consistent.
+- **Append-only and frozen in the database:** `consultation_addenda` has triggers that reject UPDATE, DELETE and
+  TRUNCATE, and an INSERT unless the consultation is `Completed`; `consultations` has a trigger that rejects any UPDATE
+  or DELETE once the status is no longer `InProgress` (same pattern and owner caveat as `audit_logs`, X-05). The
+  service enforces the same rules first, so these only ever fire on a bug or a raw write. The lifecycle CHECK keeps
+  status and timestamps consistent. At most 50 addenda per consultation, because they can never be removed.
 - **Invariants in the database:** partial unique indexes for "one open per patient" and "one per appointment"
   (discarded ones excluded), so concurrent openings resolve to one `201` and `409`s. Vitals ranges are CHECKs too.
 - **Weight:** completing with a weight sets the patient's current weight in the same transaction (patient row locked
@@ -437,7 +439,16 @@ Choose the simplest solution that satisfies documented requirements, security, m
   clinical read only when it contains clinical entries. Audit volume grows with use; retention is an X-05 topic.
 - **History:** completed consultations are the third `UNION ALL` source (ADR-007), added only when the caller holds
   `clinical.read`; in-progress and discarded consultations never appear.
-- **Accepted for now:** the four SOAP notes are plain text (no templates or rich text); diagnoses, treatments and
-  prescriptions attach to consultations in B-12/B-13 via the (clinic_id, id) key; reads of the appointment list are
-  not clinical and not audited.
+- **Timestamps** are truncated to microseconds before they are stored, so a write's response equals a later read.
+- **Accepted for now:**
+  - The four SOAP notes are plain text (no templates or rich text).
+  - List rows carry the full object (notes and addenda), up to 100 per page; a summary shape can be added if lists
+    get heavy.
+  - Diagnoses, treatments and prescriptions attach to consultations in B-12/B-13 via the (clinic_id, id) key. If they
+    carry `patient_id`, add a unique (clinic_id, patient_id, id) key on consultations so the database also guarantees
+    they belong to the consultation's patient; keeping them off non-completed consultations stays a service rule
+    under the consultation row lock.
+  - Reads of the appointment list are not clinical and not audited.
+  - Concurrent openings for the same appointment always hit the one-open-per-patient index first (same patient);
+    the per-appointment index guards the sequential case.
 

@@ -497,7 +497,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_consultations_heart_rate", "heart_rate BETWEEN 1 AND 400");
 
-                            t.HasCheckConstraint("ck_consultations_lifecycle", "CASE status WHEN 'InProgress' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Completed' THEN completed_at IS NOT NULL AND completed_by_user_id IS NOT NULL AND completed_at >= started_at AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Discarded' THEN completed_at IS NULL AND discarded_at IS NOT NULL AND discard_reason IS NOT NULL ELSE false END");
+                            t.HasCheckConstraint("ck_consultations_lifecycle", "CASE status WHEN 'InProgress' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Completed' THEN completed_at IS NOT NULL AND completed_by_user_id IS NOT NULL AND completed_at >= started_at AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Discarded' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NOT NULL AND discarded_at >= started_at AND discard_reason IS NOT NULL AND btrim(discard_reason) <> '' ELSE false END");
 
                             t.HasCheckConstraint("ck_consultations_pain_score", "pain_score BETWEEN 0 AND 10");
 

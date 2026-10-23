@@ -1265,7 +1265,7 @@ paths:
       tags: [Consultations]
       operationId: addConsultationAddendum
       summary: Append a signed addendum
-      description: 'Requires `clinical.write`. Only on Completed consultations (409 otherwise). Addenda can never be edited or deleted.'
+      description: 'Requires `clinical.write`. Only on Completed consultations (409 otherwise), at most 50 per consultation (409). Addenda can never be edited or deleted.'
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
