@@ -414,8 +414,10 @@ Entry types so far:
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
 consultation ids shown).
 
-For appointment entries `id` is the appointment's id, `actor` is the staff member who made the change, and the
-instants are UTC. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
+For appointment entries `id` is the appointment's id and `actor` is the staff member who made the change. For
+`ConsultationCompleted`, `id` is the consultation's id and `actor` is the veterinarian who completed it. All history
+instants (`occurredAt` and those in `details`) are UTC, unlike the consultation and appointment objects, which use the
+clinic's local offset. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
 
 ## 7. Appointments
 Implemented in B-09 (booking, editing, rescheduling; ADR-009) and B-10 (status lifecycle; ADR-010). There is no
@@ -659,7 +661,8 @@ Receptionist and Inventory have no clinical access.
     }
 
 `GET /api/patients/:id/consultations` (`clinical.read`): the patient's consultations, newest `startedAt` first,
-paginated (section 13). `status` filters by an exact status; without it, `Discarded` ones are left out. Unknown or
+paginated (section 13), each row the full consultation object (notes and addenda included). `status` filters by an
+exact status; without it, `Discarded` ones are left out. Unknown or
 another clinic's patient is `404`. Audited (`consultation.listed`, with the ids shown).
 
 `GET /api/consultations/:id` (`clinical.read`): `200` or `404`. Audited (`consultation.viewed`).
@@ -696,8 +699,9 @@ weight in the same step (audited as a patient change).
 consultations cannot be discarded (`409`).
 
 `POST /api/consultations/:id/addenda` (`clinical.write`): `{ "text": "..." }` (required, max 4000, trimmed). Appends a
-signed, dated addendum to a **completed** consultation (`409` for in-progress ones: edit the notes instead). Addenda
-can never be edited or deleted; the database refuses it. Returns `200` with the consultation.
+signed, dated addendum to a **completed** consultation (`409` for in-progress ones: edit the notes instead). At most
+50 addenda per consultation (`409` beyond). Addenda can never be edited or deleted, and completed or discarded
+consultations can never be changed; the database itself refuses both. Returns `200` with the consultation.
 
 Concurrent changes to one consultation are applied one after the other. Every change is audited
 (`consultation.created`, `.updated`, `.completed`, `.discarded`, `.addendum_added`) with ids and changed field names,

@@ -97,6 +97,9 @@ public sealed class ConsultationAddendum : IClinicOwned
 {
     public const int TextMaxLength = 4000;
 
+    /// <summary>Addenda are permanent, so their number is capped to keep every read of the record bounded.</summary>
+    public const int MaxPerConsultation = 50;
+
     public Guid Id { get; init; } = Guid.CreateVersion7();
 
     public Guid ClinicId { get; set; }
@@ -134,7 +137,8 @@ internal sealed class ConsultationConfiguration : IEntityTypeConfiguration<Consu
                 "CASE status " +
                 "WHEN 'InProgress' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NULL AND discard_reason IS NULL " +
                 "WHEN 'Completed' THEN completed_at IS NOT NULL AND completed_by_user_id IS NOT NULL AND completed_at >= started_at AND discarded_at IS NULL AND discard_reason IS NULL " +
-                "WHEN 'Discarded' THEN completed_at IS NULL AND discarded_at IS NOT NULL AND discard_reason IS NOT NULL " +
+                "WHEN 'Discarded' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NOT NULL " +
+                "AND discarded_at >= started_at AND discard_reason IS NOT NULL AND btrim(discard_reason) <> '' " +
                 "ELSE false END");
             table.HasCheckConstraint("ck_consultations_weight_kg", $"weight_kg > 0 AND weight_kg <= {VitalLimits.MaxWeightKg}");
             table.HasCheckConstraint(

@@ -100,8 +100,8 @@ record would; only names of the caller's own clinic are ever resolved (ADR-007).
 consultation (`consultation.viewed`), listing a patient's consultations (`consultation.listed`) and reading a history
 page that contains clinical entries (`patient.history_viewed`), each with record ids but never note text. Clinical
 history entries (`ConsultationCompleted`) are gated by `clinical.read` inside the history query, so callers without
-it neither see nor count them. Completed consultations are frozen; corrections are append-only addenda that the
-database refuses to change or delete (ADR-011).
+it neither see nor count them. Completed and discarded consultations are frozen and corrections are append-only addenda; both
+are enforced by database triggers, not only by the service (ADR-011).
 
 Since B-10 the history also shows finished appointments (date, type, veterinarian, actor, who cancelled; never the
 cancellation reason). This relies on every role with `patients.read` also holding `appointments.read`, which is true

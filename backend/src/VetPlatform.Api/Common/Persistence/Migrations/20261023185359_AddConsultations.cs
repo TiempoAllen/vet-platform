@@ -46,7 +46,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     table.UniqueConstraint("ak_consultations_clinic_id_id", x => new { x.clinic_id, x.id });
                     table.CheckConstraint("ck_consultations_body_condition_score", "body_condition_score BETWEEN 1 AND 9");
                     table.CheckConstraint("ck_consultations_heart_rate", "heart_rate BETWEEN 1 AND 400");
-                    table.CheckConstraint("ck_consultations_lifecycle", "CASE status WHEN 'InProgress' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Completed' THEN completed_at IS NOT NULL AND completed_by_user_id IS NOT NULL AND completed_at >= started_at AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Discarded' THEN completed_at IS NULL AND discarded_at IS NOT NULL AND discard_reason IS NOT NULL ELSE false END");
+                    table.CheckConstraint("ck_consultations_lifecycle", "CASE status WHEN 'InProgress' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Completed' THEN completed_at IS NOT NULL AND completed_by_user_id IS NOT NULL AND completed_at >= started_at AND discarded_at IS NULL AND discard_reason IS NULL WHEN 'Discarded' THEN completed_at IS NULL AND completed_by_user_id IS NULL AND discarded_at IS NOT NULL AND discarded_at >= started_at AND discard_reason IS NOT NULL AND btrim(discard_reason) <> '' ELSE false END");
                     table.CheckConstraint("ck_consultations_pain_score", "pain_score BETWEEN 0 AND 10");
                     table.CheckConstraint("ck_consultations_respiratory_rate", "respiratory_rate BETWEEN 1 AND 200");
                     table.CheckConstraint("ck_consultations_status", "status IN ('InProgress', 'Completed', 'Discarded')");
@@ -169,9 +169,12 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 unique: true,
                 filter: "appointment_id IS NOT NULL AND status <> 'Discarded'");
         
-            // Addenda are the append-only correction trail of signed consultations (FR-CLN-2, ADR-011): the database
-            // itself refuses UPDATE, DELETE and TRUNCATE, like audit_logs. As there, the table owner can still disable
-            // the triggers, which is why production runs the API as a non-owner role (X-05).
+            // Clinical records are protected by the database itself (FR-CLN-2, ADR-011), not only by the service:
+            // - consultation_addenda is append-only (UPDATE, DELETE and TRUNCATE are rejected, like audit_logs);
+            // - an addendum can only be added to a Completed consultation;
+            // - a Completed or Discarded consultation can no longer be changed at all.
+            // As for audit_logs, the table owner could disable these triggers, which is why production runs the API as
+            // a non-owner role (X-05).
             migrationBuilder.Sql("""
                 CREATE FUNCTION consultation_addenda_reject_change() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN
@@ -186,18 +189,48 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 CREATE TRIGGER consultation_addenda_no_truncate
                     BEFORE TRUNCATE ON consultation_addenda
                     FOR EACH STATEMENT EXECUTE FUNCTION consultation_addenda_reject_change();
+
+                CREATE FUNCTION consultation_addenda_require_completed() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM consultations
+                        WHERE id = NEW.consultation_id AND clinic_id = NEW.clinic_id AND status = 'Completed') THEN
+                        RAISE EXCEPTION 'addenda can only be added to completed consultations'
+                            USING ERRCODE = 'insufficient_privilege';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+
+                CREATE TRIGGER consultation_addenda_completed_only
+                    BEFORE INSERT ON consultation_addenda
+                    FOR EACH ROW EXECUTE FUNCTION consultation_addenda_require_completed();
+
+                CREATE FUNCTION consultations_freeze_finished() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF OLD.status <> 'InProgress' THEN
+                        RAISE EXCEPTION 'a % consultation cannot be changed', OLD.status
+                            USING ERRCODE = 'insufficient_privilege';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$;
+
+                CREATE TRIGGER consultations_frozen_when_finished
+                    BEFORE UPDATE OR DELETE ON consultations
+                    FOR EACH ROW EXECUTE FUNCTION consultations_freeze_finished();
                 """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            // Never silently destroy signed clinical corrections: refuse while any exist.
+            // Never silently destroy clinical records: refuse while any consultation or addendum exists.
             migrationBuilder.Sql("""
                 DO $$
                 BEGIN
-                    IF EXISTS (SELECT 1 FROM consultation_addenda) THEN
-                        RAISE EXCEPTION 'Refusing to drop consultation_addenda: it contains clinical corrections.';
+                    IF EXISTS (SELECT 1 FROM consultations) OR EXISTS (SELECT 1 FROM consultation_addenda) THEN
+                        RAISE EXCEPTION 'Refusing to drop consultations: they contain clinical records. Archive them first.';
                     END IF;
                 END;
                 $$;
@@ -209,7 +242,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             migrationBuilder.DropTable(
                 name: "consultations");
 
-            migrationBuilder.Sql("DROP FUNCTION IF EXISTS consultation_addenda_reject_change();");
+            migrationBuilder.Sql("""
+                DROP FUNCTION IF EXISTS consultations_freeze_finished();
+                DROP FUNCTION IF EXISTS consultation_addenda_require_completed();
+                DROP FUNCTION IF EXISTS consultation_addenda_reject_change();
+                """);
         }
     }
 }

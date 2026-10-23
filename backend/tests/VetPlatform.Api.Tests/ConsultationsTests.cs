@@ -210,6 +210,20 @@ public sealed class ConsultationsTests(DatabaseApiFactory factory) : IClassFixtu
     }
 
     [Fact]
+    public async Task AnotherClinicsVetOrAppointment_CannotBeReferenced()
+    {
+        var clinic = await ClinicAsync();
+        var other = await ClinicAsync();
+        var theirAppointment = await CheckedInAppointmentAsync(other, other.PatientId);
+
+        var vet = await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = clinic.PatientId, veterinarianId = other.VetUser.Id });
+        var appointment = await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = clinic.PatientId, veterinarianId = clinic.VetUser.Id, appointmentId = theirAppointment });
+
+        Assert.Equal("veterinarianId", Assert.Single((await ErrorOf(vet)).Details).Field);
+        Assert.Equal("appointmentId", Assert.Single((await ErrorOf(appointment)).Details).Field);
+    }
+
+    [Fact]
     public async Task OneOpenConsultationPerPatient_EvenUnderConcurrency()
     {
         var clinic = await ClinicAsync();
@@ -272,6 +286,72 @@ public sealed class ConsultationsTests(DatabaseApiFactory factory) : IClassFixtu
 
         var blank = await Act(clinic.Vet, id, "addenda", new { text = "   " });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, blank.StatusCode);
+
+        // A second addendum: the first one is loaded and tracked, and must not be written again (its trigger would refuse).
+        var two = await OkAsync(await Act(clinic.Vet, id, "addenda", new { text = "Recheck booked." }));
+        Assert.Equal(["Left ear, not right.", "Recheck booked."], two.GetProperty("addenda").EnumerateArray().Select(a => a.GetProperty("text").GetString()));
+    }
+
+    [Fact]
+    public async Task Addenda_AreCappedPerConsultation()
+    {
+        var clinic = await ClinicAsync();
+        var id = await OpenAsync(clinic.Vet, clinic);
+        await OkAsync(await Act(clinic.Vet, id, "complete"));
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO consultation_addenda (id, clinic_id, consultation_id, author_user_id, text, created_at) " +
+            "SELECT gen_random_uuid(), clinic_id, id, veterinarian_id, 'note ' || n, now() FROM consultations, generate_series(1, 50) n WHERE id = {0}",
+            id));
+
+        var response = await Act(clinic.Vet, id, "addenda", new { text = "One too many" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WriteResponses_EqualALaterRead_EvenWithSubMicrosecondClocks()
+    {
+        var clinic = await ClinicAsync();
+        factory.Clock.Advance(TimeSpan.FromTicks(3));
+
+        var created = await OkAsync(await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = clinic.PatientId, veterinarianId = clinic.VetUser.Id }), HttpStatusCode.Created);
+        var id = created.GetProperty("id").GetGuid();
+        factory.Clock.Advance(TimeSpan.FromTicks(7));
+        var completed = await OkAsync(await Act(clinic.Vet, id, "complete"));
+        factory.Clock.Advance(TimeSpan.FromTicks(5));
+        var withAddendum = await OkAsync(await Act(clinic.Vet, id, "addenda", new { text = "Note" }));
+
+        var read = await clinic.Vet.GetFromJsonAsync<JsonElement>($"/api/consultations/{id}");
+        Assert.Equal(created.GetProperty("startedAt").GetString(), read.GetProperty("startedAt").GetString());
+        Assert.Equal(completed.GetProperty("completedAt").GetString(), read.GetProperty("completedAt").GetString());
+        Assert.Equal(withAddendum.GetProperty("addenda")[0].GetProperty("createdAt").GetString(), read.GetProperty("addenda")[0].GetProperty("createdAt").GetString());
+    }
+
+    [Theory]
+    [InlineData("UPDATE consultations SET assessment = 'rewritten' WHERE id = {0}")]
+    [InlineData("UPDATE consultations SET status = 'InProgress', completed_at = NULL, completed_by_user_id = NULL WHERE id = {0}")]
+    public async Task Database_RefusesToChangeACompletedConsultation(string sql)
+    {
+        var clinic = await ClinicAsync();
+        var id = await OpenAsync(clinic.Vet, clinic, new { assessment = "Signed" });
+        await OkAsync(await Act(clinic.Vet, id, "complete"));
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(sql, id)));
+
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, exception.SqlState);
+    }
+
+    [Fact]
+    public async Task Database_RefusesAddendaOnUnsignedConsultations()
+    {
+        var clinic = await ClinicAsync();
+        var id = await OpenAsync(clinic.Vet, clinic);
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO consultation_addenda (id, clinic_id, consultation_id, author_user_id, text, created_at) " +
+            "SELECT gen_random_uuid(), clinic_id, id, veterinarian_id, 'sneaky', now() FROM consultations WHERE id = {0}", id)));
+
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, exception.SqlState);
     }
 
     [Theory]
@@ -368,6 +448,7 @@ public sealed class ConsultationsTests(DatabaseApiFactory factory) : IClassFixtu
         Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.PatchAsJsonAsync($"/api/consultations/{theirs}", new { plan = "x" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Act(clinic.Vet, theirs, "complete")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await Act(clinic.Vet, theirs, "addenda", new { text = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await Act(clinic.Vet, theirs, "discard", new { reason = "x" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.GetAsync($"/api/patients/{other.PatientId}/consultations")).StatusCode);
 
         var untouched = await other.Vet.GetFromJsonAsync<JsonElement>($"/api/consultations/{theirs}");
@@ -379,6 +460,7 @@ public sealed class ConsultationsTests(DatabaseApiFactory factory) : IClassFixtu
     [Theory]
     [InlineData("UPDATE consultations SET status = 'Completed' WHERE id = {0}", "23514")]
     [InlineData("UPDATE consultations SET status = 'Discarded', discarded_at = now() WHERE id = {0}", "23514")]
+    [InlineData("UPDATE consultations SET status = 'Discarded', discarded_at = now(), discard_reason = '  ' WHERE id = {0}", "23514")]
     [InlineData("UPDATE consultations SET temperature_c = 60 WHERE id = {0}", "23514")]
     [InlineData("UPDATE consultations SET body_condition_score = 0 WHERE id = {0}", "23514")]
     [InlineData("UPDATE consultations SET veterinarian_id = (SELECT id FROM users WHERE clinic_id <> consultations.clinic_id LIMIT 1) WHERE id = {0}", "23503")]
