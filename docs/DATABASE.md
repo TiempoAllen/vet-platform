@@ -146,18 +146,24 @@ override. Indexes (clinic_id, start_at, id), (clinic_id, veterinarian_id, start_
 start_at), (clinic_id, client_id, start_at).
 
 ### Consultation
-- id
-- clinic_id
-- appointment_id
-- patient_id
-- veterinarian_id
-- started_at
-- completed_at
-- subjective_notes
-- objective_notes
-- assessment_notes
-- plan_notes
-- status
+Implemented in B-11 (tables `consultations`, `consultation_addenda`; ADR-011).
+- id, clinic_id (FK clinics, RESTRICT); unique (clinic_id, id) for addenda and later diagnoses, treatments and
+  prescriptions
+- patient_id, veterinarian_id, completed_by_user_id, created_by_user_id: composite FKs to patients / users
+  (clinic_id, id), RESTRICT; appointment_id (nullable) composite FK to appointments (clinic_id, id)
+- status (`InProgress`, `Completed`, `Discarded`; CHECK), started_at, completed_at, discarded_at, discard_reason:
+  CHECK `ck_consultations_lifecycle` gives each status exactly its own fields (and completed_at ≥ started_at)
+- subjective, objective, assessment, plan (`subjective_notes` etc. in the original list; max 10,000 each)
+- vitals: weight_kg `numeric(7,3)`, temperature_c `numeric(4,1)`, heart_rate, respiratory_rate,
+  body_condition_score, pain_score (each with a range CHECK)
+- created_at, updated_at
+
+Partial unique indexes: one `InProgress` consultation per (clinic_id, patient_id); one non-discarded consultation per
+(clinic_id, appointment_id). Index (clinic_id, patient_id, started_at).
+
+`consultation_addenda`: id, clinic_id, consultation_id (composite FK to consultations), author_user_id (composite FK
+to users), text (max 4000, CHECK not blank), created_at. **Append-only:** triggers reject UPDATE, DELETE and
+TRUNCATE, like `audit_logs`; rolling back the migration refuses while addenda exist.
 
 ### Diagnosis
 - id

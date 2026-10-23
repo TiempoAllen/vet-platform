@@ -32,7 +32,8 @@ backend/
     Features/Patients/          patient (animal) records and history timeline
     Features/Clinics/           the caller's clinic (time zone)
     Features/Scheduling/        veterinarians' weekly hours, exceptions, closures, computed working hours
-    Features/Appointments/      booking, editing, rescheduling and conflict validation
+    Features/Appointments/      booking, editing, rescheduling, conflict validation and status lifecycle
+    Features/Consultations/     consultations (SOAP notes, vitals, sign-off, append-only addenda)
     Common/Authorization/       roles, permissions, [RequirePermission]
     Common/Tenancy/             current clinic, clinic write guard (query filters live in AppDbContext)
     Common/Auditing/            audit log entity and AuditTrail
