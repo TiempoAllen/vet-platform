@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.11.0
-  summary: Implemented endpoints as of milestone B-11.
+  version: 0.12.0
+  summary: Implemented endpoints as of milestone B-12.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -1288,6 +1288,193 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/consultations/{id}/diagnoses:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    post:
+      tags: [Consultations]
+      operationId: addDiagnosis
+      summary: Add a diagnosis
+      description: 'Requires `clinical.write`. While the consultation is InProgress; otherwise 409. At most 50 per consultation.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDiagnosisRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{id}/diagnoses/{diagnosisId}:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+      - { name: diagnosisId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Consultations]
+      operationId: updateDiagnosis
+      summary: Edit a diagnosis
+      description: 'Requires `clinical.write`. While InProgress any field. After Completed only `status`, and only by veterinarians (`consultations.complete`, 403 otherwise); other fields 409. Discarded: 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDiagnosisRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Consultations]
+      operationId: removeDiagnosis
+      summary: Remove a diagnosis
+      description: 'Requires `clinical.write`. While the consultation is InProgress; otherwise 409. Linked treatments are unlinked.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/consultations/{id}/treatments:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    post:
+      tags: [Consultations]
+      operationId: addTreatment
+      summary: Add a treatment
+      description: 'Requires `clinical.write`. While the consultation is InProgress; otherwise 409. At most 100 per consultation.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTreatmentRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{id}/treatments/{treatmentId}:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+      - { name: treatmentId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Consultations]
+      operationId: updateTreatment
+      summary: Edit a treatment
+      description: 'Requires `clinical.write`. While the consultation is InProgress; otherwise 409. An explicit null diagnosisId unlinks.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTreatmentRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Consultations]
+      operationId: removeTreatment
+      summary: Remove a treatment
+      description: 'Requires `clinical.write`. While the consultation is InProgress; otherwise 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/patients/{patientId}/diagnoses:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Consultations]
+      operationId: listPatientDiagnoses
+      summary: The patient's problem list
+      description: Requires `clinical.read`. Diagnoses of completed consultations, most recently completed consultation first (consultationCompletedAt descending), primary first within one. Unknown patient 404. Audited (diagnosis.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/DiagnosisStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of diagnoses.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PatientDiagnosisPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -1789,7 +1976,7 @@ components:
                 consultation:
                   type: object
                   additionalProperties: false
-                  required: [id, startedAt, completedAt, appointmentId, veterinarian, assessment]
+                  required: [id, startedAt, completedAt, appointmentId, veterinarian, assessment, diagnoses]
                   properties:
                     id: { type: string, format: uuid }
                     startedAt: { type: string, format: date-time, description: UTC. }
@@ -1797,6 +1984,18 @@ components:
                     appointmentId: { type: [string, 'null'], format: uuid }
                     veterinarian: { $ref: '#/components/schemas/PersonSummary' }
                     assessment: { type: [string, 'null'] }
+                    diagnoses:
+                      type: array
+                      description: Primary first; status as it is now.
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [id, name, status, isPrimary]
+                        properties:
+                          id: { type: string, format: uuid }
+                          name: { type: string }
+                          status: { $ref: '#/components/schemas/DiagnosisStatus' }
+                          isPrimary: { type: boolean }
 
     PatientRegisteredDetails:
       type: object
@@ -2112,7 +2311,7 @@ components:
     Consultation:
       type: object
       additionalProperties: false
-      required: [id, patient, appointmentId, veterinarian, status, startedAt, completedAt, completedBy, discardedAt, discardReason, subjective, objective, assessment, plan, vitals, addenda, createdBy, createdAt, updatedAt]
+      required: [id, patient, appointmentId, veterinarian, status, startedAt, completedAt, completedBy, discardedAt, discardReason, subjective, objective, assessment, plan, vitals, diagnoses, treatments, addenda, createdBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         patient:
@@ -2149,6 +2348,14 @@ components:
             respiratoryRate: { type: [integer, 'null'], minimum: 1, maximum: 200 }
             bodyConditionScore: { type: [integer, 'null'], minimum: 1, maximum: 9 }
             painScore: { type: [integer, 'null'], minimum: 0, maximum: 10 }
+        diagnoses:
+          type: array
+          description: Primary first, then in the order recorded.
+          items: { $ref: '#/components/schemas/Diagnosis' }
+        treatments:
+          type: array
+          description: In the order recorded.
+          items: { $ref: '#/components/schemas/Treatment' }
         addenda:
           type: array
           description: Oldest first. Append-only.
@@ -2226,6 +2433,122 @@ components:
       required: [text]
       properties:
         text: { type: string, minLength: 1, maxLength: 4000 }
+
+    DiagnosisStatus:
+      type: string
+      description: Provisional covers suspected and differential diagnoses.
+      enum: [Provisional, Confirmed, RuledOut]
+
+    TreatmentType:
+      type: string
+      enum: [Procedure, Medication, Fluids, Other]
+
+    Diagnosis:
+      type: object
+      additionalProperties: false
+      required: [id, name, code, codeSystem, status, isPrimary, notes, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 200 }
+        code: { type: [string, 'null'], maxLength: 50 }
+        codeSystem: { type: [string, 'null'], maxLength: 50, description: 'E.g. VeNom or SNOMED CT; not validated.' }
+        status: { $ref: '#/components/schemas/DiagnosisStatus' }
+        isPrimary: { type: boolean, description: At most one per consultation. }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Treatment:
+      type: object
+      additionalProperties: false
+      required: [id, name, type, diagnosisId, dose, route, frequency, duration, notes, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 200 }
+        type: { $ref: '#/components/schemas/TreatmentType' }
+        diagnosisId: { type: [string, 'null'], format: uuid, description: A diagnosis of the same consultation. }
+        dose: { type: [string, 'null'], maxLength: 100 }
+        route: { type: [string, 'null'], maxLength: 100 }
+        frequency: { type: [string, 'null'], maxLength: 100 }
+        duration: { type: [string, 'null'], maxLength: 100 }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreateDiagnosisRequest:
+      type: object
+      required: [name]
+      description: Defaults to Provisional and not primary. Making it primary clears the flag on the others.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        code: { type: [string, 'null'], maxLength: 50 }
+        codeSystem: { type: [string, 'null'], maxLength: 50, description: Needs a code. }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/DiagnosisStatus'
+            - type: 'null'
+        isPrimary: { type: [boolean, 'null'] }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    UpdateDiagnosisRequest:
+      type: object
+      description: Omitted or null fields are unchanged; an empty string clears optional text. After completion only status may be sent.
+      properties:
+        name: { type: [string, 'null'], minLength: 1, maxLength: 200 }
+        code: { type: [string, 'null'], maxLength: 50 }
+        codeSystem: { type: [string, 'null'], maxLength: 50 }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/DiagnosisStatus'
+            - type: 'null'
+        isPrimary: { type: [boolean, 'null'] }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    CreateTreatmentRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        type: { $ref: '#/components/schemas/TreatmentType' }
+        diagnosisId: { type: [string, 'null'], format: uuid }
+        dose: { type: [string, 'null'], maxLength: 100 }
+        route: { type: [string, 'null'], maxLength: 100 }
+        frequency: { type: [string, 'null'], maxLength: 100 }
+        duration: { type: [string, 'null'], maxLength: 100 }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    UpdateTreatmentRequest:
+      type: object
+      description: Omitted or null fields are unchanged and an empty string clears optional text; an explicit null diagnosisId unlinks.
+      properties:
+        name: { type: [string, 'null'], minLength: 1, maxLength: 200 }
+        type:
+          oneOf:
+            - $ref: '#/components/schemas/TreatmentType'
+            - type: 'null'
+        diagnosisId: { type: [string, 'null'], format: uuid }
+        dose: { type: [string, 'null'], maxLength: 100 }
+        route: { type: [string, 'null'], maxLength: 100 }
+        frequency: { type: [string, 'null'], maxLength: 100 }
+        duration: { type: [string, 'null'], maxLength: 100 }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    PatientDiagnosisPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [diagnosis, consultationId, consultationCompletedAt, veterinarian]
+            properties:
+              diagnosis: { $ref: '#/components/schemas/Diagnosis' }
+              consultationId: { type: string, format: uuid }
+              consultationCompletedAt: { type: string, format: date-time, description: With the clinic's local offset. }
+              veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:
       type: object

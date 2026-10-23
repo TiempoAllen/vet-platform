@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.7, 2026-10-24, updated for B-11.
+Veterinary Management Platform. Version 1.8, 2026-10-24, updated for B-12.
 
 ## 1. Introduction
 
@@ -150,7 +150,7 @@ A user may hold several roles; their permissions are the union.
 |---|---|---|
 | FR-CLN-1 | A veterinarian can open a consultation for a patient (optionally from an appointment) and record SOAP notes. | Done (B-11; plus vitals) |
 | FR-CLN-2 | Completed consultations are not destructively edited; corrections preserve history (append-oriented). | Done (B-11; append-only addenda enforced by the database) |
-| FR-CLN-3 | Diagnoses and treatments can be recorded against a consultation. | Planned (B-12) |
+| FR-CLN-3 | Diagnoses and treatments can be recorded against a consultation. | Done (B-12; plus problem list and post-sign-off diagnosis status) |
 | FR-CLN-4 | Prescriptions (medication, dosage, route, frequency, duration, quantity, instructions) can be issued by authorised clinicians. | Planned (B-13) |
 | FR-CLN-5 | Vaccinations (vaccine, administered date, next due date, lot, manufacturer) can be recorded with or without a consultation. | Planned (B-14) |
 | FR-CLN-6 | Files (images, documents) can be attached to patients, clients or consultations, with type and size validation and private storage. | Planned (B-15) |

@@ -80,6 +80,10 @@ public sealed class Consultation : Entity, IClinicOwned
     public User? CreatedBy { get; set; }
 
     public List<ConsultationAddendum> Addenda { get; set; } = [];
+
+    public List<Diagnosis> Diagnoses { get; set; } = [];
+
+    public List<Treatment> Treatments { get; set; } = [];
 }
 
 public enum ConsultationStatus
@@ -189,6 +193,10 @@ internal sealed class ConsultationConfiguration : IEntityTypeConfiguration<Consu
 
         // Unique (clinic_id, id): addenda (above) and later diagnoses, treatments and prescriptions use it (ADR-005).
         builder.HasAlternateKey(c => new { c.ClinicId, c.Id });
+
+        // Unique (clinic_id, patient_id, id): diagnoses and treatments reference it, so the database guarantees they
+        // belong to the consultation's patient (ADR-012).
+        builder.HasAlternateKey(c => new { c.ClinicId, c.PatientId, c.Id });
 
         builder.HasIndex(c => new { c.ClinicId, c.PatientId })
             .HasDatabaseName(Consultation.OneOpenPerPatientIndex)
