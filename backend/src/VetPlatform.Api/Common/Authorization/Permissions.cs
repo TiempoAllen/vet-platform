@@ -42,19 +42,31 @@ public static class Permissions
 
     /// <summary>Book, edit and reschedule appointments, including overriding conflicts with a reason (Q-3).</summary>
     public const string AppointmentsManage = "appointments.manage";
+    public const string ClinicalRead = "clinical.read";
+
+    /// <summary>Open consultations, edit their notes and vitals, discard them, add addenda.</summary>
+    public const string ClinicalWrite = "clinical.write";
+
+    /// <summary>Sign a consultation off. Veterinarians only: completion is the clinical sign-off (ADR-011).</summary>
+    public const string ConsultationsComplete = "consultations.complete";
 
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
         {
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
-            SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage,
+            SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead,
         }.ToFrozenSet(),
         [Role.Veterinarian] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn, AppointmentsRead, AppointmentsManage,
+            ClinicalRead, ClinicalWrite, ConsultationsComplete,
         }.ToFrozenSet(),
-        [Role.Nurse] = new[] { ClientsRead, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage }.ToFrozenSet(),
+        [Role.Nurse] = new[]
+        {
+            ClientsRead, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage, ClinicalRead,
+            ClinicalWrite,
+        }.ToFrozenSet(),
         [Role.Receptionist] = new[]
         {
             ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage,

@@ -73,6 +73,16 @@ public static class AuditActions
     public const string AppointmentCancelled = "appointment.cancelled";
     public const string AppointmentNoShow = "appointment.no_show";
     public const string AppointmentNoShowUndone = "appointment.no_show_undone";
+    public const string ConsultationCreated = "consultation.created";
+    public const string ConsultationUpdated = "consultation.updated";
+    public const string ConsultationCompleted = "consultation.completed";
+    public const string ConsultationDiscarded = "consultation.discarded";
+    public const string ConsultationAddendumAdded = "consultation.addendum_added";
+
+    /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
+    public const string ConsultationViewed = "consultation.viewed";
+    public const string ConsultationsListed = "consultation.listed";
+    public const string PatientHistoryViewed = "patient.history_viewed";
 }
 
 /// <summary>

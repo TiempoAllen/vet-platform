@@ -79,7 +79,8 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
         Assert.Equal(
             [
                 Permissions.AppointmentsManage, Permissions.AppointmentsRead,
-                Permissions.ClientsManage, Permissions.ClientsRead, Permissions.PatientsManage, Permissions.PatientsRead,
+                Permissions.ClientsManage, Permissions.ClientsRead, Permissions.ClinicalRead, Permissions.ClinicalWrite,
+                Permissions.ConsultationsComplete, Permissions.PatientsManage, Permissions.PatientsRead,
                 Permissions.SchedulesManage, Permissions.SchedulesManageOwn, Permissions.SchedulesRead, Permissions.SettingsManage,
                 Permissions.UsersManage, Permissions.UsersRead,
             ],

@@ -151,6 +151,9 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `schedules.manage_own` | – | ✓ | – | – | – |
 | `settings.manage` | ✓ | – | – | – | – |
 | `appointments.read`, `appointments.manage` | ✓ | ✓ | ✓ | ✓ | – |
+| `clinical.read` | ✓ | ✓ | ✓ | – | – |
+| `clinical.write` | – | ✓ | ✓ | – | – |
+| `consultations.complete` | – | ✓ | – | – | – |
 
 **User object**
 
@@ -406,6 +409,10 @@ Entry types so far:
 | `AppointmentCompleted` | An appointment was completed (`occurredAt` = `completedAt`). | `appointment`: `{ id, startAt, endAt, type, veterinarian: { id, name } }` |
 | `AppointmentCancelled` | An appointment was cancelled (`occurredAt` = cancellation time). | `appointment` as above, `cancelledBy`: `Client` or `Clinic`. The reason is not shown. |
 | `AppointmentNoShow` | An appointment was marked no-show. Disappears if the no-show is undone. | `appointment` as above |
+| `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment }` |
+
+A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
+consultation ids shown).
 
 For appointment entries `id` is the appointment's id, `actor` is the staff member who made the change, and the
 instants are UTC. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
@@ -626,13 +633,75 @@ If two people change or delete the same record at the same moment, the loser get
 removed by someone else"); reload and retry.
 
 ## 8. Consultations
-`GET /api/patients/:id/consultations`
-`GET /api/consultations/:id`
-`POST /api/consultations`
-`PATCH /api/consultations/:id`
-`POST /api/consultations/:id/complete`
+Implemented in B-11 (design: `ARCHITECTURE.md` ADR-011). Clinical records: every read and write is permission-checked
+and **audited** (SECURITY.md section 10). Other clinics' consultations and patients are `404`. There is no `DELETE`.
 
-Clinical permissions must be enforced.
+Permissions: `clinical.read` (Admin, Veterinarian, Nurse) reads; `clinical.write` (Veterinarian, Nurse) opens,
+edits, discards and adds addenda; `consultations.complete` (Veterinarian only) signs a consultation off.
+Receptionist and Inventory have no clinical access.
+
+**Consultation object** (`startedAt`, `completedAt`, `discardedAt` and addendum times carry the clinic's local offset;
+`createdAt` / `updatedAt` are UTC)
+
+    {
+      "id": "uuid",
+      "patient": { "id": "uuid", "name": "Rex", "species": "Dog" },
+      "appointmentId": "uuid" | null,
+      "veterinarian": { "id": "uuid", "name": "Jo Vet" },
+      "status": "InProgress" | "Completed" | "Discarded",
+      "startedAt": "...", "completedAt": "..." | null, "completedBy": { "id", "name" } | null,
+      "discardedAt": "..." | null, "discardReason": "..." | null,
+      "subjective": "..." | null, "objective": "..." | null, "assessment": "..." | null, "plan": "..." | null,
+      "vitals": { "weightKg": 31.25 | null, "temperatureC": 38.6 | null, "heartRate": 96 | null,
+                  "respiratoryRate": 24 | null, "bodyConditionScore": 5 | null, "painScore": 3 | null },
+      "addenda": [ { "id": "uuid", "text": "...", "author": { "id", "name" } | null, "createdAt": "..." } ],
+      "createdBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
+    }
+
+`GET /api/patients/:id/consultations` (`clinical.read`): the patient's consultations, newest `startedAt` first,
+paginated (section 13). `status` filters by an exact status; without it, `Discarded` ones are left out. Unknown or
+another clinic's patient is `404`. Audited (`consultation.listed`, with the ids shown).
+
+`GET /api/consultations/:id` (`clinical.read`): `200` or `404`. Audited (`consultation.viewed`).
+
+`POST /api/consultations` (`clinical.write`): opens an `InProgress` consultation.
+
+    { "patientId": "uuid", "veterinarianId": "uuid", "appointmentId": "uuid" | null,
+      "subjective": "...", "objective": "...", "assessment": "...", "plan": "...",
+      "weightKg": 31.25, "temperatureC": 38.6, "heartRate": 96, "respiratoryRate": 24,
+      "bodyConditionScore": 5, "painScore": 3 }
+
+- `patientId`: an **active** patient of the clinic. `veterinarianId`: an active veterinarian of the clinic (the
+  veterinarian of record; a nurse can open on their behalf). Otherwise `422` on that field (one message per field).
+- `appointmentId` (optional): a `CheckedIn` appointment of the same patient (`422` otherwise). At most one
+  non-discarded consultation per appointment (`409`). Without it, the consultation is a walk-in.
+- **One open consultation per patient:** a second `InProgress` one is `409` until the first is completed or
+  discarded (also under concurrent requests).
+- Notes: max 10,000 characters each, trimmed, blank stored as `null`.
+- Vitals (all optional): `weightKg` > 0 and ≤ 2000 with at most 3 decimals; `temperatureC` 25–45 with at most 1
+  decimal; `heartRate` 1–400; `respiratoryRate` 1–200; `bodyConditionScore` 1–9; `painScore` 0–10. Out of range is
+  `422` on that field. In responses vitals sit in `vitals`; in requests they are top-level fields.
+- `201` with the consultation and a `Location` header.
+
+`PATCH /api/consultations/:id` (`clinical.write`): edits an `InProgress` consultation (`409` otherwise). Omitted or
+`null` notes are unchanged and `""` clears a note; each vital is unchanged when omitted and cleared by an explicit
+`null`. `veterinarianId` changes the veterinarian of record (active veterinarian, `422` otherwise).
+
+`POST /api/consultations/:id/complete` (`consultations.complete`): `InProgress` → `Completed`, recording `completedAt`
+and `completedBy`. From then on the notes and vitals are frozen. A recorded `weightKg` becomes the patient's current
+weight in the same step (audited as a patient change).
+
+`POST /api/consultations/:id/discard` (`clinical.write`): `{ "reason": "..." }` (required, max 500). `InProgress` →
+`Discarded`; kept for the audit trail, left out of lists by default and never shown in the history. Completed
+consultations cannot be discarded (`409`).
+
+`POST /api/consultations/:id/addenda` (`clinical.write`): `{ "text": "..." }` (required, max 4000, trimmed). Appends a
+signed, dated addendum to a **completed** consultation (`409` for in-progress ones: edit the notes instead). Addenda
+can never be edited or deleted; the database refuses it. Returns `200` with the consultation.
+
+Concurrent changes to one consultation are applied one after the other. Every change is audited
+(`consultation.created`, `.updated`, `.completed`, `.discarded`, `.addendum_added`) with ids and changed field names,
+never note or addendum text.
 
 ## 9. Diagnoses, treatments, prescriptions, vaccinations
 These resources may be nested under consultations/patients or exposed as dedicated endpoints. The final shape must be documented before frontend implementation.

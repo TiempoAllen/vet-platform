@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.10.0
-  summary: Implemented endpoints as of milestone B-10.
+  version: 0.11.0
+  summary: Implemented endpoints as of milestone B-11.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -31,6 +31,7 @@ tags:
   - name: Clinic
   - name: Scheduling
   - name: Appointments
+  - name: Consultations
   - name: Operations
 security:
   - sessionCookie: []
@@ -1100,6 +1101,193 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /api/patients/{patientId}/consultations:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Consultations]
+      operationId: listPatientConsultations
+      summary: A patient's consultations
+      description: Requires `clinical.read`. Newest startedAt first. Without `status`, Discarded ones are left out. Audited (consultation.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ConsultationStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of consultations.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsultationPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations:
+    post:
+      tags: [Consultations]
+      operationId: createConsultation
+      summary: Open a consultation
+      description: |
+        Requires `clinical.write`. Active patient and active veterinarian of the clinic; optional CheckedIn appointment of the
+        same patient (one non-discarded consultation per appointment). One InProgress consultation per patient (409).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsultationRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/consultations/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    get:
+      tags: [Consultations]
+      operationId: getConsultation
+      summary: One consultation with its addenda
+      description: Requires `clinical.read`. Other clinics' consultations are 404. Audited (consultation.viewed).
+      responses:
+        '200':
+          description: The consultation.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Consultations]
+      operationId: updateConsultation
+      summary: Edit an in-progress consultation
+      description: Requires `clinical.write`. Only InProgress (409 otherwise). Omitted or null notes are unchanged and an empty string clears one; a vital is cleared by an explicit null. Never deleted (DELETE is 405).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateConsultationRequest' }
+      responses:
+        '200':
+          description: Updated consultation.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    post:
+      tags: [Consultations]
+      operationId: completeConsultation
+      summary: Sign a consultation off
+      description: 'Requires `consultations.complete` (veterinarians). InProgress to Completed; notes and vitals are then frozen. A recorded weight becomes the patient''s current weight.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/consultations/{id}/discard:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    post:
+      tags: [Consultations]
+      operationId: discardConsultation
+      summary: Discard an in-progress consultation
+      description: 'Requires `clinical.write`. InProgress to Discarded, with a required reason. Completed consultations cannot be discarded (409).'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiscardConsultationRequest' }
+      responses:
+        '200':
+          description: The consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{id}/addenda:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    post:
+      tags: [Consultations]
+      operationId: addConsultationAddendum
+      summary: Append a signed addendum
+      description: 'Requires `clinical.write`. Only on Completed consultations (409 otherwise). Addenda can never be edited or deleted.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddAddendumRequest' }
+      responses:
+        '200':
+          description: The consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -1174,6 +1362,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ConsultationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     Page:
       name: page
       in: query
@@ -1193,7 +1386,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -1495,12 +1688,13 @@ components:
         Use `type` + `id` as the key. Ignore entries with an unknown `type`. Deliberately no `discriminator`: generated
         clients must accept unknown types as this base schema and narrow on `type` themselves. Known types and their
         schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry; AppointmentCompleted and
-        AppointmentNoShow → PatientAppointmentEntry; AppointmentCancelled → PatientAppointmentCancelledEntry.
+        AppointmentNoShow → PatientAppointmentEntry; AppointmentCancelled → PatientAppointmentCancelledEntry;
+        ConsultationCompleted → PatientConsultationEntry (only for callers with clinical.read).
       properties:
         id: { type: string, format: uuid, description: Id of the source record; unique per type. }
         type:
           type: string
-          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow. More types are added by later milestones.'
+          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted. More types are added by later milestones.'
           examples: [PatientRegistered]
         occurredAt: { type: string, format: date-time }
         actor:
@@ -1516,6 +1710,7 @@ components:
         AppointmentCompleted: '#/components/schemas/PatientAppointmentEntry'
         AppointmentNoShow: '#/components/schemas/PatientAppointmentEntry'
         AppointmentCancelled: '#/components/schemas/PatientAppointmentCancelledEntry'
+        ConsultationCompleted: '#/components/schemas/PatientConsultationEntry'
 
     PatientRegisteredEntry:
       allOf:
@@ -1579,6 +1774,29 @@ components:
               properties:
                 appointment: { $ref: '#/components/schemas/PatientHistoryAppointment' }
                 cancelledBy: { $ref: '#/components/schemas/AppointmentCancelledBy' }
+
+    PatientConsultationEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          properties:
+            type: { const: ConsultationCompleted }
+            details:
+              type: object
+              additionalProperties: false
+              required: [consultation]
+              properties:
+                consultation:
+                  type: object
+                  additionalProperties: false
+                  required: [id, startedAt, completedAt, appointmentId, veterinarian, assessment]
+                  properties:
+                    id: { type: string, format: uuid }
+                    startedAt: { type: string, format: date-time, description: UTC. }
+                    completedAt: { type: string, format: date-time, description: UTC. }
+                    appointmentId: { type: [string, 'null'], format: uuid }
+                    veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+                    assessment: { type: [string, 'null'] }
 
     PatientRegisteredDetails:
       type: object
@@ -1886,6 +2104,128 @@ components:
         notes: { type: [string, 'null'], maxLength: 4000 }
         allowConflicts: { type: [boolean, 'null'] }
         overrideReason: { type: [string, 'null'], maxLength: 500 }
+
+    ConsultationStatus:
+      type: string
+      enum: [InProgress, Completed, Discarded]
+
+    Consultation:
+      type: object
+      additionalProperties: false
+      required: [id, patient, appointmentId, veterinarian, status, startedAt, completedAt, completedBy, discardedAt, discardReason, subjective, objective, assessment, plan, vitals, addenda, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        patient:
+          type: object
+          additionalProperties: false
+          required: [id, name, species]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            species: { $ref: '#/components/schemas/Species' }
+        appointmentId: { type: [string, 'null'], format: uuid }
+        veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        status: { $ref: '#/components/schemas/ConsultationStatus' }
+        startedAt: { type: string, format: date-time, description: With the clinic's local offset. }
+        completedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        completedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        discardedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        discardReason: { type: [string, 'null'], maxLength: 500 }
+        subjective: { type: [string, 'null'], maxLength: 10000 }
+        objective: { type: [string, 'null'], maxLength: 10000 }
+        assessment: { type: [string, 'null'], maxLength: 10000 }
+        plan: { type: [string, 'null'], maxLength: 10000 }
+        vitals:
+          type: object
+          additionalProperties: false
+          required: [weightKg, temperatureC, heartRate, respiratoryRate, bodyConditionScore, painScore]
+          properties:
+            weightKg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 2000, description: At most 3 decimals. }
+            temperatureC: { type: [number, 'null'], minimum: 25, maximum: 45, description: At most 1 decimal. }
+            heartRate: { type: [integer, 'null'], minimum: 1, maximum: 400 }
+            respiratoryRate: { type: [integer, 'null'], minimum: 1, maximum: 200 }
+            bodyConditionScore: { type: [integer, 'null'], minimum: 1, maximum: 9 }
+            painScore: { type: [integer, 'null'], minimum: 0, maximum: 10 }
+        addenda:
+          type: array
+          description: Oldest first. Append-only.
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, text, author, createdAt]
+            properties:
+              id: { type: string, format: uuid }
+              text: { type: string, maxLength: 4000 }
+              author:
+                oneOf:
+                  - $ref: '#/components/schemas/PersonSummary'
+                  - type: 'null'
+              createdAt: { type: string, format: date-time, description: With the clinic's local offset. }
+        createdBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ConsultationPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Consultation' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateConsultationRequest:
+      type: object
+      required: [patientId, veterinarianId]
+      description: Vitals are top-level fields here and nested under `vitals` in responses. Notes are trimmed; blank is stored as null.
+      properties:
+        patientId: { type: string, format: uuid }
+        veterinarianId: { type: string, format: uuid }
+        appointmentId: { type: [string, 'null'], format: uuid, description: A CheckedIn appointment of the same patient. }
+        subjective: { type: [string, 'null'], maxLength: 10000 }
+        objective: { type: [string, 'null'], maxLength: 10000 }
+        assessment: { type: [string, 'null'], maxLength: 10000 }
+        plan: { type: [string, 'null'], maxLength: 10000 }
+        weightKg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 2000, description: At most 3 decimals. }
+        temperatureC: { type: [number, 'null'], minimum: 25, maximum: 45, description: At most 1 decimal. }
+        heartRate: { type: [integer, 'null'], minimum: 1, maximum: 400 }
+        respiratoryRate: { type: [integer, 'null'], minimum: 1, maximum: 200 }
+        bodyConditionScore: { type: [integer, 'null'], minimum: 1, maximum: 9 }
+        painScore: { type: [integer, 'null'], minimum: 0, maximum: 10 }
+
+    UpdateConsultationRequest:
+      type: object
+      description: Omitted or null notes are unchanged and an empty string clears one; a vital is unchanged when omitted and cleared by an explicit null.
+      properties:
+        veterinarianId: { type: [string, 'null'], format: uuid }
+        subjective: { type: [string, 'null'], maxLength: 10000 }
+        objective: { type: [string, 'null'], maxLength: 10000 }
+        assessment: { type: [string, 'null'], maxLength: 10000 }
+        plan: { type: [string, 'null'], maxLength: 10000 }
+        weightKg: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 2000, description: At most 3 decimals. }
+        temperatureC: { type: [number, 'null'], minimum: 25, maximum: 45, description: At most 1 decimal. }
+        heartRate: { type: [integer, 'null'], minimum: 1, maximum: 400 }
+        respiratoryRate: { type: [integer, 'null'], minimum: 1, maximum: 200 }
+        bodyConditionScore: { type: [integer, 'null'], minimum: 1, maximum: 9 }
+        painScore: { type: [integer, 'null'], minimum: 0, maximum: 10 }
+
+    DiscardConsultationRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    AddAddendumRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 4000 }
 
     Health:
       type: object

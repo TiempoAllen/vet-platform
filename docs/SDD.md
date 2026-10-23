@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-10). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-11). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -137,7 +137,7 @@ erDiagram
   }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms
@@ -196,7 +196,10 @@ emails. Action names so far:
 `auth.login_succeeded`, `auth.login_failed`, `auth.account_locked`, `auth.logout`, `auth.password_changed`,
 `auth.password_change_failed`, `auth.sessions_revoked`, `user.created`, `user.updated`, `user.roles_changed`, `client.created`, `client.updated`, `patient.created`, `patient.updated`, `clinic.updated`, `working_hours.created|updated|deleted`,
 `schedule_exception.created|updated|deleted`, `appointment.created`, `appointment.updated`, `appointment.checked_in`, `appointment.check_in_undone`,
-`appointment.completed`, `appointment.cancelled`, `appointment.no_show`, `appointment.no_show_undone`.
+`appointment.completed`, `appointment.cancelled`, `appointment.no_show`, `appointment.no_show_undone`,
+`consultation.created`, `consultation.updated`, `consultation.completed`, `consultation.discarded`,
+`consultation.addendum_added`, and the clinical reads `consultation.viewed`, `consultation.listed`,
+`patient.history_viewed`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 

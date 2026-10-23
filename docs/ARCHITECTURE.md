@@ -416,3 +416,28 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - **Accepted for now:** timestamps of lifecycle steps come from the application clock (like `occurred_at` in the
   audit log); there is no separate "arrived" vs "seen" time beyond check-in and completion.
 
+### ADR-011: Consultations (decided in B-11)
+- **Confirmed with the user:** `clinical.read` for Admin, Veterinarian, Nurse; `clinical.write` for Veterinarian and
+  Nurse; core vitals (weight, temperature, heart and respiratory rate, body condition, pain); completed consultations
+  are frozen and corrected only by append-only addenda; an optional link to a `CheckedIn` appointment of the same
+  patient (completing the consultation does not touch the appointment); every clinical read is audited; history shows
+  `ConsultationCompleted` with the assessment to `clinical.read` holders only; one open consultation per patient;
+  in-progress consultations can be discarded with a reason.
+- **Sign-off:** completion needs `consultations.complete`, held only by veterinarians, because completing is the
+  clinical sign-off; a nurse can open and document on behalf of the veterinarian of record.
+- **Append-only in the database:** `consultation_addenda` has triggers that reject UPDATE, DELETE and TRUNCATE (same
+  pattern and same owner caveat as `audit_logs`, X-05). The consultation itself is frozen by the service: only
+  `InProgress` rows accept edits, and the lifecycle CHECK keeps status and timestamps consistent.
+- **Invariants in the database:** partial unique indexes for "one open per patient" and "one per appointment"
+  (discarded ones excluded), so concurrent openings resolve to one `201` and `409`s. Vitals ranges are CHECKs too.
+- **Weight:** completing with a weight sets the patient's current weight in the same transaction (patient row locked
+  after the consultation row) and records a `patient.updated` audit entry naming the source consultation. A dated
+  weight history can be read from completed consultations later.
+- **Read auditing:** the service writes an audit entry on every clinical read before returning; a history page is a
+  clinical read only when it contains clinical entries. Audit volume grows with use; retention is an X-05 topic.
+- **History:** completed consultations are the third `UNION ALL` source (ADR-007), added only when the caller holds
+  `clinical.read`; in-progress and discarded consultations never appear.
+- **Accepted for now:** the four SOAP notes are plain text (no templates or rich text); diagnoses, treatments and
+  prescriptions attach to consultations in B-12/B-13 via the (clinic_id, id) key; reads of the appointment list are
+  not clinical and not audited.
+
