@@ -96,9 +96,12 @@ Payment creation, refunds, invoice adjustments, and balance calculations require
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 
 The patient history (B-07) names the staff member behind each entry to everyone with `patients.read`, as a paper
-record would; only names of the caller's own clinic are ever resolved (ADR-007). History reads are not audited while
-the only entry type is patient registration; when clinical entry types are added, each is gated by `clinical.read`
-inside the query and reading clinical history becomes an audited event.
+record would; only names of the caller's own clinic are ever resolved (ADR-007). Since B-11 clinical reads are audited: opening a
+consultation (`consultation.viewed`), listing a patient's consultations (`consultation.listed`) and reading a history
+page that contains clinical entries (`patient.history_viewed`), each with record ids but never note text. Clinical
+history entries (`ConsultationCompleted`) are gated by `clinical.read` inside the history query, so callers without
+it neither see nor count them. Completed and discarded consultations are frozen and corrections are append-only addenda; both
+are enforced by database triggers, not only by the service (ADR-011).
 
 Since B-10 the history also shows finished appointments (date, type, veterinarian, actor, who cancelled; never the
 cancellation reason). This relies on every role with `patients.read` also holding `appointments.read`, which is true
