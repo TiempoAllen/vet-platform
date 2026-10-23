@@ -64,7 +64,11 @@ public sealed record PatientHistoryConsultation(
     DateTimeOffset CompletedAt,
     Guid? AppointmentId,
     AppointmentPersonSummary Veterinarian,
-    string? Assessment);
+    string? Assessment,
+    IReadOnlyList<PatientHistoryDiagnosis> Diagnoses);
+
+/// <summary>A diagnosis as summarised in the history (primary first).</summary>
+public sealed record PatientHistoryDiagnosis(Guid Id, string Name, DiagnosisStatus Status, bool IsPrimary);
 
 /// <summary>Details of <c>ConsultationCompleted</c>.</summary>
 public sealed record PatientConsultationDetails(PatientHistoryConsultation Consultation);
@@ -170,6 +174,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
             ? []
             : await db.Consultations.AsNoTracking()
                 .Include(c => c.Veterinarian)
+                .Include(c => c.Diagnoses)
                 .Where(c => consultationIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id, cancellationToken);
 
@@ -201,7 +206,11 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                     new PatientConsultationDetails(new PatientHistoryConsultation(
                         consultation.Id, consultation.StartedAt, consultation.CompletedAt!.Value, consultation.AppointmentId,
                         new AppointmentPersonSummary(consultation.Veterinarian!.Id, consultation.Veterinarian.Name),
-                        consultation.Assessment)));
+                        consultation.Assessment,
+                        consultation.Diagnoses
+                            .OrderByDescending(d => d.IsPrimary).ThenBy(d => d.CreatedAt).ThenBy(d => d.Id)
+                            .Select(d => new PatientHistoryDiagnosis(d.Id, d.Name, d.Status, d.IsPrimary))
+                            .ToList())));
             }
 
             var appointment = appointmentRows[key.Id];

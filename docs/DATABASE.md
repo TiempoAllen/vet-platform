@@ -168,22 +168,26 @@ or DELETE of a consultation that is no longer `InProgress`. Rolling back the mig
 or addendum exists.
 
 ### Diagnosis
-- id
-- consultation_id
-- code if a coding system is adopted
-- name
-- notes
-- type/status
+Implemented in B-12 (table `diagnoses`, ADR-012).
+- id, clinic_id (FK clinics); consultation_id and patient_id: composite FK `(clinic_id, patient_id, consultation_id)
+  → consultations (clinic_id, patient_id, id)` RESTRICT, so a diagnosis always belongs to its consultation's patient
+  (consultations gained that unique key in B-12)
+- name (max 200, CHECK not blank), code and code_system (max 50; CHECK: no code system without a code)
+- status (`Provisional`, `Confirmed`, `RuledOut`; CHECK), is_primary (partial unique index: one primary per
+  consultation), notes (max 2000), created_by_user_id (composite FK to users), created_at, updated_at
+- unique (clinic_id, consultation_id, id) for treatment links; index (clinic_id, patient_id, created_at)
 
 ### Treatment
-- id
-- consultation_id
-- name
-- instructions
-- dosage if applicable
-- frequency if applicable
-- duration if applicable
-- notes
+Implemented in B-12 (table `treatments`). `instructions`/dosage in the original list became dose, route, frequency,
+duration and notes.
+- id, clinic_id; consultation_id, patient_id: composite FK to consultations as above
+- diagnosis_id (nullable): composite FK `(clinic_id, consultation_id, diagnosis_id) → diagnoses (clinic_id,
+  consultation_id, id)`, so a link stays within the consultation
+- name (max 200, CHECK not blank), type (`Procedure`, `Medication`, `Fluids`, `Other`; CHECK), dose, route,
+  frequency, duration (max 100 each), notes (max 2000), created_by_user_id, created_at, updated_at
+
+Triggers on both tables follow the consultation: anything while it is `InProgress`; on a `Completed` consultation only
+a diagnosis's status may change; nothing on a `Discarded` one. Rolling back refuses while rows exist.
 
 ### Prescription
 - id

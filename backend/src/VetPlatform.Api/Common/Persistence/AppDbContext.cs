@@ -57,6 +57,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
 
     public DbSet<ConsultationAddendum> ConsultationAddenda => Set<ConsultationAddendum>();
 
+    public DbSet<Diagnosis> Diagnoses => Set<Diagnosis>();
+
+    public DbSet<Treatment> Treatments => Set<Treatment>();
+
     /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
     public const string ClinicFilter = "Clinic";
 

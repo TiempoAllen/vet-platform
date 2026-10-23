@@ -409,7 +409,7 @@ Entry types so far:
 | `AppointmentCompleted` | An appointment was completed (`occurredAt` = `completedAt`). | `appointment`: `{ id, startAt, endAt, type, veterinarian: { id, name } }` |
 | `AppointmentCancelled` | An appointment was cancelled (`occurredAt` = cancellation time). | `appointment` as above, `cancelledBy`: `Client` or `Clinic`. The reason is not shown. |
 | `AppointmentNoShow` | An appointment was marked no-show. Disappears if the no-show is undone. | `appointment` as above |
-| `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment }` |
+| `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ] }` (diagnoses primary first; status as it is now) |
 
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
 consultation ids shown).
@@ -656,6 +656,7 @@ Receptionist and Inventory have no clinical access.
       "subjective": "..." | null, "objective": "..." | null, "assessment": "..." | null, "plan": "..." | null,
       "vitals": { "weightKg": 31.25 | null, "temperatureC": 38.6 | null, "heartRate": 96 | null,
                   "respiratoryRate": 24 | null, "bodyConditionScore": 5 | null, "painScore": 3 | null },
+      "diagnoses": [ ... section 9 ... ], "treatments": [ ... section 9 ... ],
       "addenda": [ { "id": "uuid", "text": "...", "author": { "id", "name" } | null, "createdAt": "..." } ],
       "createdBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
     }
@@ -708,7 +709,41 @@ Concurrent changes to one consultation are applied one after the other. Every ch
 never note or addendum text.
 
 ## 9. Diagnoses, treatments, prescriptions, vaccinations
-These resources may be nested under consultations/patients or exposed as dedicated endpoints. The final shape must be documented before frontend implementation.
+Diagnoses and treatments are implemented (B-12, ADR-012); prescriptions (B-13) and vaccinations (B-14) follow.
+
+Diagnoses and treatments belong to one consultation and appear in the consultation object (section 8) as
+`diagnoses` (primary first, then in the order recorded) and `treatments` (in the order recorded). Every change below
+returns `200` with the whole consultation, runs under the consultation's lock and is audited (`diagnosis.added`,
+`.updated`, `.removed`, `treatment.added`, `.updated`, `.removed`; ids and field names, never names or notes). An
+unknown consultation, diagnosis or treatment (or another clinic's, or one of another consultation) is `404`.
+
+**Diagnosis**: `{ "id", "name", "code" | null, "codeSystem" | null, "status": "Provisional" | "Confirmed" | "RuledOut",
+"isPrimary", "notes" | null, "createdAt", "updatedAt" }`. `name` is required (max 200). `code` and `codeSystem` (max
+50 each, e.g. `"VeNom"`, `"SNOMED CT"`) are stored as given and not validated against a terminology; a `codeSystem`
+needs a `code`. `notes` max 2000. Differentials are `Provisional` diagnoses. At most one diagnosis per consultation is
+primary: making one primary clears the flag on the others.
+
+**Treatment**: `{ "id", "name", "type": "Procedure" | "Medication" | "Fluids" | "Other", "diagnosisId" | null,
+"dose", "route", "frequency", "duration" (free text, max 100 each, or null), "notes" | null, "createdAt", "updatedAt" }`.
+Care given during the consultation; take-home medication is a prescription (B-13). `diagnosisId` links one diagnosis
+of the **same** consultation (`422` otherwise).
+
+| Endpoint | Permission | While `InProgress` | After `Completed` |
+|---|---|---|---|
+| `POST /api/consultations/:id/diagnoses` | `clinical.write` | adds (`422` on invalid fields) | `409` |
+| `PATCH /api/consultations/:id/diagnoses/:diagnosisId` | `clinical.write` | any field; omitted or `null` unchanged, `""` clears optional text | **only `status`**, and only by veterinarians (`consultations.complete`; otherwise `403`); any other field is `409` |
+| `DELETE /api/consultations/:id/diagnoses/:diagnosisId` | `clinical.write` | removes it; its treatments are unlinked, not removed | `409` |
+| `POST /api/consultations/:id/treatments` | `clinical.write` | adds | `409` |
+| `PATCH /api/consultations/:id/treatments/:treatmentId` | `clinical.write` | any field; `""` clears optional text; `"diagnosisId": null` unlinks | `409` |
+| `DELETE /api/consultations/:id/treatments/:treatmentId` | `clinical.write` | removes it | `409` |
+
+A discarded consultation's items cannot change at all (`409`). At most 50 diagnoses and 100 treatments per
+consultation (`409`). The database enforces the same freeze, so these rules hold even outside the API.
+
+`GET /api/patients/:id/diagnoses` (`clinical.read`): the patient's **problem list**: diagnoses of completed
+consultations, newest consultation first (primary first within one), paginated. `status` filters by an exact status.
+Each item: `{ "diagnosis": { ... }, "consultationId", "consultationCompletedAt" (clinic offset), "veterinarian": { id, name } }`.
+In-progress and discarded consultations are left out. A clinical read: audited (`diagnosis.listed`).
 
 ## 10. Billing
 `GET /api/invoices`

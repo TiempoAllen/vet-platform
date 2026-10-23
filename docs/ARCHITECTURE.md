@@ -452,3 +452,27 @@ Choose the simplest solution that satisfies documented requirements, security, m
   - Concurrent openings for the same appointment always hit the one-open-per-patient index first (same patient);
     the per-appointment index guards the sequential case.
 
+### ADR-012: Diagnoses and treatments (decided in B-12)
+- **Confirmed with the user:** editable while the consultation is in progress; after completion only a diagnosis's
+  status may change (Provisional → Confirmed / RuledOut), by veterinarians only; free-text name plus an optional,
+  unvalidated code and code system; statuses Provisional, Confirmed, RuledOut with one primary diagnosis per
+  consultation; structured treatments (type, dose, route, frequency, duration as free text, notes) with an optional
+  link to a diagnosis of the same consultation; a read-only, audited patient problem list; the diagnoses shown inside
+  the existing `ConsultationCompleted` history entry.
+- **Nested resources:** diagnoses and treatments only exist inside a consultation; every change is a sub-resource
+  call that returns the whole consultation, under the same row lock and audit as other consultation writes.
+- **Patient consistency in the database:** consultations gained a unique `(clinic_id, patient_id, id)` key and the
+  children reference it, so the database guarantees a diagnosis or treatment belongs to its consultation's patient
+  (and clinic). A treatment's diagnosis link uses `(clinic_id, consultation_id, diagnosis_id)`, so it cannot point at
+  another consultation's diagnosis. Removing a diagnosis unlinks its treatments first.
+- **Freeze in the database:** triggers on both tables follow the parent consultation's status (anything while in
+  progress; status-only for diagnoses of completed consultations; nothing for discarded ones). The service applies the
+  same rules first and adds the veterinarian check, which the database cannot know.
+- **Primary diagnosis:** a partial unique index allows one primary per consultation. Making another one primary clears
+  the old flag in a first save inside the same transaction, because PostgreSQL checks the index row by row.
+- **History shows current status:** the history entry lists the consultation's diagnoses as they are now, so a later
+  confirmation is visible there; the audit log keeps when it changed.
+- **Accepted for now:** no terminology validation or picklists (codes are free text); diagnosis status changes after
+  sign-off do not add an addendum automatically (the audit entry records who and when); treatments do not touch
+  inventory until B-19+.
+

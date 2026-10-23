@@ -18,7 +18,7 @@ namespace VetPlatform.Api.Features.Consultations;
 /// names records and fields, never note text. Writes lock the consultation row (after the clinic-filtered lookup) so
 /// concurrent edits, completion and discard are serialised.
 /// </summary>
-public sealed class ConsultationService(
+public sealed partial class ConsultationService(
     AppDbContext db,
     ITenantContext tenant,
     AuditTrail audit,
@@ -332,11 +332,16 @@ public sealed class ConsultationService(
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } unique
-                  && unique.ConstraintName is Consultation.OneOpenPerPatientIndex or Consultation.OnePerAppointmentIndex)
+                  && unique.ConstraintName is Consultation.OneOpenPerPatientIndex or Consultation.OnePerAppointmentIndex
+                      or Diagnosis.OnePrimaryIndex)
         {
-            throw unique.ConstraintName == Consultation.OneOpenPerPatientIndex
-                ? Conflict("The patient already has a consultation in progress; complete or discard it first.")
-                : Conflict("The appointment already has a consultation.");
+            throw unique.ConstraintName switch
+            {
+                Consultation.OneOpenPerPatientIndex =>
+                    Conflict("The patient already has a consultation in progress; complete or discard it first."),
+                Consultation.OnePerAppointmentIndex => Conflict("The appointment already has a consultation."),
+                _ => Conflict("Another diagnosis of this consultation is already primary."),
+            };
         }
     }
 
@@ -359,7 +364,9 @@ public sealed class ConsultationService(
             .Include(c => c.Veterinarian)
             .Include(c => c.CompletedBy)
             .Include(c => c.CreatedBy)
-            .Include(c => c.Addenda).ThenInclude(a => a.Author);
+            .Include(c => c.Addenda).ThenInclude(a => a.Author)
+            .Include(c => c.Diagnoses)
+            .Include(c => c.Treatments);
 
     private async Task<Consultation> FindAsync(Guid id, bool tracking, CancellationToken cancellationToken)
     {

@@ -78,11 +78,18 @@ public static class AuditActions
     public const string ConsultationCompleted = "consultation.completed";
     public const string ConsultationDiscarded = "consultation.discarded";
     public const string ConsultationAddendumAdded = "consultation.addendum_added";
+    public const string DiagnosisAdded = "diagnosis.added";
+    public const string DiagnosisUpdated = "diagnosis.updated";
+    public const string DiagnosisRemoved = "diagnosis.removed";
+    public const string TreatmentAdded = "treatment.added";
+    public const string TreatmentUpdated = "treatment.updated";
+    public const string TreatmentRemoved = "treatment.removed";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";
     public const string ConsultationsListed = "consultation.listed";
     public const string PatientHistoryViewed = "patient.history_viewed";
+    public const string DiagnosesListed = "diagnosis.listed";
 }
 
 /// <summary>
