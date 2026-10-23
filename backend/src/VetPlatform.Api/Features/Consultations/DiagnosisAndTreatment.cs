@@ -134,8 +134,6 @@ internal sealed class DiagnosisConfiguration : IEntityTypeConfiguration<Diagnosi
             .IsUnique()
             .HasFilter("is_primary");
 
-        // The patient's problem list: by patient, newest first.
-        builder.HasIndex(d => new { d.ClinicId, d.PatientId, d.CreatedAt });
     }
 }
 
@@ -172,6 +170,5 @@ internal sealed class TreatmentConfiguration : IEntityTypeConfiguration<Treatmen
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Clinic>().WithMany().HasForeignKey(t => t.ClinicId).OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(t => new { t.ClinicId, t.ConsultationId });
     }
 }

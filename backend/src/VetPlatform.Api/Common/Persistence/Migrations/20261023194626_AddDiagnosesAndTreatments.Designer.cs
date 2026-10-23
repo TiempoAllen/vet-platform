@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261023193557_AddDiagnosesAndTreatments")]
+    [Migration("20261023194626_AddDiagnosesAndTreatments")]
     partial class AddDiagnosesAndTreatments
     {
         /// <inheritdoc />
@@ -640,9 +640,6 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "PatientId", "ConsultationId")
                         .HasDatabaseName("ix_diagnoses_clinic_id_patient_id_consultation_id");
 
-                    b.HasIndex("ClinicId", "PatientId", "CreatedAt")
-                        .HasDatabaseName("ix_diagnoses_clinic_id_patient_id_created_at");
-
                     b.ToTable("diagnoses", null, t =>
                         {
                             t.HasCheckConstraint("ck_diagnoses_code_system", "code_system IS NULL OR code IS NOT NULL");
@@ -727,9 +724,6 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_treatments");
-
-                    b.HasIndex("ClinicId", "ConsultationId")
-                        .HasDatabaseName("ix_treatments_clinic_id_consultation_id");
 
                     b.HasIndex("ClinicId", "CreatedByUserId")
                         .HasDatabaseName("ix_treatments_clinic_id_created_by_user_id");

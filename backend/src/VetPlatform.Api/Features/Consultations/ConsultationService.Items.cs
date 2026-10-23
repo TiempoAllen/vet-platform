@@ -121,6 +121,10 @@ public sealed partial class ConsultationService
             if (request.Notes is not null) Set("notes", diagnosis.Notes, NullIfBlank(request.Notes), v => diagnosis.Notes = v);
             if (request.Status is { } newStatus) Set("status", diagnosis.Status, newStatus, v => diagnosis.Status = v);
 
+            // Validate before the primary swap: its intermediate save would otherwise flush invalid values (a 500).
+            CheckCode(diagnosis.Code, diagnosis.CodeSystem, problems);
+            ThrowIfAny(problems);
+
             if (request.IsPrimary is { } primary && primary != diagnosis.IsPrimary)
             {
                 if (primary)
@@ -135,9 +139,6 @@ public sealed partial class ConsultationService
 
                 changed.Add("isPrimary");
             }
-
-            CheckCode(diagnosis.Code, diagnosis.CodeSystem, problems);
-            ThrowIfAny(problems);
             return changed.Count == 0 ? null : (object)new { diagnosisId, fields = changed, from = before, to = diagnosis.Status };
         }, cancellationToken);
 
@@ -145,9 +146,9 @@ public sealed partial class ConsultationService
     public Task<ConsultationResponse> RemoveDiagnosisAsync(Guid id, Guid diagnosisId, CancellationToken cancellationToken) =>
         WriteAsync(id, AuditActions.DiagnosisRemoved, consultation =>
         {
-            RequireInProgress(consultation, "changed");
             var diagnosis = consultation.Diagnoses.SingleOrDefault(d => d.Id == diagnosisId)
                 ?? throw NotFound("The diagnosis was not found.");
+            RequireInProgress(consultation, "changed");
             var unlinked = consultation.Treatments.Where(t => t.DiagnosisId == diagnosisId).ToList();
             foreach (var treatment in unlinked)
             {
@@ -198,9 +199,9 @@ public sealed partial class ConsultationService
         CancellationToken cancellationToken) =>
         WriteAsync(id, AuditActions.TreatmentUpdated, consultation =>
         {
-            RequireInProgress(consultation, "changed");
             var treatment = consultation.Treatments.SingleOrDefault(t => t.Id == treatmentId)
                 ?? throw NotFound("The treatment was not found.");
+            RequireInProgress(consultation, "changed");
             var changed = new List<string>();
 
             void Set<T>(string field, T current, T wanted, Action<T> apply)
@@ -241,9 +242,9 @@ public sealed partial class ConsultationService
     public Task<ConsultationResponse> RemoveTreatmentAsync(Guid id, Guid treatmentId, CancellationToken cancellationToken) =>
         WriteAsync(id, AuditActions.TreatmentRemoved, consultation =>
         {
-            RequireInProgress(consultation, "changed");
             var treatment = consultation.Treatments.SingleOrDefault(t => t.Id == treatmentId)
                 ?? throw NotFound("The treatment was not found.");
+            RequireInProgress(consultation, "changed");
             consultation.Treatments.Remove(treatment);
             db.Treatments.Remove(treatment);
             return Task.FromResult<object?>(new { treatmentId });
@@ -278,6 +279,7 @@ public sealed partial class ConsultationService
 
         var page = await rows
             .OrderByDescending(r => r.CompletedAt)
+            .ThenByDescending(r => r.Diagnosis.ConsultationId) // keeps one consultation's diagnoses together on ties
             .ThenByDescending(r => r.Diagnosis.IsPrimary)
             .ThenBy(r => r.Diagnosis.CreatedAt)
             .ThenBy(r => r.Diagnosis.Id)

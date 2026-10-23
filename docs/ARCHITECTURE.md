@@ -465,11 +465,17 @@ Choose the simplest solution that satisfies documented requirements, security, m
   children reference it, so the database guarantees a diagnosis or treatment belongs to its consultation's patient
   (and clinic). A treatment's diagnosis link uses `(clinic_id, consultation_id, diagnosis_id)`, so it cannot point at
   another consultation's diagnosis. Removing a diagnosis unlinks its treatments first.
-- **Freeze in the database:** triggers on both tables follow the parent consultation's status (anything while in
-  progress; status-only for diagnoses of completed consultations; nothing for discarded ones). The service applies the
+- **Freeze in the database:** triggers on both tables follow the parent consultation's status, read `FOR SHARE` so
+  a concurrent completion is waited for (anything while in progress; for diagnoses of completed consultations only
+  `status`/`updated_at` may differ, compared as whole rows so future columns are covered too; nothing for discarded
+  ones). `TRUNCATE` is refused on both tables. The service applies the
   same rules first and adds the veterinarian check, which the database cannot know.
 - **Primary diagnosis:** a partial unique index allows one primary per consultation. Making another one primary clears
-  the old flag in a first save inside the same transaction, because PostgreSQL checks the index row by row.
+  the old flag in a first save inside the same transaction, because PostgreSQL checks the index row by row. All
+  validation runs before that save, and the swap is the last step of the change.
+- **For B-13:** if prescriptions link to a diagnosis, removing a diagnosis must unlink them too, and prescriptions
+  need the same follow-the-consultation trigger; if they can exist without a consultation, give them their own
+  (clinic_id, patient_id) foreign key to patients, because a composite key with a null part is not checked.
 - **History shows current status:** the history entry lists the consultation's diagnoses as they are now, so a later
   confirmation is visible there; the audit log keeps when it changed.
 - **Accepted for now:** no terminology validation or picklists (codes are free text); diagnosis status changes after

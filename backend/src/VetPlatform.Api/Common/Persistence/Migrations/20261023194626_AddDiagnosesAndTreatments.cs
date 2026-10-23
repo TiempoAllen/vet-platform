@@ -123,21 +123,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 columns: new[] { "clinic_id", "patient_id", "consultation_id" });
 
             migrationBuilder.CreateIndex(
-                name: "ix_diagnoses_clinic_id_patient_id_created_at",
-                table: "diagnoses",
-                columns: new[] { "clinic_id", "patient_id", "created_at" });
-
-            migrationBuilder.CreateIndex(
                 name: "ux_diagnoses_one_primary_per_consultation",
                 table: "diagnoses",
                 column: "consultation_id",
                 unique: true,
                 filter: "is_primary");
-
-            migrationBuilder.CreateIndex(
-                name: "ix_treatments_clinic_id_consultation_id",
-                table: "treatments",
-                columns: new[] { "clinic_id", "consultation_id" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_treatments_clinic_id_consultation_id_diagnosis_id",
@@ -163,20 +153,19 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 DECLARE
                     parent_status text;
                 BEGIN
+                    -- FOR SHARE: wait for a concurrent completion of the consultation instead of reading its old status.
                     SELECT status INTO parent_status FROM consultations
                     WHERE id = COALESCE(NEW.consultation_id, OLD.consultation_id)
-                      AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id);
-                    IF parent_status = 'InProgress' THEN
-                        RETURN COALESCE(NEW, OLD);
+                      AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
+                    FOR SHARE;
+                    IF parent_status IS NULL OR parent_status = 'InProgress' THEN
+                        RETURN COALESCE(NEW, OLD); -- a missing parent is left to the foreign key
                     END IF;
+                    -- On a completed consultation only status (and updated_at) may change; every other column, present
+                    -- or future, must stay as it was.
                     IF TG_OP = 'UPDATE' AND parent_status = 'Completed'
-                        AND NEW.clinic_id = OLD.clinic_id AND NEW.consultation_id = OLD.consultation_id
-                        AND NEW.patient_id = OLD.patient_id AND NEW.name = OLD.name
-                        AND NEW.code IS NOT DISTINCT FROM OLD.code AND NEW.code_system IS NOT DISTINCT FROM OLD.code_system
-                        AND NEW.is_primary = OLD.is_primary AND NEW.notes IS NOT DISTINCT FROM OLD.notes
-                        AND NEW.created_by_user_id IS NOT DISTINCT FROM OLD.created_by_user_id
-                        AND NEW.created_at = OLD.created_at THEN
-                        RETURN NEW; -- status (and updated_at) only
+                        AND (to_jsonb(NEW) - 'status' - 'updated_at') = (to_jsonb(OLD) - 'status' - 'updated_at') THEN
+                        RETURN NEW;
                     END IF;
                     RAISE EXCEPTION 'diagnoses of a % consultation cannot be changed this way', parent_status
                         USING ERRCODE = 'insufficient_privilege';
@@ -193,14 +182,30 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 BEGIN
                     SELECT status INTO parent_status FROM consultations
                     WHERE id = COALESCE(NEW.consultation_id, OLD.consultation_id)
-                      AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id);
-                    IF parent_status = 'InProgress' THEN
+                      AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
+                    FOR SHARE;
+                    IF parent_status IS NULL OR parent_status = 'InProgress' THEN
                         RETURN COALESCE(NEW, OLD);
                     END IF;
                     RAISE EXCEPTION 'treatments of a % consultation cannot be changed', parent_status
                         USING ERRCODE = 'insufficient_privilege';
                 END;
                 $$;
+
+                CREATE FUNCTION clinical_items_reject_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION '% holds clinical records and cannot be truncated', TG_TABLE_NAME
+                        USING ERRCODE = 'insufficient_privilege';
+                END;
+                $$;
+
+                CREATE TRIGGER diagnoses_no_truncate
+                    BEFORE TRUNCATE ON diagnoses
+                    FOR EACH STATEMENT EXECUTE FUNCTION clinical_items_reject_truncate();
+
+                CREATE TRIGGER treatments_no_truncate
+                    BEFORE TRUNCATE ON treatments
+                    FOR EACH STATEMENT EXECUTE FUNCTION clinical_items_reject_truncate();
 
                 CREATE TRIGGER treatments_follow_consultation
                     BEFORE INSERT OR UPDATE OR DELETE ON treatments
@@ -235,6 +240,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             migrationBuilder.Sql("""
                 DROP FUNCTION IF EXISTS diagnoses_follow_consultation();
                 DROP FUNCTION IF EXISTS treatments_follow_consultation();
+                DROP FUNCTION IF EXISTS clinical_items_reject_truncate();
                 """);
         }
     }
