@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.10, 2026-10-25, updated for B-14.
+Veterinary Management Platform. Version 1.11, 2026-10-25, updated for B-15.
 
 ## 1. Introduction
 
@@ -86,7 +86,8 @@ A user may hold several roles; their permissions are the union.
 ### 2.5 Assumptions and dependencies
 - Each clinic operates in one timezone and one currency (to be configured in B-26).
 - Email and SMS delivery providers are not chosen; notifications (B-25) depend on that choice.
-- File storage provider for attachments is not chosen (decision due in B-15).
+- File storage: a local-disk provider behind `IFileStore` since B-15 (Q-2); the production provider (e.g.
+  S3-compatible) is chosen with hosting in X-05.
 - Applicable privacy and veterinary record-keeping regulations depend on the deployment jurisdiction and must be
   reviewed before production (README "Important").
 
@@ -153,8 +154,8 @@ A user may hold several roles; their permissions are the union.
 | FR-CLN-3 | Diagnoses and treatments can be recorded against a consultation. | Done (B-12; plus problem list and post-sign-off diagnosis status) |
 | FR-CLN-4 | Prescriptions (medication, dosage, route, frequency, duration, quantity, instructions) can be issued by authorised clinicians. | Done (B-13; veterinarians only, inside a consultation; cancellation after sign-off; medication list) |
 | FR-CLN-5 | Vaccinations (vaccine, administered date, next due date, lot, manufacturer) can be recorded with or without a consultation. | Done (B-14; void-and-re-enter corrections, doses given elsewhere, clinic due list) |
-| FR-CLN-6 | Files (images, documents) can be attached to patients, clients or consultations, with type and size validation and private storage. | Planned (B-15) |
-| FR-CLN-7 | Clinical notes can be added to a patient. | Planned (B-15) |
+| FR-CLN-6 | Files (images, documents) can be attached to patients, clients or consultations, with type and size validation and private storage. | Done (B-15; JPEG/PNG/WebP/PDF by content, 20 MB, withdraw instead of delete) |
+| FR-CLN-7 | Clinical notes can be added to a patient. | Done (B-15; append-only, optional consultation link) |
 | FR-CLN-8 | Every clinical read and write path is permission-checked; changes are audited. | Done for consultations (reads and writes audited); continues per clinical milestone |
 
 ### 3.7 Billing (FR-BIL) — B-16..B-18, F-14, F-15
@@ -205,7 +206,7 @@ A user may hold several roles; their permissions are the union.
 | NFR-SEC-6 | Logs never contain passwords, tokens, session secrets, query strings, headers or bodies. | Done |
 | NFR-SEC-7 | Audit log is append-only at database level; entries commit atomically with the change they describe. | Done |
 | NFR-SEC-8 | Errors never expose stack traces or internals; unexpected errors are a generic `500`. | Done |
-| NFR-SEC-9 | Uploaded files are validated (type, size), stored privately and never executed. | Planned (B-15) |
+| NFR-SEC-9 | Uploaded files are validated (type, size), stored privately and never executed. | Done (B-15; content-sniffed allowlist, random storage keys, sandboxed download only) |
 | NFR-SEC-10 | Production runs migrations and the API under separate database roles; the API role has only INSERT/SELECT on `audit_logs`. | Planned (X-05) |
 | NFR-SEC-11 | HSTS outside development; secure headers reviewed before release. | Partly done (HSTS) |
 
@@ -249,14 +250,14 @@ Targets for a single clinic of up to 50 concurrent staff; verified in X-04.
 - **API:** JSON over HTTPS under `/api`; contract in `API.md`, machine-readable form in `openapi.yaml`.
 - **Command line:** `create-admin` (see `RUNBOOK.md`).
 - **Database:** PostgreSQL; schema in `DATABASE.md`.
-- **External services:** none yet. Email/SMS (B-25), file storage (B-15) and payment providers (future) will be
-  added behind interfaces.
+- **External services:** none yet. File storage is behind `IFileStore` (local disk since B-15). Email/SMS (B-25) and
+  payment providers (future) will be added behind interfaces.
 
 ## 6. Open questions
 | # | Question | Needed by |
 |---|---|---|
 | Q-1 | Frontend framework and component library. | F-01 |
-| Q-2 | File storage provider and maximum upload size. | B-15 |
+| Q-2 | File storage provider and maximum upload size. | **Answered (ADR-015):** an `IFileStore` abstraction with a local-disk provider now, an S3-compatible provider with hosting (X-05); at most 20 MB; JPEG, PNG, WebP and PDF only, recognised by content. |
 | Q-3 | Appointment slot granularity, buffer times, and whether double-booking can be overridden. | **Answered (ADR-008):** 5-minute grid; no buffers (a per-clinic buffer may come with B-26); conflicts may be overridden by `appointments.manage` holders with a required, audited reason (B-09). |
 | Q-4 | Tax model (inclusive/exclusive, per-line rates) and rounding rules. | B-16 |
 | Q-5 | Whether stock may go negative and how controlled drugs are logged. | B-20 |

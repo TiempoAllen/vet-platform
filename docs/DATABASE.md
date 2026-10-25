@@ -243,26 +243,38 @@ administered_on) (patient list and history; also the patient key), (clinic_id, p
 per user key.
 
 ### ClinicalNote
-- id
-- patient_id
-- consultation_id nullable
-- author_id
-- content
-- created_at
+Implemented in B-15 (table `clinical_notes`, ADR-015). `author_id` / `content` in the original list became
+`author_user_id` / `text`.
+- id, clinic_id (FK clinics); patient_id: composite FK `(clinic_id, patient_id) → patients` RESTRICT
+- consultation_id (nullable): composite FK `(clinic_id, patient_id, consultation_id) → consultations (clinic_id,
+  patient_id, id)` RESTRICT
+- author_user_id (composite FK to users), text (max 4000, CHECK not blank), created_at
+
+**Append-only:** trigger `clinical_notes_guard` refuses UPDATE and DELETE, and an INSERT linking a discarded
+consultation (status read `FOR SHARE`, then tested); TRUNCATE is refused. Index (clinic_id, patient_id, created_at).
 
 ## 6. Documents
 ### Attachment
-- id
-- clinic_id
-- patient_id/client_id/consultation_id as appropriate
-- storage_key
-- original_filename
-- mime_type
-- size_bytes
-- uploaded_by
-- created_at
+Implemented in B-15 (table `attachments`, ADR-015). `original_filename` / `mime_type` / `uploaded_by` in the original
+list became `file_name` / `content_type` / `uploaded_by_user_id`.
+- id, clinic_id (FK clinics)
+- owner, exactly one (CHECK `ck_attachments_owner`): client_id alone (composite FK to clients), or patient_id (composite
+  FK to patients) with an optional consultation_id (composite FK `(clinic_id, patient_id, consultation_id) →
+  consultations`, so a consultation file always names the consultation's patient); all RESTRICT
+- storage_key (`char(32)`, CHECK lowercase hex, unique): the content's key in the file store
+- file_name (max 255, CHECK not blank), content_type (CHECK `image/jpeg`, `image/png`, `image/webp`,
+  `application/pdf`), size_bytes (CHECK 1 to 20,971,520), sha256 (`char(64)`, CHECK lowercase hex), description
+  (max 500)
+- status (`Active`, `Withdrawn`; CHECK); withdrawn_at, withdrawn_by_user_id (composite FK to users), withdraw_reason
+  (max 500): CHECK `ck_attachments_lifecycle` sets them exactly when `Withdrawn`
+- uploaded_by_user_id (composite FK to users), created_at, updated_at
 
-Access must be authorized through the owning record and clinic scope.
+Access is authorised through the owning record and clinic scope. Trigger `attachments_guard`: a new row must be
+`Active` and may not link a discarded consultation; the only UPDATE is `Active` → `Withdrawn`, changing nothing but the
+status, the withdraw columns and `updated_at` (whole-row comparison); DELETE and TRUNCATE are refused. Indexes:
+(clinic_id, patient_id, created_at), (clinic_id, client_id, created_at), (clinic_id, patient_id, consultation_id),
+unique storage_key, one per user key. Rolling back refuses while notes or attachments exist; the stored files are
+never touched by migrations.
 
 ## 7. Billing
 ### Invoice

@@ -31,7 +31,7 @@ Responsible for:
 Relational database recommended for transactional consistency and rich relationships.
 
 ### File storage
-Use object/file storage for uploaded documents and images. Store metadata and secure references in the database rather than binary files in ordinary relational records unless there is a documented reason.
+Use object/file storage for uploaded documents and images. Store metadata and secure references in the database rather than binary files in ordinary relational records unless there is a documented reason. Since B-15 content goes through `IFileStore` (local disk until X-05 chooses object storage; ADR-015).
 
 ## 3. Layering
 Backend should generally separate:
@@ -571,3 +571,46 @@ Choose the simplest solution that satisfies documented requirements, security, m
   can still let one dose through (locking those rows here would cross the appointment -> veterinarian -> patient lock
   order; the composite keys still keep everything in the clinic, as in ADR-006); the due list projects only the owner's
   contact fields, so client notes and address are never loaded for reception.
+
+### ADR-015: Attachments, file storage and clinical notes (decided in B-15)
+- **SRS Q-2 answered (confirmed with the user):** content is stored through an `IFileStore` abstraction with a
+  local-disk provider now (`FileStorage:LocalRoot`, a private directory outside any web root); an S3-compatible
+  provider follows when hosting is chosen (X-05), so no storage dependency is added before then. At most **20 MB** per
+  file; only **JPEG, PNG, WebP and PDF**, recognised from the leading bytes (the name and the client's Content-Type
+  are ignored).
+- **Confirmed with the user:** a file has exactly one owner (patient, consultation or client); access follows the
+  owner (client files `clients.read` / `clients.manage`, so reception can attach consent forms; patient and
+  consultation files `clinical.read` / `clinical.write`); no hard delete, a mistaken upload is withdrawn with a reason
+  (row and stored content kept); files may be attached to in-progress and completed consultations but not discarded
+  ones; clinical notes are append-only patient notes with an optional consultation link, written by veterinarians and
+  nurses (`clinical.write`); both appear in the patient history (`ClinicalNoteAdded`, `AttachmentAdded`) for
+  `clinical.read` holders, client files excluded.
+- **One route per owner for uploads and lists**, so the permission is checked at the door before the body is read;
+  `/api/attachments/{id}` (metadata, content, withdraw) takes either permission at the door and the service checks
+  the one the file's owner needs (`403`). Other clinics' files and owners are `404`, as everywhere.
+- **Upload handling:** the controller reads the multipart form itself (MVC's form value providers are disabled on the
+  upload actions so an oversized form is a `413`, not a generic `400`). Order of checks: owner (`404` / `409`), form
+  (`422`), type (`415`), size (`413`). The content's SHA-256 is recorded. Content is written to the store before the
+  row; if the row cannot be saved the content is removed again (best effort; a crash in between leaves an orphan file
+  with no row, harmless and left to an X-05 sweep).
+- **Storage keys** are 32 random lowercase hex characters (`RandomNumberGenerator`), validated before any path is
+  built, and laid out as `root/xx/key`; the uploader's name never touches the file system. Writes go to a temporary
+  name and are moved into place without overwriting.
+- **Downloads** only through the API: `Content-Disposition: attachment` with a sanitised name (no path, control
+  characters or quotes; at most 255 characters), `X-Content-Type-Options: nosniff`,
+  `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-store`. Every download is
+  audited. A row whose content is missing is a logged `500` (an operational fault, see RUNBOOK backups).
+- **Immutable in the database:** `attachments_guard` allows INSERT of `Active` rows only, the one-way UPDATE `Active` →
+  `Withdrawn` (whole-row comparison, so moving a file to another owner is refused too), and no DELETE or TRUNCATE;
+  `clinical_notes_guard` allows INSERT only. Both refuse a link to a discarded consultation through a shared function
+  that reads the consultation's status `FOR SHARE` before testing it (the B-14 lesson). CHECKs pin the owner rule,
+  the content types, the size range, and the key and hash formats.
+- **Notes vs other text:** SOAP notes belong to one consultation and freeze with it; addenda correct a completed
+  consultation; clinical notes are the patient's running log between and beyond consultations.
+- **New error code** `PAYLOAD_TOO_LARGE` (413), also used for any framework 413.
+- **Accepted for now:** no malware scanning (files are never opened server-side beyond the first 12 bytes and are
+  only offered as downloads; scanning belongs with object storage in X-05); content is not checked beyond its
+  signature (a PDF with a valid header but broken body is stored as given); withdrawn content is kept until a
+  retention policy exists (X-05, Q-8); no thumbnails or previews (frontend topic); the local provider assumes a single
+  API instance or a shared volume; orphan files from crashes are not swept yet; the request-size limit is enforced by
+  Kestrel in production (the in-memory test server does not, so tests rely on the form limit).
