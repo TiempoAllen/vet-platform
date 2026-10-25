@@ -1328,6 +1328,134 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Vaccinations.Vaccination", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("AdministeredDayStartsAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("administered_day_starts_at");
+
+                    b.Property<string>("AdministeredElsewhere")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("administered_elsewhere");
+
+                    b.Property<DateOnly>("AdministeredOn")
+                        .HasColumnType("date")
+                        .HasColumnName("administered_on");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<Guid?>("ConsultationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("consultation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly?>("LotExpiresOn")
+                        .HasColumnType("date")
+                        .HasColumnName("lot_expires_on");
+
+                    b.Property<string>("LotNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("lot_number");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("manufacturer");
+
+                    b.Property<DateOnly?>("NextDueOn")
+                        .HasColumnType("date")
+                        .HasColumnName("next_due_on");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("notes");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<Guid?>("RecordedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recorded_by_user_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VaccineName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("vaccine_name");
+
+                    b.Property<Guid?>("VeterinarianId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("veterinarian_id");
+
+                    b.Property<string>("VoidReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("void_reason");
+
+                    b.Property<DateTimeOffset?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("voided_at");
+
+                    b.Property<Guid?>("VoidedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("voided_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_vaccinations");
+
+                    b.HasIndex("ClinicId", "RecordedByUserId")
+                        .HasDatabaseName("ix_vaccinations_clinic_id_recorded_by_user_id");
+
+                    b.HasIndex("ClinicId", "VeterinarianId")
+                        .HasDatabaseName("ix_vaccinations_clinic_id_veterinarian_id");
+
+                    b.HasIndex("ClinicId", "VoidedByUserId")
+                        .HasDatabaseName("ix_vaccinations_clinic_id_voided_by_user_id");
+
+                    b.HasIndex("ClinicId", "PatientId", "AdministeredOn")
+                        .HasDatabaseName("ix_vaccinations_clinic_id_patient_id_administered_on");
+
+                    b.HasIndex("ClinicId", "PatientId", "ConsultationId")
+                        .HasDatabaseName("ix_vaccinations_clinic_id_patient_id_consultation_id");
+
+                    b.ToTable("vaccinations", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_vaccinations_dates", "administered_on BETWEEN DATE '2000-01-01' AND DATE '2100-12-31' AND (next_due_on IS NULL OR (next_due_on > administered_on AND next_due_on <= DATE '2100-12-31')) AND (lot_expires_on IS NULL OR lot_expires_on BETWEEN DATE '2000-01-01' AND DATE '2100-12-31')");
+
+                            t.HasCheckConstraint("ck_vaccinations_given_by", "(administered_elsewhere IS NULL AND veterinarian_id IS NOT NULL) OR (administered_elsewhere IS NOT NULL AND btrim(administered_elsewhere) <> '' AND veterinarian_id IS NULL)");
+
+                            t.HasCheckConstraint("ck_vaccinations_lifecycle", "CASE status WHEN 'Active' THEN voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Voided' THEN voided_at IS NOT NULL AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
+
+                            t.HasCheckConstraint("ck_vaccinations_status", "status IN ('Active', 'Voided')");
+
+                            t.HasCheckConstraint("ck_vaccinations_vaccine_name", "btrim(vaccine_name) <> ''");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Common.Auditing.AuditLog", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.User", null)
@@ -1682,6 +1810,60 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_working_hours_users_clinic_id_veterinarian_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Vaccinations.Vaccination", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_vaccinations_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Patients.Patient", "Patient")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_vaccinations_patients_clinic_id_patient_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "RecordedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "RecordedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_vaccinations_users_clinic_id_recorded_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "Veterinarian")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "VeterinarianId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_vaccinations_users_clinic_id_veterinarian_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "VoidedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "VoidedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_vaccinations_users_clinic_id_voided_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Consultation", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId", "ConsultationId")
+                        .HasPrincipalKey("ClinicId", "PatientId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_vaccinations_consultations_clinic_id_patient_id_consultatio");
+
+                    b.Navigation("Patient");
+
+                    b.Navigation("RecordedBy");
+
+                    b.Navigation("Veterinarian");
+
+                    b.Navigation("VoidedBy");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Consultation", b =>

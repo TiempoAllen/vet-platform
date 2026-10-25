@@ -523,3 +523,42 @@ Choose the simplest solution that satisfies documented requirements, security, m
   dispensing; prescriptions do not touch inventory or billing until B-16/B-19+; a prescription cannot be re-activated
   after cancellation (a new consultation prescribes again); a prescription printout or label is a frontend/reporting
   concern.
+
+### ADR-014: Vaccinations (decided in B-14)
+- **Confirmed with the user:** veterinarians and nurses record vaccinations (`clinical.write`; administrators read
+  through `clinical.read`); a vaccination is a patient-level record with an optional link to an in-progress or completed
+  consultation of the same patient, and its rules do not depend on that consultation; records are never edited, and a
+  wrong one is voided with a reason and recorded again; doses given in the past or elsewhere can be recorded, naming
+  the place instead of a veterinarian; an optional next due date feeds a clinic-wide due list readable by reception
+  (new permission `vaccinations.read_due` for Admin, Veterinarian, Nurse, Receptionist); doses appear in the patient
+  history as a new clinical entry type `VaccinationGiven`; the vaccine name is free text until B-19.
+- **Dates, not instants:** `administeredOn`, `nextDueOn` and `lotExpiresOn` are clinic-local calendar days, because a
+  certificate states a day and historical doses rarely have a time. "Today" (the latest allowed administered day) is
+  the clinic's local date. The history needs an instant to order by, so each row stores the start of its administered
+  day in the clinic's time zone when recorded (`administered_day_starts_at`); a later time-zone change does not move
+  existing entries (accepted, like exceptions in ADR-008).
+- **Given here vs elsewhere:** exactly one of `veterinarian_id` and `administered_elsewhere` (CHECK). Doses given here
+  name an active veterinarian of the clinic, who may differ from the nurse who records it (`recorded_by_user_id`).
+- **Immutable in the database:** trigger `vaccinations_guard` allows INSERT of `Active` rows only (and no link to a
+  discarded consultation, whose row it reads `FOR SHARE`), the one-way UPDATE `Active` → `Voided` touching nothing but
+  the status, the void columns and `updated_at` (whole-row comparison, so future columns are covered, and moving a row
+  to another patient or consultation is refused too), and no DELETE or TRUNCATE. A lifecycle CHECK ties the void
+  fields to the status. Voiding locks the row (`FOR NO KEY UPDATE`, after the clinic-filtered lookup), so two voids are
+  serialised into one `200` and one `409`. Recording with a consultation link takes `FOR SHARE` on the consultation
+  after its clinic-filtered lookup and re-checks it, so a concurrent discard cannot slip in between.
+- **Due list:** for each patient and vaccine (lower-cased name) the latest active dose (`DISTINCT ON`, by
+  administered day, then recording time, then id) is due when its `next_due_on` falls in the range; without `from`,
+  overdue doses are included. A newer dose without a due date ends the series, and voiding the newest dose makes the
+  previous one count again. Only active patients are listed. Each item carries patient, owner contact, vaccine name
+  and dates, and no lot, notes or other clinical detail, because reception reads it; every read is audited
+  (`vaccination.due_listed`, with the range and ids).
+- **History:** `VaccinationGiven` is the fourth `UNION ALL` source (ADR-007), included only for `clinical.read`
+  holders; voided doses stay with their current status, so the record shows what was entered and withdrawn. A page
+  with clinical entries is an audited read listing consultation and vaccination ids.
+- **Audit:** `vaccination.recorded`, `.voided`, and the reads `.viewed`, `.listed`, `.due_listed`; metadata never holds
+  vaccine names, notes or the void reason.
+- **Accepted for now:** the due list scans the clinic's active vaccinations to find the latest dose per patient and
+  vaccine (fine at clinic sizes; a partial index or a materialised "current dose" can follow if X-04 measures a need);
+  vaccine names are grouped by exact text ignoring case, so "Rabies" and "Rabies 3yr" are separate series until B-19
+  products exist; due dates are entered, not computed from a protocol; doses do not touch inventory (lot numbers are
+  not checked against stock) until B-19+; reminders are sent by people from the due list until B-25 notifications.
