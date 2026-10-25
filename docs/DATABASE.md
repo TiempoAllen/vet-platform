@@ -218,15 +218,29 @@ list), (clinic_id, consultation_id, diagnosis_id), (clinic_id, prescribed_by_use
 cancelled_by_user_id).
 
 ### Vaccination
-- id
-- patient_id
-- consultation_id nullable
-- vaccine_name
-- administered_at
-- next_due_at
-- lot_number nullable
-- manufacturer nullable
-- veterinarian_id
+Implemented in B-14 (table `vaccinations`, ADR-014). `administered_at` / `next_due_at` in the original list became the
+dates `administered_on` / `next_due_on`.
+- id, clinic_id (FK clinics); patient_id: composite FK `(clinic_id, patient_id) → patients` RESTRICT
+- consultation_id (nullable): composite FK `(clinic_id, patient_id, consultation_id) → consultations (clinic_id,
+  patient_id, id)` RESTRICT, so a linked consultation is always the same patient's (the patient keeps its own key
+  because a composite key with a null part is not checked)
+- vaccine_name (max 200, CHECK not blank), manufacturer (max 100), lot_number (max 50), lot_expires_on (date), notes
+  (max 2000)
+- administered_on (date), next_due_on (date): CHECK `ck_vaccinations_dates` (2000-01-01 to 2100-12-31; next due after
+  administered); administered_day_starts_at: the start of administered_on in the clinic's time zone when recorded
+  (the patient history orders by it; not part of the API)
+- administered_elsewhere (max 200), veterinarian_id (composite FK to users): CHECK `ck_vaccinations_given_by`, exactly
+  one of them (a veterinarian for doses given here, a place for doses given elsewhere)
+- status (`Active`, `Voided`; CHECK); voided_at, voided_by_user_id (composite FK to users), void_reason (max 500):
+  CHECK `ck_vaccinations_lifecycle` sets them exactly when `Voided`
+- recorded_by_user_id (composite FK to users), created_at, updated_at
+
+Trigger `vaccinations_guard`: a new row must be `Active` and may not link a discarded consultation (status read `FOR
+SHARE`, then tested; a later discard keeps the link);
+the only UPDATE is `Active` → `Voided`, changing nothing but the status, the void columns and `updated_at` (compared as
+whole rows); DELETE and TRUNCATE are refused. Rolling back refuses while rows exist. Indexes: (clinic_id, patient_id,
+administered_on) (patient list and history; also the patient key), (clinic_id, patient_id, consultation_id), and one
+per user key.
 
 ### ClinicalNote
 - id

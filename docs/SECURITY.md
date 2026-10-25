@@ -105,6 +105,9 @@ are enforced by database triggers, not only by the service (ADR-011). Diagnoses 
 prescriptions (`prescription.listed`) read through a patient's lists are audited the same way. Only veterinarians
 hold `prescriptions.issue`; prescriptions of completed consultations can only be cancelled, never edited, which a
 database trigger enforces too (ADR-013). Audit metadata never holds medication names, instructions or reasons.
+Vaccination records are never edited or deleted, only voided with a reason, enforced by a trigger (ADR-014). The
+clinic-wide due list (`vaccinations.read_due`) is the one clinical-derived read open to reception: it shows patient,
+owner contact, vaccine name and dates only, and every read of it is audited.
 
 Since B-10 the history also shows finished appointments (date, type, veterinarian, actor, who cancelled; never the
 cancellation reason). This relies on every role with `patients.read` also holding `appointments.read`, which is true

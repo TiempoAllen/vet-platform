@@ -7,6 +7,7 @@ using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Appointments;
 using VetPlatform.Api.Features.Consultations;
+using VetPlatform.Api.Features.Vaccinations;
 
 namespace VetPlatform.Api.Features.Patients;
 
@@ -24,6 +25,9 @@ public enum PatientHistoryEntryType
 
     /// <summary>Clinical: only for callers with <c>clinical.read</c>, and reading it is audited.</summary>
     ConsultationCompleted,
+
+    /// <summary>Clinical, like <see cref="ConsultationCompleted"/>: a vaccine dose (voided ones included, flagged).</summary>
+    VaccinationGiven,
 }
 
 /// <summary>Who caused an entry; null when there was no signed-in user (the CLI) or the account cannot be shown.</summary>
@@ -74,6 +78,22 @@ public sealed record PatientHistoryDiagnosis(Guid Id, string Name, DiagnosisStat
 /// <summary>A prescription as summarised in the history (in the order recorded), with its current status.</summary>
 public sealed record PatientHistoryPrescription(Guid Id, string MedicationName, PrescriptionStatus Status);
 
+/// <summary>
+/// The dose a <c>VaccinationGiven</c> entry is about. Its <c>occurredAt</c> is the start of <c>administeredOn</c> in the
+/// clinic's time zone; <c>status</c> is as it is now.
+/// </summary>
+public sealed record PatientHistoryVaccination(
+    Guid Id,
+    string VaccineName,
+    DateOnly AdministeredOn,
+    DateOnly? NextDueOn,
+    string? AdministeredElsewhere,
+    AppointmentPersonSummary? Veterinarian,
+    VaccinationStatus Status);
+
+/// <summary>Details of <c>VaccinationGiven</c>.</summary>
+public sealed record PatientVaccinationDetails(PatientHistoryVaccination Vaccination);
+
 /// <summary>Details of <c>ConsultationCompleted</c>.</summary>
 public sealed record PatientConsultationDetails(PatientHistoryConsultation Consultation);
 
@@ -119,6 +139,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         const string cancelled = nameof(PatientHistoryEntryType.AppointmentCancelled);
         const string noShow = nameof(PatientHistoryEntryType.AppointmentNoShow);
         const string consultationCompleted = nameof(PatientHistoryEntryType.ConsultationCompleted);
+        const string vaccinationGiven = nameof(PatientHistoryEntryType.VaccinationGiven);
 
         var registrations = db.ForCurrentClinic(tenant)
             .Where(entry => entry.EntityType == nameof(Patient)
@@ -150,6 +171,9 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
             sources = sources.Concat(db.Consultations
                 .Where(c => c.PatientId == patientId && c.Status == ConsultationStatus.Completed)
                 .Select(c => new HistoryKey { Type = consultationCompleted, Id = c.Id, OccurredAt = c.CompletedAt!.Value }));
+            sources = sources.Concat(db.Vaccinations
+                .Where(v => v.PatientId == patientId)
+                .Select(v => new HistoryKey { Type = vaccinationGiven, Id = v.Id, OccurredAt = v.AdministeredDayStartsAt }));
         }
 
         // Documented order: occurredAt, then id, then type, all descending.
@@ -162,6 +186,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         var auditIds = keys.Data.Where(k => k.Type == registered).Select(k => k.Id).ToList();
         var appointmentIds = keys.Data.Where(k => k.Type is completed or cancelled or noShow).Select(k => k.Id).ToList();
         var consultationIds = keys.Data.Where(k => k.Type == consultationCompleted).Select(k => k.Id).ToList();
+        var vaccinationIds = keys.Data.Where(k => k.Type == vaccinationGiven).Select(k => k.Id).ToList();
         var auditEntries = auditIds.Count == 0
             ? []
             : await db.ForCurrentClinic(tenant).AsNoTracking()
@@ -184,10 +209,18 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                 .Where(c => consultationIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id, cancellationToken);
 
+        var vaccinationRows = vaccinationIds.Count == 0
+            ? []
+            : await db.Vaccinations.AsNoTracking()
+                .Include(v => v.Veterinarian)
+                .Where(v => vaccinationIds.Contains(v.Id))
+                .ToDictionaryAsync(v => v.Id, cancellationToken);
+
         var actors = await ActorsAsync(
             auditEntries.Values.Select(entry => entry.ActorUserId)
                 .Concat(appointmentRows.Values.Select(a => a.StatusChangedByUserId))
-                .Concat(consultationRows.Values.Select(c => c.CompletedByUserId)),
+                .Concat(consultationRows.Values.Select(c => c.CompletedByUserId))
+                .Concat(vaccinationRows.Values.Select(v => v.RecordedByUserId)),
             cancellationToken);
         var clients = await ClientsAsync(auditEntries.Values, cancellationToken);
 
@@ -223,6 +256,18 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                             .ToList())));
             }
 
+            if (type == PatientHistoryEntryType.VaccinationGiven)
+            {
+                var vaccination = vaccinationRows[key.Id];
+                return new PatientHistoryEntry(
+                    key.Id, type, key.OccurredAt, Actor(vaccination.RecordedByUserId),
+                    new PatientVaccinationDetails(new PatientHistoryVaccination(
+                        vaccination.Id, vaccination.VaccineName, vaccination.AdministeredOn, vaccination.NextDueOn,
+                        vaccination.AdministeredElsewhere,
+                        vaccination.Veterinarian is { } vet ? new AppointmentPersonSummary(vet.Id, vet.Name) : null,
+                        vaccination.Status)));
+            }
+
             var appointment = appointmentRows[key.Id];
             var summary = new PatientHistoryAppointment(
                 appointment.Id, appointment.StartAt, appointment.EndAt, appointment.Type,
@@ -234,9 +279,9 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         }).ToList();
 
         // Reading clinical entries is a clinical read (SECURITY.md section 10): record which ones were shown.
-        if (consultationIds.Count > 0)
+        if (consultationIds.Count > 0 || vaccinationIds.Count > 0)
         {
-            audit.Record(AuditActions.PatientHistoryViewed, nameof(Patient), patientId, new { consultationIds });
+            audit.Record(AuditActions.PatientHistoryViewed, nameof(Patient), patientId, new { consultationIds, vaccinationIds });
             await db.SaveChangesAsync(cancellationToken);
         }
 

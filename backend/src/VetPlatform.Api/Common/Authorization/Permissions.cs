@@ -53,26 +53,30 @@ public static class Permissions
     /// <summary>Add, edit, remove and cancel prescriptions. Veterinarians only (ADR-013).</summary>
     public const string PrescriptionsIssue = "prescriptions.issue";
 
+    /// <summary>Read the clinic-wide vaccination due list, e.g. for reminder calls; reception included (ADR-014).</summary>
+    public const string VaccinationsReadDue = "vaccinations.read_due";
+
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
         {
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
-            SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead,
+            SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead, VaccinationsReadDue,
         }.ToFrozenSet(),
         [Role.Veterinarian] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn, AppointmentsRead, AppointmentsManage,
-            ClinicalRead, ClinicalWrite, ConsultationsComplete, PrescriptionsIssue,
+            ClinicalRead, ClinicalWrite, ConsultationsComplete, PrescriptionsIssue, VaccinationsReadDue,
         }.ToFrozenSet(),
         [Role.Nurse] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage, ClinicalRead,
-            ClinicalWrite,
+            ClinicalWrite, VaccinationsReadDue,
         }.ToFrozenSet(),
         [Role.Receptionist] = new[]
         {
             ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage,
+            VaccinationsReadDue,
         }.ToFrozenSet(),
         [Role.Inventory] = FrozenSet<string>.Empty,
     }.ToFrozenDictionary();
