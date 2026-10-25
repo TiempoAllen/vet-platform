@@ -93,7 +93,9 @@ public sealed class AttachmentsController(AttachmentService attachments) : Contr
         Guid ownerId,
         CancellationToken cancellationToken)
     {
-        var attachment = await attachments.UploadAsync(ownerType, ownerId, await ReadUploadAsync(cancellationToken), cancellationToken);
+        // Owner first, so an unknown or discarded owner never makes the server read a large body.
+        var owner = await attachments.ResolveOwnerAsync(ownerType, ownerId, cancellationToken);
+        var attachment = await attachments.UploadAsync(owner, await ReadUploadAsync(cancellationToken), cancellationToken);
         return CreatedAtAction(nameof(Get), new { id = attachment.Id }, attachment);
     }
 

@@ -119,13 +119,16 @@ public sealed class AttachmentsTests(DatabaseApiFactory factory) : IClassFixture
     }
 
     [Theory]
-    [InlineData("../../x-ray \"left\".png", "x-ray left.png")]
-    [InlineData(@"C:\scans\lab.pdf", "lab.pdf")]
-    [InlineData("tab\there.pdf", "tabhere.pdf")]
-    [InlineData("   ", "file")]
-    [InlineData(null, "file")]
-    public void FileNames_AreReducedToASafeDownloadName(string? uploaded, string expected) =>
-        Assert.Equal(expected, VetPlatform.Api.Features.Attachments.FileSignatures.SafeFileName(uploaded));
+    [InlineData("../../x-ray \"left\".png", "image/png", "x-ray left.png")]
+    [InlineData(@"C:\scans\lab.pdf", "application/pdf", "lab.pdf")]
+    [InlineData("tab\there.pdf", "application/pdf", "tabhere.pdf")]
+    [InlineData("xray.hta", "image/jpeg", "xray.jpg")]
+    [InlineData("report.html", "image/png", "report.png")]
+    [InlineData("scan\u202Efdp.hta", "image/jpeg", "scanfdp.jpg")]
+    [InlineData("   ", "application/pdf", "file.pdf")]
+    [InlineData(null, "image/webp", "file.webp")]
+    public void FileNames_AreReducedToASafeDownloadName_WithTheDetectedExtension(string? uploaded, string contentType, string expected) =>
+        Assert.Equal(expected, VetPlatform.Api.Features.Attachments.FileSignatures.SafeFileName(uploaded, contentType));
 
     public static TheoryData<byte[], string> Accepted => new()
     {

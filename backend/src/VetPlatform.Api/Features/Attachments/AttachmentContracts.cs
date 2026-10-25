@@ -39,7 +39,10 @@ public sealed record AttachmentResponse(
         user is null ? null : new AppointmentPersonSummary(user.Id, user.Name);
 }
 
-/// <summary>The parts of an upload's multipart form, read by the controller before the owner is checked.</summary>
+/// <summary>The owner columns of a new file, resolved before the upload's body is read.</summary>
+public sealed record AttachmentOwner(AttachmentOwnerType OwnerType, Guid? PatientId, Guid? ConsultationId, Guid? ClientId);
+
+/// <summary>The parts of an upload's multipart form, read by the controller after the owner is checked.</summary>
 public sealed record AttachmentUpload(IFormFile? File, int FileCount, string? Description);
 
 public sealed record WithdrawAttachmentRequest([Required, MaxLength(Attachment.ReasonMaxLength)] string? Reason);
@@ -87,25 +90,48 @@ public static class FileSignatures
         return head.StartsWith("%PDF-"u8) ? "application/pdf" : null;
     }
 
-    /// <summary>
-    /// The uploader's file name without any path, control characters or quotes, at most 255 characters; "file" when
-    /// nothing is left. It is only ever used as the download name.
-    /// </summary>
-    public static string SafeFileName(string? name)
+    private static readonly IReadOnlyDictionary<string, string> Extensions = new Dictionary<string, string>
     {
+        ["image/jpeg"] = ".jpg",
+        ["image/png"] = ".png",
+        ["image/webp"] = ".webp",
+        ["application/pdf"] = ".pdf",
+    };
+
+    /// <summary>
+    /// The download name: the uploader's base name without any path, control or invisible formatting characters
+    /// (bidirectional overrides could disguise the extension) or quotes, with the extension of the detected type, so a
+    /// file can never be saved as something executable. At most 255 characters; "file" when nothing is left.
+    /// </summary>
+    public static string SafeFileName(string? name, string contentType)
+    {
+        var extension = Extensions[contentType];
         var last = name?.Split('/', '\\').LastOrDefault() ?? "";
-        var cleaned = new string(last.Where(c => !char.IsControl(c) && c is not '"').ToArray()).Trim();
-        if (cleaned.Length > Attachment.FileNameMaxLength)
+        var cleaned = new string(last.Where(IsSafe).ToArray()).Trim();
+        var dot = cleaned.LastIndexOf('.');
+        if (dot > 0)
         {
-            cleaned = cleaned[..Attachment.FileNameMaxLength];
+            cleaned = cleaned[..dot].TrimEnd();
+        }
+
+        cleaned = cleaned.Trim('.', ' ');
+        var room = Attachment.FileNameMaxLength - extension.Length;
+        if (cleaned.Length > room)
+        {
+            cleaned = cleaned[..room];
             if (char.IsHighSurrogate(cleaned[^1]))
             {
                 cleaned = cleaned[..^1]; // never cut a character in half
             }
 
-            cleaned = cleaned.Trim();
+            cleaned = cleaned.TrimEnd();
         }
 
-        return cleaned.Length == 0 ? "file" : cleaned;
+        return (cleaned.Length == 0 ? "file" : cleaned) + extension;
     }
+
+    private static bool IsSafe(char c) =>
+        !char.IsControl(c) && c is not '"'
+        && char.GetUnicodeCategory(c) is not (System.Globalization.UnicodeCategory.Format
+            or System.Globalization.UnicodeCategory.LineSeparator or System.Globalization.UnicodeCategory.ParagraphSeparator);
 }
