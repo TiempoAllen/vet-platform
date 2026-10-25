@@ -507,6 +507,11 @@ Choose the simplest solution that satisfies documented requirements, security, m
   the cancellation fields and `updated_at` (compared as whole rows, so future columns are covered); nothing on a
   discarded consultation. `TRUNCATE` is refused. A lifecycle CHECK ties the cancellation fields to the status. The
   service applies the same rules first and they only fire on a bug or a raw write.
+- **Rows never move between consultations** (found in the B-13 review): the triggers judge an UPDATE by the new parent
+  only, so moving a row from a completed consultation to an open one of the same patient passed the composite key and
+  the trigger. The prescriptions trigger now refuses any change of `clinic_id`, `patient_id` or `consultation_id`, and
+  the same migration re-creates the B-12 diagnoses and treatments trigger functions with that check (its rollback
+  restores the B-12 versions). The API never changes these columns.
 - **Concurrency:** every change runs under the consultation's row lock, like diagnoses and treatments, so a
   cancellation and a concurrent completion or a second cancellation are serialised.
 - **Audit:** `prescription.added`, `.updated` (field names), `.removed`, `.cancelled` and the clinical read
