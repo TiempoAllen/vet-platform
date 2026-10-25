@@ -106,7 +106,7 @@ public sealed class PatientsTests(DatabaseApiFactory factory) : IClassFixture<Da
             [
                 Permissions.AppointmentsManage, Permissions.AppointmentsRead, Permissions.ClientsRead, Permissions.ClinicalRead,
                 Permissions.ClinicalWrite, Permissions.ConsultationsComplete, Permissions.PatientsManage,
-                Permissions.PatientsRead, Permissions.SchedulesManageOwn, Permissions.SchedulesRead,
+                Permissions.PatientsRead, Permissions.PrescriptionsIssue, Permissions.SchedulesManageOwn, Permissions.SchedulesRead,
             ],
             me.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()));
     }
