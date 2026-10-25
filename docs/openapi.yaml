@@ -2789,10 +2789,7 @@ components:
               prescription: { $ref: '#/components/schemas/Prescription' }
               consultationId: { type: string, format: uuid }
               consultationCompletedAt: { type: string, format: date-time, description: With the clinic's local offset. }
-              veterinarian:
-                description: The consultation's veterinarian of record.
-                allOf:
-                  - $ref: '#/components/schemas/PersonSummary'
+              veterinarian: { $ref: '#/components/schemas/PersonSummary' }
         pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:

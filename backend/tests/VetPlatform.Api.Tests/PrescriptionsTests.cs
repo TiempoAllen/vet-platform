@@ -387,6 +387,33 @@ public sealed class PrescriptionsTests(DatabaseApiFactory factory) : IClassFixtu
         Assert.Equal(PostgresErrorCodes.CheckViolation, noReason.SqlState);
     }
 
+    [Theory]
+    [InlineData("prescriptions")]
+    [InlineData("diagnoses")]
+    [InlineData("treatments")]
+    public async Task Database_RefusesMovingClinicalItemsOutOfACompletedConsultation(string table)
+    {
+        var clinic = await ClinicAsync();
+        var signed = await OpenAsync(clinic);
+        await AddAsync(clinic, signed, Amoxicillin());
+        await OkAsync(await clinic.Vet.PostAsJsonAsync($"/api/consultations/{signed}/diagnoses", new { name = "Otitis" }));
+        await OkAsync(await clinic.Vet.PostAsJsonAsync($"/api/consultations/{signed}/treatments", new { name = "Flush", type = "Procedure" }));
+        await OkAsync(await CompleteAsync(clinic, signed));
+        var open = await OpenAsync(clinic); // same patient, so the composite foreign key alone would allow the move
+
+        var sql = table switch
+        {
+            "prescriptions" => "UPDATE prescriptions SET consultation_id = {0} WHERE consultation_id = {1}",
+            "diagnoses" => "UPDATE diagnoses SET consultation_id = {0} WHERE consultation_id = {1}",
+            _ => "UPDATE treatments SET consultation_id = {0} WHERE consultation_id = {1}",
+        };
+
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+            db.Database.ExecuteSqlRawAsync(sql, open, signed)));
+
+        Assert.Equal("42501", exception.SqlState);
+    }
+
     [Fact]
     public async Task Database_KeepsPrescriptionsOnTheirConsultationsPatient()
     {
@@ -399,8 +426,15 @@ public sealed class PrescriptionsTests(DatabaseApiFactory factory) : IClassFixtu
         var otherPatient = (await patient.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
 
         var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
-            db.Database.ExecuteSqlRawAsync("UPDATE prescriptions SET patient_id = {0} WHERE consultation_id = {1}", otherPatient, id)));
+            db.Database.ExecuteSqlRawAsync(
+                "INSERT INTO prescriptions (id, clinic_id, consultation_id, patient_id, medication_name, dose, frequency, quantity, quantity_unit, refills, status, prescribed_by_user_id, created_at, updated_at) " +
+                "SELECT gen_random_uuid(), clinic_id, id, {0}, 'x', '1', 'daily', 1, 'tab', 0, 'Active', veterinarian_id, now(), now() FROM consultations WHERE id = {1}",
+                otherPatient, id)));
 
         Assert.Equal(PostgresErrorCodes.ForeignKeyViolation, exception.SqlState);
+        // Moving an existing row to another patient is refused by the trigger before the key is even checked.
+        var move = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+            db.Database.ExecuteSqlRawAsync("UPDATE prescriptions SET patient_id = {0} WHERE consultation_id = {1}", otherPatient, id)));
+        Assert.Equal("42501", move.SqlState);
     }
 }

@@ -103,12 +103,19 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             // Prescriptions follow their consultation (ADR-013): anything while it is in progress, except being
             // cancelled; on a completed one only the single step Active -> Cancelled, which may touch nothing but the
             // status, the cancellation fields and updated_at (compared as whole rows, so future columns are covered);
-            // nothing on a discarded one. The parent is read FOR SHARE so a concurrent completion is waited for.
+            // nothing on a discarded one. The parent is read FOR SHARE so a concurrent completion is waited for. A row
+            // never moves to another consultation (or clinic or patient): the check reads only the new parent, so a
+            // move would otherwise take a frozen row out of a completed consultation.
             migrationBuilder.Sql("""
                 CREATE FUNCTION prescriptions_follow_consultation() RETURNS trigger LANGUAGE plpgsql AS $$
                 DECLARE
                     parent_status text;
                 BEGIN
+                    IF TG_OP = 'UPDATE' AND (NEW.clinic_id, NEW.patient_id, NEW.consultation_id)
+                        IS DISTINCT FROM (OLD.clinic_id, OLD.patient_id, OLD.consultation_id) THEN
+                        RAISE EXCEPTION 'a prescription cannot move to another consultation'
+                            USING ERRCODE = 'insufficient_privilege';
+                    END IF;
                     SELECT status INTO parent_status FROM consultations
                     WHERE id = COALESCE(NEW.consultation_id, OLD.consultation_id)
                       AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
@@ -138,6 +145,69 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     BEFORE TRUNCATE ON prescriptions
                     FOR EACH STATEMENT EXECUTE FUNCTION clinical_items_reject_truncate();
                 """);
+
+            // The B-12 triggers had the same gap (found in the B-13 review): diagnoses and treatments never move either.
+            migrationBuilder.Sql(FollowConsultationFunctions(refuseMoves: true));
+        }
+
+        /// <summary>
+        /// The B-12 trigger functions for diagnoses and treatments (ADR-012), with or without the check that a row stays
+        /// on its consultation. Down restores the B-12 versions.
+        /// </summary>
+        private static string FollowConsultationFunctions(bool refuseMoves)
+        {
+            string Guard(string what) => refuseMoves
+                ? $"""
+                    IF TG_OP = 'UPDATE' AND (NEW.clinic_id, NEW.patient_id, NEW.consultation_id)
+                        IS DISTINCT FROM (OLD.clinic_id, OLD.patient_id, OLD.consultation_id) THEN
+                        RAISE EXCEPTION 'a {what} cannot move to another consultation'
+                            USING ERRCODE = 'insufficient_privilege';
+                    END IF;
+                """
+                : "";
+
+            return $$"""
+                CREATE OR REPLACE FUNCTION diagnoses_follow_consultation() RETURNS trigger LANGUAGE plpgsql AS $$
+                DECLARE
+                    parent_status text;
+                BEGIN
+                {{Guard("diagnosis")}}
+                    -- FOR SHARE: wait for a concurrent completion of the consultation instead of reading its old status.
+                    SELECT status INTO parent_status FROM consultations
+                    WHERE id = COALESCE(NEW.consultation_id, OLD.consultation_id)
+                      AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
+                    FOR SHARE;
+                    IF parent_status IS NULL OR parent_status = 'InProgress' THEN
+                        RETURN COALESCE(NEW, OLD); -- a missing parent is left to the foreign key
+                    END IF;
+                    -- On a completed consultation only status (and updated_at) may change; every other column, present
+                    -- or future, must stay as it was.
+                    IF TG_OP = 'UPDATE' AND parent_status = 'Completed'
+                        AND (to_jsonb(NEW) - 'status' - 'updated_at') = (to_jsonb(OLD) - 'status' - 'updated_at') THEN
+                        RETURN NEW;
+                    END IF;
+                    RAISE EXCEPTION 'diagnoses of a % consultation cannot be changed this way', parent_status
+                        USING ERRCODE = 'insufficient_privilege';
+                END;
+                $$;
+
+                CREATE OR REPLACE FUNCTION treatments_follow_consultation() RETURNS trigger LANGUAGE plpgsql AS $$
+                DECLARE
+                    parent_status text;
+                BEGIN
+                {{Guard("treatment")}}
+                    SELECT status INTO parent_status FROM consultations
+                    WHERE id = COALESCE(NEW.consultation_id, OLD.consultation_id)
+                      AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
+                    FOR SHARE;
+                    IF parent_status IS NULL OR parent_status = 'InProgress' THEN
+                        RETURN COALESCE(NEW, OLD);
+                    END IF;
+                    RAISE EXCEPTION 'treatments of a % consultation cannot be changed', parent_status
+                        USING ERRCODE = 'insufficient_privilege';
+                END;
+                $$;
+                """;
         }
 
         /// <inheritdoc />
@@ -158,6 +228,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 name: "prescriptions");
 
             migrationBuilder.Sql("DROP FUNCTION IF EXISTS prescriptions_follow_consultation();");
+            migrationBuilder.Sql(FollowConsultationFunctions(refuseMoves: false));
         }
     }
 }

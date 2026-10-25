@@ -154,6 +154,7 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `clinical.read` | ✓ | ✓ | ✓ | – | – |
 | `clinical.write` | – | ✓ | ✓ | – | – |
 | `consultations.complete` | – | ✓ | – | – | – |
+| `prescriptions.issue` | – | ✓ | – | – | – |
 
 **User object**
 
@@ -771,8 +772,9 @@ otherwise); removing that diagnosis unlinks the prescription. `prescribedBy` is 
 | `DELETE /api/consultations/:id/prescriptions/:prescriptionId` | `prescriptions.issue` | removes it | `409` |
 | `POST /api/consultations/:id/prescriptions/:prescriptionId/cancel` | `prescriptions.issue` | `409` (edit or remove it instead) | `{ "reason": "..." }` (required, max 500, trimmed): `Active` → `Cancelled`, recording who and when; an already cancelled one is `409` |
 
-Each returns `200` with the whole consultation. A discarded consultation's prescriptions cannot change at all
-(`409`). At most 50 prescriptions per consultation (`409`). Unknown prescriptions (or another clinic's, or one of
+Each returns `200` with the whole consultation. A body that fails field validation (missing, blank or too long) is
+`422` before the consultation's state is looked at (`409`), as everywhere (section 2). A discarded consultation's
+prescriptions cannot change at all (`409`). At most 50 prescriptions per consultation (`409`). Unknown prescriptions (or another clinic's, or one of
 another consultation) are `404`. The database enforces the same freeze: after completion only the cancellation step
 is possible. Audited (`prescription.added`, `.updated`, `.removed`, `.cancelled`) with ids, field names and statuses,
 never medication names, instructions or the cancellation reason. Controlled-drug logging is not part of this
