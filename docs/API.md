@@ -409,7 +409,7 @@ Entry types so far:
 | `AppointmentCompleted` | An appointment was completed (`occurredAt` = `completedAt`). | `appointment`: `{ id, startAt, endAt, type, veterinarian: { id, name } }` |
 | `AppointmentCancelled` | An appointment was cancelled (`occurredAt` = cancellation time). | `appointment` as above, `cancelledBy`: `Client` or `Clinic`. The reason is not shown. |
 | `AppointmentNoShow` | An appointment was marked no-show. Disappears if the no-show is undone. | `appointment` as above |
-| `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ] }` (diagnoses primary first; status as it is now) |
+| `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ], prescriptions: [ { id, medicationName, status } ] }` (diagnoses primary first, prescriptions in the order recorded; statuses as they are now) |
 
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
 consultation ids shown).
@@ -639,7 +639,8 @@ Implemented in B-11 (design: `ARCHITECTURE.md` ADR-011). Clinical records: every
 and **audited** (SECURITY.md section 10). Other clinics' consultations and patients are `404`. There is no `DELETE`.
 
 Permissions: `clinical.read` (Admin, Veterinarian, Nurse) reads; `clinical.write` (Veterinarian, Nurse) opens,
-edits, discards and adds addenda; `consultations.complete` (Veterinarian only) signs a consultation off.
+edits, discards and adds addenda; `consultations.complete` (Veterinarian only) signs a consultation off;
+`prescriptions.issue` (Veterinarian only) writes prescriptions (section 9).
 Receptionist and Inventory have no clinical access.
 
 **Consultation object** (`startedAt`, `completedAt`, `discardedAt` and addendum times carry the clinic's local offset;
@@ -656,7 +657,7 @@ Receptionist and Inventory have no clinical access.
       "subjective": "..." | null, "objective": "..." | null, "assessment": "..." | null, "plan": "..." | null,
       "vitals": { "weightKg": 31.25 | null, "temperatureC": 38.6 | null, "heartRate": 96 | null,
                   "respiratoryRate": 24 | null, "bodyConditionScore": 5 | null, "painScore": 3 | null },
-      "diagnoses": [ ... section 9 ... ], "treatments": [ ... section 9 ... ],
+      "diagnoses": [ ... section 9 ... ], "treatments": [ ... section 9 ... ], "prescriptions": [ ... section 9 ... ],
       "addenda": [ { "id": "uuid", "text": "...", "author": { "id", "name" } | null, "createdAt": "..." } ],
       "createdBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
     }
@@ -709,7 +710,8 @@ Concurrent changes to one consultation are applied one after the other. Every ch
 never note or addendum text.
 
 ## 9. Diagnoses, treatments, prescriptions, vaccinations
-Diagnoses and treatments are implemented (B-12, ADR-012); prescriptions (B-13) and vaccinations (B-14) follow.
+Diagnoses and treatments are implemented (B-12, ADR-012), prescriptions too (B-13, ADR-013); vaccinations (B-14)
+follow.
 
 Diagnoses and treatments belong to one consultation and appear in the consultation object (section 8) as
 `diagnoses` (primary first, then in the order recorded) and `treatments` (in the order recorded). Every change below
@@ -740,6 +742,48 @@ of the **same** consultation (`422` otherwise).
 
 A discarded consultation's items cannot change at all (`409`). At most 50 diagnoses and 100 treatments per
 consultation (`409`). The database enforces the same freeze, so these rules hold even outside the API.
+
+**Prescription**: take-home medication. Only veterinarians write prescriptions (`prescriptions.issue`); every
+clinical reader sees them.
+
+    {
+      "id": "uuid", "medicationName": "Amoxicillin 250 mg", "dose": "1 tablet", "route": "Oral" | null,
+      "frequency": "Twice daily", "duration": "7 days" | null, "quantity": 14, "quantityUnit": "tablets",
+      "refills": 0, "instructions": "Give with food" | null, "diagnosisId": "uuid" | null,
+      "status": "Active" | "Cancelled", "prescribedBy": { "id", "name" } | null,
+      "cancelledAt": "..." | null, "cancelledBy": { "id", "name" } | null, "cancelReason": "..." | null,
+      "createdAt": "...", "updatedAt": "..."
+    }
+
+`medicationName` (max 200), `dose` and `frequency` (max 100 each), `quantity` and `quantityUnit` (max 50) are required;
+`route`, `duration` (max 100 each) and `instructions` (max 2000) are optional. `medicationName` is free text until
+the inventory product catalogue exists (B-19). `quantity` is a number above 0 and at most 100000 with at most 3
+decimals (e.g. 14 tablets, 10.5 ml); it is returned in its shortest form. `refills` (0 to 12, default 0) is recorded
+only; repeat supplies are not tracked yet. `diagnosisId` links one diagnosis of the **same** consultation (`422`
+otherwise); removing that diagnosis unlinks the prescription. `prescribedBy` is the veterinarian who added it.
+`Active` means "not cancelled", not "course still running". `cancelledAt` carries the clinic's offset; `createdAt` /
+`updatedAt` are UTC. Prescriptions appear in the consultation's `prescriptions`, in the order recorded.
+
+| Endpoint | Permission | While `InProgress` | After `Completed` |
+|---|---|---|---|
+| `POST /api/consultations/:id/prescriptions` | `prescriptions.issue` | adds (`422` on invalid fields) | `409` |
+| `PATCH /api/consultations/:id/prescriptions/:prescriptionId` | `prescriptions.issue` | any field; omitted or `null` unchanged, `""` clears optional text (required text cannot be blank: `422`), `"diagnosisId": null` unlinks | `409` |
+| `DELETE /api/consultations/:id/prescriptions/:prescriptionId` | `prescriptions.issue` | removes it | `409` |
+| `POST /api/consultations/:id/prescriptions/:prescriptionId/cancel` | `prescriptions.issue` | `409` (edit or remove it instead) | `{ "reason": "..." }` (required, max 500, trimmed): `Active` → `Cancelled`, recording who and when; an already cancelled one is `409` |
+
+Each returns `200` with the whole consultation. A discarded consultation's prescriptions cannot change at all
+(`409`). At most 50 prescriptions per consultation (`409`). Unknown prescriptions (or another clinic's, or one of
+another consultation) are `404`. The database enforces the same freeze: after completion only the cancellation step
+is possible. Audited (`prescription.added`, `.updated`, `.removed`, `.cancelled`) with ids, field names and statuses,
+never medication names, instructions or the cancellation reason. Controlled-drug logging is not part of this
+milestone (SRS Q-5, B-20).
+
+`GET /api/patients/:id/prescriptions` (`clinical.read`): the patient's **medication list**: prescriptions of completed
+consultations, most recently completed consultation first (`consultationCompletedAt` descending), in the order
+recorded within one, paginated. `status` filters by an exact status (`Active`, `Cancelled`). An unknown or another
+clinic's patient is `404`. Each item: `{ "prescription": { ... }, "consultationId", "consultationCompletedAt" (clinic
+offset), "veterinarian": { id, name } }` (the consultation's veterinarian of record). In-progress and discarded
+consultations are left out. A clinical read: audited (`prescription.listed`).
 
 `GET /api/patients/:id/diagnoses` (`clinical.read`): the patient's **problem list**: diagnoses of completed
 consultations, most recently completed consultation first (`consultationCompletedAt` descending), primary first within

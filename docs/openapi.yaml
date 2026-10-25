@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.12.0
-  summary: Implemented endpoints as of milestone B-12.
+  version: 0.13.0
+  summary: Implemented endpoints as of milestone B-13.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -1475,6 +1475,143 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/consultations/{id}/prescriptions:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+    post:
+      tags: [Consultations]
+      operationId: addPrescription
+      summary: Add a prescription
+      description: 'Requires `prescriptions.issue` (veterinarians). While the consultation is InProgress; otherwise 409. At most 50 per consultation.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePrescriptionRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{id}/prescriptions/{prescriptionId}:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+      - { name: prescriptionId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Consultations]
+      operationId: updatePrescription
+      summary: Edit a prescription
+      description: 'Requires `prescriptions.issue` (veterinarians). While the consultation is InProgress; otherwise 409 (after completion it can only be cancelled). An explicit null diagnosisId unlinks.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePrescriptionRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Consultations]
+      operationId: removePrescription
+      summary: Remove a prescription
+      description: 'Requires `prescriptions.issue` (veterinarians). While the consultation is InProgress; otherwise 409.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/consultations/{id}/prescriptions/{prescriptionId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ConsultationId'
+      - { name: prescriptionId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Consultations]
+      operationId: cancelPrescription
+      summary: Cancel a prescription of a completed consultation
+      description: 'Requires `prescriptions.issue` (veterinarians). Only when the consultation is Completed and the prescription Active (Active to Cancelled, recording who and when); otherwise 409. The reason is never audited.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelPrescriptionRequest' }
+      responses:
+        '200':
+          description: The whole consultation after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Consultation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/patients/{patientId}/prescriptions:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Consultations]
+      operationId: listPatientPrescriptions
+      summary: The patient's medication list
+      description: Requires `clinical.read`. Prescriptions of completed consultations, most recently completed consultation first (consultationCompletedAt descending), in the order recorded within one. Unknown patient 404. Audited (prescription.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PrescriptionStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of prescriptions.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PatientPrescriptionPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -1573,7 +1710,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -1976,7 +2113,7 @@ components:
                 consultation:
                   type: object
                   additionalProperties: false
-                  required: [id, startedAt, completedAt, appointmentId, veterinarian, assessment, diagnoses]
+                  required: [id, startedAt, completedAt, appointmentId, veterinarian, assessment, diagnoses, prescriptions]
                   properties:
                     id: { type: string, format: uuid }
                     startedAt: { type: string, format: date-time, description: UTC. }
@@ -1996,6 +2133,17 @@ components:
                           name: { type: string }
                           status: { $ref: '#/components/schemas/DiagnosisStatus' }
                           isPrimary: { type: boolean }
+                    prescriptions:
+                      type: array
+                      description: In the order recorded; status as it is now.
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [id, medicationName, status]
+                        properties:
+                          id: { type: string, format: uuid }
+                          medicationName: { type: string }
+                          status: { $ref: '#/components/schemas/PrescriptionStatus' }
 
     PatientRegisteredDetails:
       type: object
@@ -2311,7 +2459,7 @@ components:
     Consultation:
       type: object
       additionalProperties: false
-      required: [id, patient, appointmentId, veterinarian, status, startedAt, completedAt, completedBy, discardedAt, discardReason, subjective, objective, assessment, plan, vitals, diagnoses, treatments, addenda, createdBy, createdAt, updatedAt]
+      required: [id, patient, appointmentId, veterinarian, status, startedAt, completedAt, completedBy, discardedAt, discardReason, subjective, objective, assessment, plan, vitals, diagnoses, treatments, prescriptions, addenda, createdBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         patient:
@@ -2356,6 +2504,10 @@ components:
           type: array
           description: In the order recorded.
           items: { $ref: '#/components/schemas/Treatment' }
+        prescriptions:
+          type: array
+          description: In the order recorded.
+          items: { $ref: '#/components/schemas/Prescription' }
         addenda:
           type: array
           description: Oldest first. Append-only.
@@ -2548,6 +2700,99 @@ components:
               consultationId: { type: string, format: uuid }
               consultationCompletedAt: { type: string, format: date-time, description: With the clinic's local offset. }
               veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    PrescriptionStatus:
+      type: string
+      description: Active means not cancelled (it says nothing about whether the course is still running).
+      enum: [Active, Cancelled]
+
+    Prescription:
+      type: object
+      additionalProperties: false
+      required: [id, medicationName, dose, route, frequency, duration, quantity, quantityUnit, refills, instructions, diagnosisId, status, prescribedBy, cancelledAt, cancelledBy, cancelReason, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        medicationName: { type: string, maxLength: 200, description: Free text until the product catalogue exists (B-19). }
+        dose: { type: string, maxLength: 100 }
+        route: { type: [string, 'null'], maxLength: 100 }
+        frequency: { type: string, maxLength: 100 }
+        duration: { type: [string, 'null'], maxLength: 100 }
+        quantity: { type: number, exclusiveMinimum: 0, maximum: 100000, description: 'At most 3 decimals; shortest form (14, not 14.000).' }
+        quantityUnit: { type: string, maxLength: 50, description: 'E.g. tablets or ml.' }
+        refills: { type: integer, minimum: 0, maximum: 12, description: Recorded only; repeat supplies are not tracked yet. }
+        instructions: { type: [string, 'null'], maxLength: 2000 }
+        diagnosisId: { type: [string, 'null'], format: uuid, description: A diagnosis of the same consultation; unlinked when it is removed. }
+        status: { $ref: '#/components/schemas/PrescriptionStatus' }
+        prescribedBy:
+          description: The veterinarian who added it.
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        cancelledAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        cancelledBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        cancelReason: { type: [string, 'null'], maxLength: 500 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    CreatePrescriptionRequest:
+      type: object
+      required: [medicationName, dose, frequency, quantity, quantityUnit]
+      description: Optional text may be omitted, null or blank (stores nothing). refills defaults to 0.
+      properties:
+        medicationName: { type: string, minLength: 1, maxLength: 200 }
+        dose: { type: string, minLength: 1, maxLength: 100 }
+        route: { type: [string, 'null'], maxLength: 100 }
+        frequency: { type: string, minLength: 1, maxLength: 100 }
+        duration: { type: [string, 'null'], maxLength: 100 }
+        quantity: { type: number, exclusiveMinimum: 0, maximum: 100000, description: At most 3 decimals. }
+        quantityUnit: { type: string, minLength: 1, maxLength: 50 }
+        refills: { type: [integer, 'null'], minimum: 0, maximum: 12 }
+        instructions: { type: [string, 'null'], maxLength: 2000 }
+        diagnosisId: { type: [string, 'null'], format: uuid }
+
+    UpdatePrescriptionRequest:
+      type: object
+      description: Omitted or null fields are unchanged; an empty string clears optional text (required text cannot be blank); an explicit null diagnosisId unlinks.
+      properties:
+        medicationName: { type: [string, 'null'], minLength: 1, maxLength: 200 }
+        dose: { type: [string, 'null'], minLength: 1, maxLength: 100 }
+        route: { type: [string, 'null'], maxLength: 100 }
+        frequency: { type: [string, 'null'], minLength: 1, maxLength: 100 }
+        duration: { type: [string, 'null'], maxLength: 100 }
+        quantity: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 100000 }
+        quantityUnit: { type: [string, 'null'], minLength: 1, maxLength: 50 }
+        refills: { type: [integer, 'null'], minimum: 0, maximum: 12 }
+        instructions: { type: [string, 'null'], maxLength: 2000 }
+        diagnosisId: { type: [string, 'null'], format: uuid }
+
+    CancelPrescriptionRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    PatientPrescriptionPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [prescription, consultationId, consultationCompletedAt, veterinarian]
+            properties:
+              prescription: { $ref: '#/components/schemas/Prescription' }
+              consultationId: { type: string, format: uuid }
+              consultationCompletedAt: { type: string, format: date-time, description: With the clinic's local offset. }
+              veterinarian:
+                description: The consultation's veterinarian of record.
+                allOf:
+                  - $ref: '#/components/schemas/PersonSummary'
         pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:

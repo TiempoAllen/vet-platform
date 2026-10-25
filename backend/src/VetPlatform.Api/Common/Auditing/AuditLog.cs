@@ -84,12 +84,17 @@ public static class AuditActions
     public const string TreatmentAdded = "treatment.added";
     public const string TreatmentUpdated = "treatment.updated";
     public const string TreatmentRemoved = "treatment.removed";
+    public const string PrescriptionAdded = "prescription.added";
+    public const string PrescriptionUpdated = "prescription.updated";
+    public const string PrescriptionRemoved = "prescription.removed";
+    public const string PrescriptionCancelled = "prescription.cancelled";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";
     public const string ConsultationsListed = "consultation.listed";
     public const string PatientHistoryViewed = "patient.history_viewed";
     public const string DiagnosesListed = "diagnosis.listed";
+    public const string PrescriptionsListed = "prescription.listed";
 }
 
 /// <summary>
