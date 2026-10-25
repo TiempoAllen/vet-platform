@@ -110,7 +110,7 @@ public sealed class ConsultationsTests(DatabaseApiFactory factory) : IClassFixtu
             [
                 "id", "patient", "appointmentId", "veterinarian", "status", "startedAt", "completedAt", "completedBy",
                 "discardedAt", "discardReason", "subjective", "objective", "assessment", "plan", "vitals", "diagnoses",
-                "treatments", "addenda",
+                "treatments", "prescriptions", "addenda",
                 "createdBy", "createdAt", "updatedAt",
             ],
             created.EnumerateObject().Select(p => p.Name));
@@ -426,7 +426,7 @@ public sealed class ConsultationsTests(DatabaseApiFactory factory) : IClassFixtu
         Assert.Equal("ConsultationCompleted", entry.GetProperty("type").GetString());
         Assert.Equal(clinic.VetUser.Id, entry.GetProperty("actor").GetProperty("id").GetGuid());
         var consultation = entry.GetProperty("details").GetProperty("consultation");
-        Assert.Equal(["id", "startedAt", "completedAt", "appointmentId", "veterinarian", "assessment", "diagnoses"], consultation.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "startedAt", "completedAt", "appointmentId", "veterinarian", "assessment", "diagnoses", "prescriptions"], consultation.EnumerateObject().Select(p => p.Name));
         Assert.Equal("Otitis externa", consultation.GetProperty("assessment").GetString());
         Assert.Equal(2, forVet.GetProperty("pagination").GetProperty("total").GetInt32());
 

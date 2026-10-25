@@ -388,8 +388,15 @@ public sealed class DiagnosesTreatmentsTests(DatabaseApiFactory factory) : IClas
         var otherPatient = (await patient.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
 
         var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
-            db.Database.ExecuteSqlRawAsync("UPDATE diagnoses SET patient_id = {0} WHERE consultation_id = {1}", otherPatient, id)));
+            db.Database.ExecuteSqlRawAsync(
+                "INSERT INTO diagnoses (id, clinic_id, consultation_id, patient_id, name, status, is_primary, created_at, updated_at) " +
+                "SELECT gen_random_uuid(), clinic_id, id, {0}, 'x', 'Provisional', false, now(), now() FROM consultations WHERE id = {1}",
+                otherPatient, id)));
 
         Assert.Equal(PostgresErrorCodes.ForeignKeyViolation, exception.SqlState);
+        // Since B-13 an UPDATE that moves a row to another patient is refused by the trigger first (ADR-013).
+        var move = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+            db.Database.ExecuteSqlRawAsync("UPDATE diagnoses SET patient_id = {0} WHERE consultation_id = {1}", otherPatient, id)));
+        Assert.Equal("42501", move.SqlState);
     }
 }

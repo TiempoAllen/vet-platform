@@ -482,3 +482,44 @@ Choose the simplest solution that satisfies documented requirements, security, m
   sign-off do not add an addendum automatically (the audit entry records who and when); treatments do not touch
   inventory until B-19+.
 
+### ADR-013: Prescriptions (decided in B-13)
+- **Confirmed with the user:** only veterinarians write prescriptions (new permission `prescriptions.issue`, granted
+  to Veterinarian only; nurses and administrators read them through `clinical.read`); prescriptions exist only inside
+  a consultation (nested like treatments; repeats without a visit can come later); editable while the consultation is
+  in progress, then frozen, with a veterinarian able to cancel one with a required reason (`Active` → `Cancelled`);
+  numeric quantity with a free-text unit, a refills count that is recorded only, and an optional link to a diagnosis
+  of the same consultation; a read-only, audited patient medication list; prescriptions shown with their current
+  status inside the existing `ConsultationCompleted` history entry (no new entry type); no controlled-drug flag until
+  B-20 answers SRS Q-5.
+- **Required fields:** medication name, dose, frequency, quantity and unit, because a prescription without them cannot
+  be dispensed; route, duration and instructions are optional. Medication names are free text until the inventory
+  product catalogue (B-19) can be referenced.
+- **Prescriber:** `prescribed_by_user_id` is the veterinarian who added the prescription; it does not change when
+  another veterinarian edits it while the consultation is open (the audit log records every editor). The consultation's
+  veterinarian of record is shown beside it in the medication list.
+- **Patient and diagnosis consistency in the database:** the same composite keys as treatments (ADR-012): the
+  prescription references `consultations (clinic_id, patient_id, id)` and its diagnosis link uses
+  `(clinic_id, consultation_id, diagnosis_id)`. Removing a diagnosis unlinks its treatments and prescriptions in the
+  same save, and the audit entry lists both.
+- **Freeze in the database:** a trigger follows the consultation's status (read `FOR SHARE`): anything while it is in
+  progress except a `Cancelled` row (cancelling is only meaningful after sign-off; in progress a prescription is edited
+  or removed); after completion only the one-way step `Active` → `Cancelled`, which may change nothing but the status,
+  the cancellation fields and `updated_at` (compared as whole rows, so future columns are covered); nothing on a
+  discarded consultation. `TRUNCATE` is refused. A lifecycle CHECK ties the cancellation fields to the status. The
+  service applies the same rules first and they only fire on a bug or a raw write.
+- **Rows never move between consultations** (found in the B-13 review): the triggers judge an UPDATE by the new parent
+  only, so moving a row from a completed consultation to an open one of the same patient passed the composite key and
+  the trigger. The prescriptions trigger now refuses any change of `clinic_id`, `patient_id` or `consultation_id`, and
+  the same migration re-creates the B-12 diagnoses and treatments trigger functions with that check (its rollback
+  restores the B-12 versions). The API never changes these columns.
+- **Concurrency:** every change runs under the consultation's row lock, like diagnoses and treatments, so a
+  cancellation and a concurrent completion or a second cancellation are serialised.
+- **Audit:** `prescription.added`, `.updated` (field names), `.removed`, `.cancelled` and the clinical read
+  `prescription.listed`; metadata never holds medication names, instructions or the cancellation reason.
+- **Statuses:** `Active` means "not cancelled", not "course still running"; an end date can be derived later from the
+  duration if it becomes structured.
+- **Accepted for now:** the medication list reads all of a patient's prescriptions of completed consultations through
+  the consultation foreign key's index and pages in SQL (cheap at per-patient sizes); refills are not tracked against
+  dispensing; prescriptions do not touch inventory or billing until B-16/B-19+; a prescription cannot be re-activated
+  after cancellation (a new consultation prescribes again); a prescription printout or label is a frontend/reporting
+  concern.

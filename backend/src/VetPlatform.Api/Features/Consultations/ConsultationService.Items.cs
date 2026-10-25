@@ -142,7 +142,10 @@ public sealed partial class ConsultationService
             return changed.Count == 0 ? null : (object)new { diagnosisId, fields = changed, from = before, to = diagnosis.Status };
         }, cancellationToken);
 
-    /// <summary>Removes a diagnosis of an in-progress consultation; treatments linked to it are unlinked, not removed.</summary>
+    /// <summary>
+    /// Removes a diagnosis of an in-progress consultation; treatments and prescriptions linked to it are unlinked, not
+    /// removed.
+    /// </summary>
     public Task<ConsultationResponse> RemoveDiagnosisAsync(Guid id, Guid diagnosisId, CancellationToken cancellationToken) =>
         WriteAsync(id, AuditActions.DiagnosisRemoved, consultation =>
         {
@@ -155,9 +158,20 @@ public sealed partial class ConsultationService
                 treatment.DiagnosisId = null;
             }
 
+            var unlinkedPrescriptions = consultation.Prescriptions.Where(p => p.DiagnosisId == diagnosisId).ToList();
+            foreach (var prescription in unlinkedPrescriptions)
+            {
+                prescription.DiagnosisId = null;
+            }
+
             consultation.Diagnoses.Remove(diagnosis);
             db.Diagnoses.Remove(diagnosis);
-            return Task.FromResult<object?>(new { diagnosisId, unlinkedTreatmentIds = unlinked.Select(t => t.Id).ToList() });
+            return Task.FromResult<object?>(new
+            {
+                diagnosisId,
+                unlinkedTreatmentIds = unlinked.Select(t => t.Id).ToList(),
+                unlinkedPrescriptionIds = unlinkedPrescriptions.Select(p => p.Id).ToList(),
+            });
         }, cancellationToken);
 
     // ---------- Treatments ----------

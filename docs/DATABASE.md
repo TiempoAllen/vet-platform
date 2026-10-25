@@ -191,18 +191,31 @@ on a `Completed` consultation only a diagnosis's status may change (every other 
 stay); nothing on a `Discarded` one. `TRUNCATE` is refused on both. Rolling back refuses while rows exist.
 
 ### Prescription
-- id
-- consultation_id
-- patient_id
-- veterinarian_id
-- medication_name
-- dosage
-- route
-- frequency
-- duration
-- quantity
-- instructions
-- status
+Implemented in B-13 (table `prescriptions`, ADR-013). `veterinarian_id` in the original list became
+`prescribed_by_user_id`; `dosage` became `dose`.
+- id, clinic_id (FK clinics); consultation_id, patient_id: composite FK `(clinic_id, patient_id, consultation_id) →
+  consultations (clinic_id, patient_id, id)` RESTRICT, so a prescription always belongs to its consultation's patient
+  (its index also serves the patient's medication list)
+- diagnosis_id (nullable): composite FK `(clinic_id, consultation_id, diagnosis_id) → diagnoses (clinic_id,
+  consultation_id, id)` RESTRICT; the service unlinks it before removing the diagnosis (a raw delete of a linked
+  diagnosis fails)
+- medication_name (max 200), dose, frequency (max 100 each), quantity_unit (max 50): required, CHECK not blank; route,
+  duration (max 100 each), instructions (max 2000) optional
+- quantity `numeric(10,3)` (CHECK > 0 and ≤ 100000), refills (CHECK 0 to 12)
+- status (`Active`, `Cancelled`; CHECK); cancelled_at, cancelled_by_user_id (composite FK to users), cancel_reason (max
+  500): CHECK `ck_prescriptions_lifecycle` sets them exactly when `Cancelled` (reason not blank)
+- prescribed_by_user_id (composite FK to users, required), created_at, updated_at
+
+A trigger follows the consultation (reading its status `FOR SHARE`): anything while it is `InProgress` except a
+cancelled row; on a `Completed` consultation only the single step `Active` → `Cancelled`, changing nothing but the
+status, the cancellation columns and `updated_at` (compared as whole rows); nothing on a `Discarded` one. `TRUNCATE` is
+refused. Rolling back refuses while rows exist. The trigger also refuses any UPDATE that changes `clinic_id`,
+`patient_id` or `consultation_id`, because it judges a change by the new parent only; B-13 added the same check to the
+diagnoses and treatments triggers.
+
+Indexes: one per foreign key, all leading with clinic_id: (clinic_id, patient_id, consultation_id) (also the medication
+list), (clinic_id, consultation_id, diagnosis_id), (clinic_id, prescribed_by_user_id), (clinic_id,
+cancelled_by_user_id).
 
 ### Vaccination
 - id

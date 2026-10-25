@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-12). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-13). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -137,7 +137,7 @@ erDiagram
   }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms
@@ -200,7 +200,8 @@ emails. Action names so far:
 `consultation.created`, `consultation.updated`, `consultation.completed`, `consultation.discarded`,
 `consultation.addendum_added`, and the clinical reads `consultation.viewed`, `consultation.listed`,
 `patient.history_viewed`, `diagnosis.added`, `diagnosis.updated`, `diagnosis.removed`, `treatment.added`,
-`treatment.updated`, `treatment.removed`, and the clinical read `diagnosis.listed`.
+`treatment.updated`, `treatment.removed`, `prescription.added`, `prescription.updated`, `prescription.removed`,
+`prescription.cancelled`, and the clinical reads `diagnosis.listed`, `prescription.listed`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 
@@ -252,7 +253,9 @@ Every module from B-05 onward follows this template; the milestone records any d
 
 This table is a proposal to be confirmed per milestone with the user; `Permissions.cs` is the source of truth.
 The `clients.*` row was confirmed and implemented in B-05, the `patients.*` row in B-06. B-08 added `schedules.read` (Admin, Veterinarian, Nurse, Receptionist),
-`schedules.manage` (Admin), `schedules.manage_own` (Veterinarian) and `settings.manage` (Admin). Endpoints whose
+`schedules.manage` (Admin), `schedules.manage_own` (Veterinarian) and `settings.manage` (Admin). The `clinical.*` row
+was confirmed in B-11 (plus `consultations.complete`, Veterinarian) and `prescriptions.issue` (Veterinarian only) in
+B-13. Endpoints whose
 finer rule lives in the service use `[RequireAnyPermission(...)]`, so a caller with none of the permissions is still
 refused before body validation.
 
