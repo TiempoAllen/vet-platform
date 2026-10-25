@@ -32,23 +32,27 @@ public sealed class AttachmentService(
     // ---------- Upload ----------
 
     /// <summary>
-    /// Stores a file for one owner. The owner is checked first (404, or 409 for a discarded consultation), then the
-    /// form (422), the type (415) and the size (413). The content is written before the row; if the row cannot be
-    /// saved the content is removed again.
+    /// Stores a file for an owner already resolved by <see cref="ResolveOwnerAsync"/> (before the body was read). Then
+    /// the form (422), the type (415) and the size (413) are checked. The content is written before the row; if the row
+    /// cannot be saved the content is removed again, unless the commit's outcome is unknown (an orphan file is
+    /// harmless, a row without content is not).
     /// </summary>
     public async Task<AttachmentResponse> UploadAsync(
-        AttachmentOwnerType ownerType,
-        Guid ownerId,
+        AttachmentOwner owner,
         AttachmentUpload upload,
         CancellationToken cancellationToken)
     {
         var zone = await ZoneAsync(cancellationToken);
-        var (patientId, consultationId, clientId) = await OwnerAsync(ownerType, ownerId, cancellationToken);
+        var (ownerType, patientId, consultationId, clientId) = owner;
 
         var file = CheckForm(upload);
-        await using var head = file.OpenReadStream();
         var header = new byte[FileSignatures.HeaderLength];
-        var read = await head.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, cancellationToken);
+        int read;
+        await using (var head = file.OpenReadStream())
+        {
+            read = await head.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, cancellationToken);
+        }
+
         var contentType = FileSignatures.Detect(header.AsSpan(0, read))
             ?? throw new ApiException(
                 StatusCodes.Status415UnsupportedMediaType, ErrorCodes.UnsupportedMediaType,
@@ -70,6 +74,7 @@ public sealed class AttachmentService(
             await files.SaveAsync(key, content, cancellationToken);
         }
 
+        var committing = false;
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -85,7 +90,7 @@ public sealed class AttachmentService(
                 ConsultationId = consultationId,
                 ClientId = clientId,
                 StorageKey = key,
-                FileName = FileSignatures.SafeFileName(file.FileName),
+                FileName = FileSignatures.SafeFileName(file.FileName, contentType),
                 ContentType = contentType,
                 SizeBytes = file.Length,
                 Sha256 = sha256,
@@ -98,8 +103,15 @@ public sealed class AttachmentService(
                 AuditActions.AttachmentUploaded, nameof(Attachment), attachment.Id,
                 new { ownerType, patientId, consultationId, clientId, contentType, sizeBytes = file.Length });
             await db.SaveChangesAsync(cancellationToken);
+            committing = true;
             await transaction.CommitAsync(cancellationToken);
             return AttachmentResponse.From(attachment, zone);
+        }
+        catch when (committing)
+        {
+            // The commit may have reached the database before the connection failed: keep the content.
+            logger.LogWarning("The commit of an attachment failed with an unknown outcome; its content is kept.");
+            throw;
         }
         catch
         {
@@ -117,11 +129,22 @@ public sealed class AttachmentService(
             () => db.Patients.AnyAsync(p => p.Id == patientId, cancellationToken),
             a => a.PatientId == patientId, query, cancellationToken);
 
-    public Task<PagedResponse<AttachmentResponse>> ListForConsultationAsync(Guid consultationId, AttachmentListQuery query, CancellationToken cancellationToken) =>
-        ListAsync(
+    /// <summary>
+    /// Filters on the consultation's patient as well, so the (clinic_id, patient_id, ...) indexes serve the query
+    /// instead of a scan of the clinic's files.
+    /// </summary>
+    public async Task<PagedResponse<AttachmentResponse>> ListForConsultationAsync(
+        Guid consultationId,
+        AttachmentListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var patientId = await db.Consultations.Where(c => c.Id == consultationId).Select(c => (Guid?)c.PatientId)
+            .SingleOrDefaultAsync(cancellationToken);
+        return await ListAsync(
             nameof(Consultation), consultationId,
-            () => db.Consultations.AnyAsync(c => c.Id == consultationId, cancellationToken),
-            a => a.ConsultationId == consultationId, query, cancellationToken);
+            () => Task.FromResult(patientId is not null),
+            a => a.PatientId == patientId && a.ConsultationId == consultationId, query, cancellationToken);
+    }
 
     public Task<PagedResponse<AttachmentResponse>> ListForClientAsync(Guid clientId, AttachmentListQuery query, CancellationToken cancellationToken) =>
         ListAsync(
@@ -228,8 +251,11 @@ public sealed class AttachmentService(
         return page;
     }
 
-    /// <summary>The owner columns for a new file; another clinic's or an unknown owner is 404.</summary>
-    private async Task<(Guid? PatientId, Guid? ConsultationId, Guid? ClientId)> OwnerAsync(
+    /// <summary>
+    /// The owner of a new file, checked before the upload's body is read: another clinic's or an unknown owner is 404,
+    /// a discarded consultation 409. The consultation is checked again under its lock when the row is inserted.
+    /// </summary>
+    public async Task<AttachmentOwner> ResolveOwnerAsync(
         AttachmentOwnerType ownerType,
         Guid ownerId,
         CancellationToken cancellationToken)
@@ -238,11 +264,11 @@ public sealed class AttachmentService(
         {
             case AttachmentOwnerType.Patient:
                 return await db.Patients.AnyAsync(p => p.Id == ownerId, cancellationToken)
-                    ? (ownerId, null, null)
+                    ? new AttachmentOwner(ownerType, ownerId, null, null)
                     : throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The patient was not found.");
             case AttachmentOwnerType.Client:
                 return await db.Clients.AnyAsync(c => c.Id == ownerId, cancellationToken)
-                    ? (null, null, ownerId)
+                    ? new AttachmentOwner(ownerType, null, null, ownerId)
                     : throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The client was not found.");
             default:
                 var consultation = await db.Consultations.AsNoTracking()
@@ -252,7 +278,7 @@ public sealed class AttachmentService(
                     ?? throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The consultation was not found.");
                 return consultation.Status == ConsultationStatus.Discarded
                     ? throw Conflict("The consultation was discarded; files cannot be attached to it.")
-                    : (consultation.PatientId, ownerId, null);
+                    : new AttachmentOwner(ownerType, consultation.PatientId, ownerId, null);
         }
     }
 
