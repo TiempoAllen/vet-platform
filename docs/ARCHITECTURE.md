@@ -545,7 +545,12 @@ Choose the simplest solution that satisfies documented requirements, security, m
   to another patient or consultation is refused too), and no DELETE or TRUNCATE. A lifecycle CHECK ties the void
   fields to the status. Voiding locks the row (`FOR NO KEY UPDATE`, after the clinic-filtered lookup), so two voids are
   serialised into one `200` and one `409`. Recording with a consultation link takes `FOR SHARE` on the consultation
-  after its clinic-filtered lookup and re-checks it, so a concurrent discard cannot slip in between.
+  after its clinic-filtered lookup and re-checks it, so a concurrent discard cannot slip in between. The trigger reads
+  the consultation's status `FOR SHARE` and only then tests it: a status filter inside the locking query (as first
+  written, found in the B-14 review) would skip a row that is being discarded instead of waiting for it.
+- **A later discard keeps the link** (confirmed design, made explicit in the review): the "not discarded" rule holds
+  when the dose is recorded; discarding the consultation afterwards does not touch the vaccination, whose rules do not
+  depend on the consultation. The dose was still given; void it if it was not.
 - **Due list:** for each patient and vaccine (lower-cased name) the latest active dose (`DISTINCT ON`, by
   administered day, then recording time, then id) is due when its `next_due_on` falls in the range; without `from`,
   overdue doses are included. A newer dose without a due date ends the series, and voiding the newest dose makes the
@@ -561,4 +566,8 @@ Choose the simplest solution that satisfies documented requirements, security, m
   vaccine (fine at clinic sizes; a partial index or a materialised "current dose" can follow if X-04 measures a need);
   vaccine names are grouped by exact text ignoring case, so "Rabies" and "Rabies 3yr" are separate series until B-19
   products exist; due dates are entered, not computed from a protocol; doses do not touch inventory (lot numbers are
-  not checked against stock) until B-19+; reminders are sent by people from the due list until B-25 notifications.
+  not checked against stock) until B-19+; reminders are sent by people from the due list until B-25 notifications;
+  the patient-active and veterinarian-active checks on recording take no lock, so a deactivation at the same moment
+  can still let one dose through (locking those rows here would cross the appointment -> veterinarian -> patient lock
+  order; the composite keys still keep everything in the clinic, as in ADR-006); the due list projects only the owner's
+  contact fields, so client notes and address are never loaded for reception.

@@ -1679,7 +1679,7 @@ paths:
         Requires `vaccinations.read_due` (Admin, Veterinarian, Nurse, Receptionist). For each active patient and vaccine
         (names compared ignoring case), the latest non-voided dose, if its nextDueOn is on or before `to` and, when
         given, on or after `from` (without `from` every overdue dose is included). A newer dose without a due date ends
-        the series. Ordered by nextDueOn, then patient name. Audited (vaccination.due_listed).
+        the series. Ordered by nextDueOn, then patient name, then vaccinationId. Audited (vaccination.due_listed).
       parameters:
         - { name: from, in: query, schema: { type: string, format: date } }
         - { name: to, in: query, required: true, schema: { type: string, format: date } }
@@ -2286,7 +2286,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/PatientHistoryEntry'
         - type: object
-          description: occurredAt is the start of administeredOn in the clinic's time zone (as UTC); actor is who recorded it.
+          description: occurredAt is the start of administeredOn in the clinic's time zone when the dose was recorded (as UTC; a later time-zone change does not move it); actor is who recorded it.
           properties:
             type: { const: VaccinationGiven }
             details:

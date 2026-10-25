@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using VetPlatform.Api.Common.Auditing;
 using VetPlatform.Api.Common.Authorization;
@@ -260,6 +261,7 @@ public sealed class VaccinationsTests(DatabaseApiFactory factory) : IClassFixtur
 
         Assert.Equal(HttpStatusCode.Conflict, (await clinic.Nurse.PostAsJsonAsync($"/api/vaccinations/{id}/void", new { reason = "again" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await clinic.Nurse.PostAsJsonAsync($"/api/vaccinations/{Guid.NewGuid()}/void", new { reason = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Vet.GetAsync($"/api/vaccinations/{Guid.NewGuid()}")).StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await clinic.Vet.DeleteAsync($"/api/vaccinations/{id}")).StatusCode);
     }
 
@@ -327,6 +329,7 @@ public sealed class VaccinationsTests(DatabaseApiFactory factory) : IClassFixtur
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Desk.GetAsync("/api/vaccinations/due")).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Desk.GetAsync($"/api/vaccinations/due?from={Day(Today)}&to={Day(Today.AddDays(-1))}")).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Desk.GetAsync("/api/vaccinations/due?to=2026-13-01")).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Desk.GetAsync($"/api/vaccinations/due?from=1999-12-31&to={Day(Today)}")).StatusCode);
     }
 
     // ---------- History ----------
@@ -374,6 +377,32 @@ public sealed class VaccinationsTests(DatabaseApiFactory factory) : IClassFixtur
         var undo = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
             "UPDATE vaccinations SET status = 'Active', voided_at = NULL, voided_by_user_id = NULL, void_reason = NULL WHERE id = {0}", id)));
         Assert.Equal("42501", undo.SqlState);
+    }
+
+    [Fact]
+    public async Task Database_ALinkedInsert_WaitsForAConcurrentDiscard_AndIsThenRefused()
+    {
+        var clinic = await ClinicAsync();
+        var consultation = (await OkAsync(await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = clinic.PatientId, veterinarianId = clinic.VetUser.Id }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+
+        // Transaction A discards the consultation and holds its row lock without committing.
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<VetPlatform.Api.Common.Persistence.AppDbContext>();
+        await using var discard = await db.Database.BeginTransactionAsync();
+        await db.Database.ExecuteSqlRawAsync(
+            "UPDATE consultations SET status = 'Discarded', discarded_at = started_at, discard_reason = 'x' WHERE id = {0}", consultation);
+
+        // Transaction B links a dose to it: the trigger must wait for A instead of reading the old status.
+        var insert = factory.UpdateDatabaseAsync(other => other.Database.ExecuteSqlRawAsync(
+            "INSERT INTO vaccinations (id, clinic_id, patient_id, consultation_id, vaccine_name, administered_on, administered_day_starts_at, " +
+            "administered_elsewhere, status, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, patient_id, id, 'X', DATE '2025-01-01', now(), 'Elsewhere', 'Active', now(), now() " +
+            "FROM consultations WHERE id = {0}", consultation));
+        Assert.NotSame(insert, await Task.WhenAny(insert, Task.Delay(TimeSpan.FromMilliseconds(500))));
+
+        await discard.CommitAsync();
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => insert);
+        Assert.Equal("42501", exception.SqlState);
     }
 
     [Fact]

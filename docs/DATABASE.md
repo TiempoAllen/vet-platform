@@ -235,7 +235,8 @@ dates `administered_on` / `next_due_on`.
   CHECK `ck_vaccinations_lifecycle` sets them exactly when `Voided`
 - recorded_by_user_id (composite FK to users), created_at, updated_at
 
-Trigger `vaccinations_guard`: a new row must be `Active` and may not link a discarded consultation (read `FOR SHARE`);
+Trigger `vaccinations_guard`: a new row must be `Active` and may not link a discarded consultation (status read `FOR
+SHARE`, then tested; a later discard keeps the link);
 the only UPDATE is `Active` → `Voided`, changing nothing but the status, the void columns and `updated_at` (compared as
 whole rows); DELETE and TRUNCATE are refused. Rolling back refuses while rows exist. Indexes: (clinic_id, patient_id,
 administered_on) (patient list and history; also the patient key), (clinic_id, patient_id, consultation_id), and one

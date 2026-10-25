@@ -102,16 +102,19 @@ public sealed class VaccinationService(
                 PatientId = v.Patient!.Id,
                 PatientName = v.Patient.Name,
                 v.Patient.Species,
-                v.Patient.Client,
+                // Only the contact fields: the due list is read by reception, so client notes are never loaded.
+                Client = v.Patient.Client == null
+                    ? null
+                    : new DueVaccinationClient(
+                        v.Patient.Client.Id, v.Patient.Client.FirstName, v.Patient.Client.LastName,
+                        v.Patient.Client.Phone, v.Patient.Client.Email, v.Patient.Client.PreferredContactMethod),
             })
             .ToPageAsync(
                 query,
                 r => new DueVaccinationResponse(
                     r.Id, r.VaccineName, r.AdministeredOn, r.NextDueOn!.Value,
                     new AppointmentPatientSummary(r.PatientId, r.PatientName, r.Species),
-                    r.Client is { } c
-                        ? new DueVaccinationClient(c.Id, c.FirstName, c.LastName, c.Phone, c.Email, c.PreferredContactMethod)
-                        : null),
+                    r.Client),
                 cancellationToken);
 
         audit.Record(
