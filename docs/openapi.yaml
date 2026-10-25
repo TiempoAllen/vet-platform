@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.13.0
-  summary: Implemented endpoints as of milestone B-13.
+  version: 0.14.0
+  summary: Implemented endpoints as of milestone B-14.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -32,6 +32,7 @@ tags:
   - name: Scheduling
   - name: Appointments
   - name: Consultations
+  - name: Vaccinations
   - name: Operations
 security:
   - sessionCookie: []
@@ -1612,6 +1613,140 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/patients/{patientId}/vaccinations:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Vaccinations]
+      operationId: listPatientVaccinations
+      summary: The patient's vaccinations
+      description: Requires `clinical.read`. Newest administeredOn first (then newest recorded); voided ones included unless status filters them out. Unknown patient 404. Audited (vaccination.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/VaccinationStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of vaccinations.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VaccinationPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Vaccinations]
+      operationId: recordVaccination
+      summary: Record a vaccine dose
+      description: >
+        Requires `clinical.write`. Active patients only (409 otherwise). A dose given here names an active veterinarian
+        of the clinic; a dose given elsewhere names the place in administeredElsewhere and no veterinarian. Optional link
+        to an in-progress or completed consultation of the same patient. Records are never edited; void and re-enter.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordVaccinationRequest' }
+      responses:
+        '201':
+          description: Recorded.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/vaccinations/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vaccination' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/vaccinations/due:
+    get:
+      tags: [Vaccinations]
+      operationId: listDueVaccinations
+      summary: The clinic's vaccination due list
+      description: >
+        Requires `vaccinations.read_due` (Admin, Veterinarian, Nurse, Receptionist). For each active patient and vaccine
+        (names compared ignoring case), the latest non-voided dose, if its nextDueOn is on or before `to` and, when
+        given, on or after `from` (without `from` every overdue dose is included). A newer dose without a due date ends
+        the series. Ordered by nextDueOn, then patient name, then vaccinationId. Audited (vaccination.due_listed).
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of due doses.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DueVaccinationPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/vaccinations/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Vaccinations]
+      operationId: getVaccination
+      summary: One vaccination
+      description: Requires `clinical.read`. Other clinics' vaccinations are 404. Audited (vaccination.viewed).
+      responses:
+        '200':
+          description: The vaccination.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vaccination' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/vaccinations/{id}/void:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Vaccinations]
+      operationId: voidVaccination
+      summary: Void a vaccination entered in error
+      description: 'Requires `clinical.write`. Active to Voided, recording who and when; an already voided one is 409. The record is kept and left out of due dates. The reason is never audited.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoidVaccinationRequest' }
+      responses:
+        '200':
+          description: The voided vaccination.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vaccination' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -1710,7 +1845,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -2013,12 +2148,13 @@ components:
         clients must accept unknown types as this base schema and narrow on `type` themselves. Known types and their
         schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry; AppointmentCompleted and
         AppointmentNoShow → PatientAppointmentEntry; AppointmentCancelled → PatientAppointmentCancelledEntry;
-        ConsultationCompleted → PatientConsultationEntry (only for callers with clinical.read).
+        ConsultationCompleted → PatientConsultationEntry; VaccinationGiven → PatientVaccinationEntry (both only for callers
+        with clinical.read).
       properties:
         id: { type: string, format: uuid, description: Id of the source record; unique per type. }
         type:
           type: string
-          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted. More types are added by later milestones.'
+          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted, VaccinationGiven. More types are added by later milestones.'
           examples: [PatientRegistered]
         occurredAt: { type: string, format: date-time }
         actor:
@@ -2035,6 +2171,7 @@ components:
         AppointmentNoShow: '#/components/schemas/PatientAppointmentEntry'
         AppointmentCancelled: '#/components/schemas/PatientAppointmentCancelledEntry'
         ConsultationCompleted: '#/components/schemas/PatientConsultationEntry'
+        VaccinationGiven: '#/components/schemas/PatientVaccinationEntry'
 
     PatientRegisteredEntry:
       allOf:
@@ -2144,6 +2281,34 @@ components:
                           id: { type: string, format: uuid }
                           medicationName: { type: string }
                           status: { $ref: '#/components/schemas/PrescriptionStatus' }
+
+    PatientVaccinationEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          description: occurredAt is the start of administeredOn in the clinic's time zone when the dose was recorded (as UTC; a later time-zone change does not move it); actor is who recorded it.
+          properties:
+            type: { const: VaccinationGiven }
+            details:
+              type: object
+              additionalProperties: false
+              required: [vaccination]
+              properties:
+                vaccination:
+                  type: object
+                  additionalProperties: false
+                  required: [id, vaccineName, administeredOn, nextDueOn, administeredElsewhere, veterinarian, status]
+                  properties:
+                    id: { type: string, format: uuid }
+                    vaccineName: { type: string }
+                    administeredOn: { type: string, format: date }
+                    nextDueOn: { type: [string, 'null'], format: date }
+                    administeredElsewhere: { type: [string, 'null'] }
+                    veterinarian:
+                      oneOf:
+                        - $ref: '#/components/schemas/PersonSummary'
+                        - type: 'null'
+                    status: { $ref: '#/components/schemas/VaccinationStatus', description: As it is now. }
 
     PatientRegisteredDetails:
       type: object
@@ -2790,6 +2955,119 @@ components:
               consultationId: { type: string, format: uuid }
               consultationCompletedAt: { type: string, format: date-time, description: With the clinic's local offset. }
               veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    VaccinationStatus:
+      type: string
+      description: Voided means entered in error; the record is kept and left out of due dates.
+      enum: [Active, Voided]
+
+    Vaccination:
+      type: object
+      additionalProperties: false
+      required: [id, patientId, consultationId, vaccineName, manufacturer, lotNumber, lotExpiresOn, administeredOn, nextDueOn, administeredElsewhere, veterinarian, notes, status, voidedAt, voidedBy, voidReason, recordedBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        patientId: { type: string, format: uuid }
+        consultationId: { type: [string, 'null'], format: uuid }
+        vaccineName: { type: string, maxLength: 200, description: Free text until the product catalogue exists (B-19). }
+        manufacturer: { type: [string, 'null'], maxLength: 100 }
+        lotNumber: { type: [string, 'null'], maxLength: 50 }
+        lotExpiresOn: { type: [string, 'null'], format: date }
+        administeredOn: { type: string, format: date, description: The clinic-local day the dose was given. }
+        nextDueOn: { type: [string, 'null'], format: date }
+        administeredElsewhere: { type: [string, 'null'], maxLength: 200, description: Where the dose was given when not here. }
+        veterinarian:
+          description: The veterinarian who gave it here; null for doses given elsewhere.
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        status: { $ref: '#/components/schemas/VaccinationStatus' }
+        voidedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        voidedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        voidReason: { type: [string, 'null'], maxLength: 500 }
+        recordedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    VaccinationPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Vaccination' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    RecordVaccinationRequest:
+      type: object
+      required: [vaccineName, administeredOn]
+      description: veterinarianId is required for doses given here and must be left out when administeredElsewhere is set. Optional text may be omitted, null or blank.
+      properties:
+        vaccineName: { type: string, minLength: 1, maxLength: 200 }
+        manufacturer: { type: [string, 'null'], maxLength: 100 }
+        lotNumber: { type: [string, 'null'], maxLength: 50 }
+        lotExpiresOn: { type: [string, 'null'], format: date, description: 2000-01-01 to 2100-12-31. }
+        administeredOn: { type: string, format: date, description: 'From 2000-01-01 up to today in the clinic''s time zone.' }
+        nextDueOn: { type: [string, 'null'], format: date, description: After administeredOn and no later than 2100-12-31. }
+        administeredElsewhere: { type: [string, 'null'], maxLength: 200 }
+        veterinarianId: { type: [string, 'null'], format: uuid }
+        consultationId: { type: [string, 'null'], format: uuid, description: An in-progress or completed consultation of the same patient. }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    VoidVaccinationRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    DueVaccinationPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [vaccinationId, vaccineName, lastAdministeredOn, nextDueOn, patient, client]
+            properties:
+              vaccinationId: { type: string, format: uuid, description: The latest active dose. }
+              vaccineName: { type: string }
+              lastAdministeredOn: { type: string, format: date }
+              nextDueOn: { type: string, format: date }
+              patient:
+                type: object
+                additionalProperties: false
+                required: [id, name, species]
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  species: { $ref: '#/components/schemas/Species' }
+              client:
+                description: The patient's current owner, for the reminder call; null if it can no longer be shown.
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [id, firstName, lastName, phone, email, preferredContactMethod]
+                    properties:
+                      id: { type: string, format: uuid }
+                      firstName: { type: string }
+                      lastName: { type: string }
+                      phone: { type: [string, 'null'] }
+                      email: { type: [string, 'null'] }
+                      preferredContactMethod:
+                        oneOf:
+                          - $ref: '#/components/schemas/ContactMethod'
+                          - type: 'null'
+                  - type: 'null'
         pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:

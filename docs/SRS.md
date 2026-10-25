@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.9, 2026-10-25, updated for B-13.
+Veterinary Management Platform. Version 1.10, 2026-10-25, updated for B-14.
 
 ## 1. Introduction
 
@@ -152,7 +152,7 @@ A user may hold several roles; their permissions are the union.
 | FR-CLN-2 | Completed consultations are not destructively edited; corrections preserve history (append-oriented). | Done (B-11; append-only addenda enforced by the database) |
 | FR-CLN-3 | Diagnoses and treatments can be recorded against a consultation. | Done (B-12; plus problem list and post-sign-off diagnosis status) |
 | FR-CLN-4 | Prescriptions (medication, dosage, route, frequency, duration, quantity, instructions) can be issued by authorised clinicians. | Done (B-13; veterinarians only, inside a consultation; cancellation after sign-off; medication list) |
-| FR-CLN-5 | Vaccinations (vaccine, administered date, next due date, lot, manufacturer) can be recorded with or without a consultation. | Planned (B-14) |
+| FR-CLN-5 | Vaccinations (vaccine, administered date, next due date, lot, manufacturer) can be recorded with or without a consultation. | Done (B-14; void-and-re-enter corrections, doses given elsewhere, clinic due list) |
 | FR-CLN-6 | Files (images, documents) can be attached to patients, clients or consultations, with type and size validation and private storage. | Planned (B-15) |
 | FR-CLN-7 | Clinical notes can be added to a patient. | Planned (B-15) |
 | FR-CLN-8 | Every clinical read and write path is permission-checked; changes are audited. | Done for consultations (reads and writes audited); continues per clinical milestone |
