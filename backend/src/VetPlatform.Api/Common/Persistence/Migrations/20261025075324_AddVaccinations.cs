@@ -114,17 +114,23 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             // consultation; the link's parent is read FOR SHARE so a concurrent discard is waited for.
             migrationBuilder.Sql("""
                 CREATE FUNCTION vaccinations_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+                DECLARE
+                    parent_status text;
                 BEGIN
                     IF TG_OP = 'INSERT' THEN
                         IF NEW.status <> 'Active' THEN
                             RAISE EXCEPTION 'a vaccination is recorded as Active' USING ERRCODE = 'insufficient_privilege';
                         END IF;
-                        IF NEW.consultation_id IS NOT NULL AND EXISTS (
-                            SELECT 1 FROM consultations
-                            WHERE id = NEW.consultation_id AND clinic_id = NEW.clinic_id AND status = 'Discarded'
-                            FOR SHARE) THEN
-                            RAISE EXCEPTION 'a vaccination cannot be linked to a discarded consultation'
-                                USING ERRCODE = 'insufficient_privilege';
+                        IF NEW.consultation_id IS NOT NULL THEN
+                            -- Lock first, then test: a status filter in the locking query would skip a row that is
+                            -- being discarded instead of waiting for it. A missing parent is left to the foreign key.
+                            SELECT status INTO parent_status FROM consultations
+                            WHERE id = NEW.consultation_id AND clinic_id = NEW.clinic_id
+                            FOR SHARE;
+                            IF parent_status = 'Discarded' THEN
+                                RAISE EXCEPTION 'a vaccination cannot be linked to a discarded consultation'
+                                    USING ERRCODE = 'insufficient_privilege';
+                            END IF;
                         END IF;
                         RETURN NEW;
                     END IF;
