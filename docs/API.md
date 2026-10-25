@@ -40,8 +40,8 @@ Every error response uses this shape (implemented in B-01):
 `details` is always an array (empty when there is nothing field-specific). `field` is camelCase and optional.
 
 Error codes (stable; clients may switch on them): `BAD_REQUEST`, `UNAUTHENTICATED`, `FORBIDDEN`,
-`CSRF_TOKEN_INVALID`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `CONFLICT`, `UNSUPPORTED_MEDIA_TYPE`, `VALIDATION_ERROR`,
-`RATE_LIMITED`, `INTERNAL_ERROR`.
+`CSRF_TOKEN_INVALID`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `CONFLICT`, `PAYLOAD_TOO_LARGE` (413, uploads, since B-15),
+`UNSUPPORTED_MEDIA_TYPE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `INTERNAL_ERROR`.
 
 Status mapping for request-body problems: `422 VALIDATION_ERROR` when the body parses but field values are invalid;
 `400 BAD_REQUEST` when the body is missing or not valid JSON (parser details are not echoed), or when any text
@@ -413,13 +413,16 @@ Entry types so far:
 | `AppointmentNoShow` | An appointment was marked no-show. Disappears if the no-show is undone. | `appointment` as above |
 | `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ], prescriptions: [ { id, medicationName, status } ] }` (diagnoses primary first, prescriptions in the order recorded; statuses as they are now) |
 | `VaccinationGiven` | A vaccine dose was recorded (`occurredAt` = the start of `administeredOn` in the clinic's time zone when the dose was recorded; a later time-zone change does not move it). Voided doses stay, with their status. **Only for callers with `clinical.read`**. | `vaccination`: `{ id, vaccineName, administeredOn, nextDueOn, administeredElsewhere, veterinarian: { id, name } \| null, status }` (status as it is now) |
+| `ClinicalNoteAdded` | A clinical note was added (`occurredAt` = its time). **Only for callers with `clinical.read`**. | `note`: `{ id, text, consultationId }` |
+| `AttachmentAdded` | A file was attached to the patient or one of its consultations (`occurredAt` = upload time). Withdrawn files disappear; client files never appear. **Only for callers with `clinical.read`**. | `attachment`: `{ id, fileName, contentType, sizeBytes, description, consultationId }` |
 
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
-consultation and vaccination ids shown).
+consultation, vaccination, note and attachment ids shown).
 
 For appointment entries `id` is the appointment's id and `actor` is the staff member who made the change. For
 `ConsultationCompleted`, `id` is the consultation's id and `actor` is the veterinarian who completed it. For
-`VaccinationGiven`, `id` is the vaccination's id and `actor` is the staff member who recorded it. All history
+`VaccinationGiven`, `id` is the vaccination's id and `actor` is the staff member who recorded it. For
+`ClinicalNoteAdded` and `AttachmentAdded`, `actor` is the author or uploader. All history
 instants (`occurredAt` and those in `details`) are UTC, unlike the consultation and appointment objects, which use the
 clinic's local offset. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
 
@@ -859,6 +862,79 @@ the series; voiding the newest dose brings the previous one back. Ordered by `ne
 
 It carries no lot, notes or other clinical detail, because reception reads it. Audited (`vaccination.due_listed`, with
 the range and the vaccination ids shown).
+
+### Attachments
+Implemented in B-15 (ADR-015). A file (image or PDF) belongs to exactly **one** owner: a patient, a consultation or a
+client. Files are kept in private storage under random keys and are only ever served by the download endpoint below.
+Access follows the owner:
+
+| Owner | Upload / withdraw | Read, list, download |
+|---|---|---|
+| Patient, consultation | `clinical.write` (Veterinarian, Nurse) | `clinical.read` (Admin, Veterinarian, Nurse) |
+| Client (consent forms, ID) | `clients.manage` (Admin, Receptionist) | `clients.read` (Admin, Veterinarian, Nurse, Receptionist) |
+
+    {
+      "id": "uuid", "ownerType": "Patient" | "Consultation" | "Client",
+      "patientId": "uuid" | null, "consultationId": "uuid" | null, "clientId": "uuid" | null,
+      "fileName": "Lateral thorax.png", "contentType": "image/png", "sizeBytes": 523412, "sha256": "64 hex",
+      "description": "..." | null, "status": "Active" | "Withdrawn",
+      "withdrawnAt": "..." | null, "withdrawnBy": { "id", "name" } | null, "withdrawReason": "..." | null,
+      "uploadedBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
+    }
+
+A consultation file also carries the consultation's `patientId`. `withdrawnAt` carries the clinic's offset;
+`createdAt` / `updatedAt` are UTC.
+
+**Upload:** `POST /api/patients/:id/attachments`, `POST /api/consultations/:id/attachments` (`clinical.write`) or
+`POST /api/clients/:id/attachments` (`clients.manage`), as `multipart/form-data` with exactly one `file` part and an
+optional `description` text part (max 500). `201` with the attachment and `Location: /api/attachments/:id`.
+- **Types:** JPEG, PNG, WebP and PDF, recognised from the file's **leading bytes**; the file name and the part's
+  `Content-Type` are ignored. Anything else (HTML, SVG, executables, text) is `415 UNSUPPORTED_MEDIA_TYPE`, as is a
+  body that is not `multipart/form-data`.
+- **Size:** at most **20 MB** (20,971,520 bytes); larger is `413 PAYLOAD_TOO_LARGE`. An empty file, no `file` part
+  or more than one file is `422`.
+- **Owners:** patients and clients of any status (records of inactive or deceased animals still grow);
+  in-progress or completed consultations (late lab reports), but a discarded one is `409`. Unknown or another
+  clinic's owner `404`.
+- Order of checks: permission (`403`), owner (`404` / `409`), form (`422`), type (`415`), size (`413`).
+- `fileName` is the uploader's name without any path, control characters or quotes, at most 255 characters ("file"
+  when nothing is left). It is used only as the download name.
+- Audited (`attachment.uploaded`) with ids, owner type, content type and size; never the file name or description.
+
+**Lists:** `GET /api/patients/:id/attachments` (`clinical.read`; the patient's files **and** those of its
+consultations), `GET /api/consultations/:id/attachments` (`clinical.read`), `GET /api/clients/:id/attachments`
+(`clients.read`). Newest first, paginated; `Active` files only unless `status=Withdrawn`. Unknown or another
+clinic's owner `404`. Audited (`attachment.listed`).
+
+`GET /api/attachments/:id`: the metadata. `GET /api/attachments/:id/content`: the content. Both need the owner's read
+permission (`403` without it; another clinic's or unknown `404`) and are audited (`attachment.viewed`,
+`attachment.downloaded`). The content is always a download: `Content-Disposition: attachment` with the file name,
+`X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and
+`Cache-Control: private, no-store`. A withdrawn file's content is `409`.
+
+`POST /api/attachments/:id/withdraw` (the owner's write permission): `{ "reason": "..." }` (required, max 500,
+trimmed). `Active` → `Withdrawn`, recording who and when; an already withdrawn file is `409`. The file disappears from
+lists and downloads; its row and stored content stay (purging content is a retention task, X-05). Audited
+(`attachment.withdrawn`) without the reason. There is no `PATCH` and no `DELETE`; the database refuses both.
+
+### Clinical notes
+Implemented in B-15 (ADR-015). A dated, signed text note on a patient outside the SOAP notes (phone advice, a lab
+result received, an owner update). **Append-only**: never edited or deleted; a correction is a new note.
+
+    { "id": "uuid", "patientId": "uuid", "consultationId": "uuid" | null, "text": "...",
+      "author": { "id", "name" } | null, "createdAt": "..." }
+
+`createdAt` carries the clinic's offset.
+
+`POST /api/patients/:id/clinical-notes` (`clinical.write`): `{ "text": "...", "consultationId": "uuid" }`. `text`
+required (max 4000, trimmed). `consultationId` optional: an in-progress or completed consultation of the **same**
+patient (unknown, discarded, another patient's or another clinic's is one identical `422`). Any patient status.
+`201` with the note and `Location: /api/clinical-notes/:id`. Unknown or another clinic's patient `404`. Audited
+(`clinical_note.added`) without the text.
+
+`GET /api/patients/:id/clinical-notes` (`clinical.read`): newest first, paginated; audited (`clinical_note.listed`).
+`GET /api/clinical-notes/:id` (`clinical.read`): `200` or `404`; audited (`clinical_note.viewed`). There is no
+`PATCH` and no `DELETE`; the database refuses both.
 
 ## 10. Billing
 `GET /api/invoices`

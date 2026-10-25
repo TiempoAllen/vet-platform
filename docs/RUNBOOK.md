@@ -30,9 +30,11 @@ completed with concrete commands when the platform is selected.
 | `Auth__LockoutDuration` | No | `00:15:00` | Lockout length. |
 | `Auth__LoginAttemptsPerMinute` | No | `10` | Per client address (IPv6 /64). |
 | `Logging__LogLevel__Default` | No | `Information` | Raise to `Debug` only temporarily. |
+| `FileStorage__LocalRoot` | Yes | — (Development: `App_Data/files`) | Directory for uploaded files (B-15); absolute, or relative to the content root. Must be private (never served by a web server), writable by the API, and backed up with the database. Startup fails without it. |
+| `FileStorage__Provider` | No | `Local` | The only provider until X-05 adds object storage. |
 
 Precedence: `appsettings.json` < `appsettings.{Environment}.json` < environment variables < command line. Invalid
-`Auth` values stop the app at startup.
+`Auth` values and a missing `FileStorage__LocalRoot` stop the app at startup.
 
 ## 3. Local environment setup
 Prerequisites: .NET 10 SDK, Docker Desktop (needs WSL 2 on Windows), Git.
@@ -130,6 +132,10 @@ Targets until X-05 sets final values: RPO ≤ 24 h, RTO ≤ 4 h (`SRS.md` NFR-RE
   financial data.
 - Back up the Data Protection key ring with the database (without it, a restored system signs everyone out, which
   is acceptable but must be expected).
+- Back up the file store (`FileStorage__LocalRoot`) with the database, after it: rows reference files by key, so a
+  file backup older than the database backup can miss recent uploads (their downloads then fail with 500 and are
+  logged). Files are never deleted by the application (withdrawn files stay), so restoring a newer file backup is
+  harmless.
 
 ### 5.2 Restore
 1. Restore into a **new** database, never over the live one:

@@ -31,6 +31,9 @@ public class ApiFactory : WebApplicationFactory<Program>
 
     protected virtual string? ConnectionString => UnreachableConnectionString;
 
+    /// <summary>A private file store per factory, under the system temp directory.</summary>
+    public string FileStorageRoot { get; } = Path.Combine(Path.GetTempPath(), "vetplatform-tests", Guid.NewGuid().ToString("N"));
+
     /// <summary>Configuration overrides. Sign-in throttling is relaxed so tests can sign in freely.</summary>
     protected virtual IDictionary<string, string?> Settings => new Dictionary<string, string?>
     {
@@ -43,7 +46,11 @@ public class ApiFactory : WebApplicationFactory<Program>
 
         // Added last, so it overrides any ConnectionStrings__Default set in the developer's environment.
         builder.ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(
-            new Dictionary<string, string?>(Settings) { ["ConnectionStrings:Default"] = ConnectionString }));
+            new Dictionary<string, string?>(Settings)
+            {
+                ["ConnectionStrings:Default"] = ConnectionString,
+                ["FileStorage:LocalRoot"] = FileStorageRoot,
+            }));
 
         builder.ConfigureTestServices(services =>
         {
