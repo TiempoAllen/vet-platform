@@ -7,6 +7,7 @@ using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Patients;
 using VetPlatform.Api.Features.Scheduling;
+using VetPlatform.Api.Features.Vaccinations;
 using VetPlatform.Api.Features.Identity;
 
 namespace VetPlatform.Api.Common.Persistence;
@@ -62,6 +63,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
     public DbSet<Treatment> Treatments => Set<Treatment>();
 
     public DbSet<Prescription> Prescriptions => Set<Prescription>();
+
+    public DbSet<Vaccination> Vaccinations => Set<Vaccination>();
 
     /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
     public const string ClinicFilter = "Clinic";

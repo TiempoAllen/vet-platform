@@ -155,6 +155,7 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `clinical.write` | – | ✓ | ✓ | – | – |
 | `consultations.complete` | – | ✓ | – | – | – |
 | `prescriptions.issue` | – | ✓ | – | – | – |
+| `vaccinations.read_due` | ✓ | ✓ | ✓ | ✓ | – |
 
 **User object**
 
@@ -411,12 +412,14 @@ Entry types so far:
 | `AppointmentCancelled` | An appointment was cancelled (`occurredAt` = cancellation time). | `appointment` as above, `cancelledBy`: `Client` or `Clinic`. The reason is not shown. |
 | `AppointmentNoShow` | An appointment was marked no-show. Disappears if the no-show is undone. | `appointment` as above |
 | `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ], prescriptions: [ { id, medicationName, status } ] }` (diagnoses primary first, prescriptions in the order recorded; statuses as they are now) |
+| `VaccinationGiven` | A vaccine dose was recorded (`occurredAt` = the start of `administeredOn` in the clinic's time zone). Voided doses stay, with their status. **Only for callers with `clinical.read`**. | `vaccination`: `{ id, vaccineName, administeredOn, nextDueOn, administeredElsewhere, veterinarian: { id, name } \| null, status }` (status as it is now) |
 
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
-consultation ids shown).
+consultation and vaccination ids shown).
 
 For appointment entries `id` is the appointment's id and `actor` is the staff member who made the change. For
-`ConsultationCompleted`, `id` is the consultation's id and `actor` is the veterinarian who completed it. All history
+`ConsultationCompleted`, `id` is the consultation's id and `actor` is the veterinarian who completed it. For
+`VaccinationGiven`, `id` is the vaccination's id and `actor` is the staff member who recorded it. All history
 instants (`occurredAt` and those in `details`) are UTC, unlike the consultation and appointment objects, which use the
 clinic's local offset. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
 
@@ -711,8 +714,8 @@ Concurrent changes to one consultation are applied one after the other. Every ch
 never note or addendum text.
 
 ## 9. Diagnoses, treatments, prescriptions, vaccinations
-Diagnoses and treatments are implemented (B-12, ADR-012), prescriptions too (B-13, ADR-013); vaccinations (B-14)
-follow.
+Diagnoses and treatments are implemented (B-12, ADR-012), prescriptions (B-13, ADR-013) and vaccinations (B-14,
+ADR-014) too.
 
 Diagnoses and treatments belong to one consultation and appear in the consultation object (section 8) as
 `diagnoses` (primary first, then in the order recorded) and `treatments` (in the order recorded). Every change below
@@ -792,6 +795,66 @@ consultations, most recently completed consultation first (`consultationComplete
 one, paginated. An unknown or another clinic's patient is `404`. `status` filters by an exact status.
 Each item: `{ "diagnosis": { ... }, "consultationId", "consultationCompletedAt" (clinic offset), "veterinarian": { id, name } }`.
 In-progress and discarded consultations are left out. A clinical read: audited (`diagnosis.listed`).
+
+### Vaccinations
+Implemented in B-14 (ADR-014). A vaccination is a record of the **patient**, given here or elsewhere, with an optional
+link to a consultation. Records are never edited or deleted: one entered in error is **voided** with a reason (it is
+kept, shown as voided and left out of due dates) and the right one is recorded again.
+
+    {
+      "id": "uuid", "patientId": "uuid", "consultationId": "uuid" | null,
+      "vaccineName": "Rabies", "manufacturer": "VetPharma" | null, "lotNumber": "R-77" | null,
+      "lotExpiresOn": "2027-10-01" | null, "administeredOn": "2026-10-25", "nextDueOn": "2029-10-25" | null,
+      "administeredElsewhere": "Previous clinic" | null, "veterinarian": { "id", "name" } | null,
+      "notes": "..." | null, "status": "Active" | "Voided",
+      "voidedAt": "..." | null, "voidedBy": { "id", "name" } | null, "voidReason": "..." | null,
+      "recordedBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
+    }
+
+Dates are calendar days (`YYYY-MM-DD`) in the clinic's time zone; `voidedAt` carries the clinic's offset;
+`createdAt` / `updatedAt` are UTC.
+
+`POST /api/patients/:id/vaccinations` (`clinical.write`: Veterinarian, Nurse) records a dose: `201` with the
+vaccination and `Location: /api/vaccinations/:id`.
+- `vaccineName` (required, max 200; free text until the product catalogue, B-19), `manufacturer` (max 100),
+  `lotNumber` (max 50), `lotExpiresOn` (2000-01-01 to 2100-12-31), `notes` (max 2000). Optional text may be omitted,
+  `null` or blank.
+- `administeredOn` (required): from 2000-01-01 up to **today** in the clinic's time zone; past dates record earlier
+  history.
+- `nextDueOn` (optional): after `administeredOn`, at most 2100-12-31. It may already be past.
+- **Given here:** `veterinarianId` is required and must be an active veterinarian of the clinic. **Given elsewhere:**
+  `administeredElsewhere` (max 200, e.g. the previous clinic) is set and `veterinarianId` must be left out.
+- `consultationId` (optional): an in-progress or completed consultation of the **same** patient; unknown, discarded,
+  another patient's or another clinic's is one identical `422`. The link does not make the record follow the
+  consultation's state.
+- Unknown or another clinic's patient `404`; a patient that is not `Active` `409`. Invalid fields `422` (all at once).
+  Audited (`vaccination.recorded`) with ids, never the vaccine name or notes.
+
+`GET /api/patients/:id/vaccinations` (`clinical.read`): the patient's doses, newest `administeredOn` first (then
+newest recorded), paginated; voided ones included unless `status` (`Active` or `Voided`) filters them. Unknown or
+another clinic's patient `404`. Audited (`vaccination.listed`).
+
+`GET /api/vaccinations/:id` (`clinical.read`): `200` or `404`. Audited (`vaccination.viewed`).
+
+`POST /api/vaccinations/:id/void` (`clinical.write`): `{ "reason": "..." }` (required, max 500, trimmed). `Active` →
+`Voided`, recording who and when; an already voided one is `409`; unknown `404`. Returns `200` with the vaccination.
+Audited (`vaccination.voided`) without the reason. There is no `PATCH` and no `DELETE`; the database refuses both.
+
+`GET /api/vaccinations/due?to=YYYY-MM-DD[&from=YYYY-MM-DD]` (`vaccinations.read_due`: Admin, Veterinarian, Nurse,
+Receptionist): the clinic's **due list** for reminder calls. For each active patient and vaccine (names compared
+ignoring case), the latest non-voided dose counts; it is listed if its `nextDueOn` is on or before `to` and, when
+`from` is given, on or after it. Without `from` every overdue dose is included. A newer dose without `nextDueOn` ends
+the series; voiding the newest dose brings the previous one back. Ordered by `nextDueOn`, then patient name; paginated.
+`to` is required; `to` before `from`, or a date outside 2000-01-01 to 2100-12-31, is `422`. Each item:
+
+    {
+      "vaccinationId": "uuid", "vaccineName": "Rabies", "lastAdministeredOn": "2023-10-25", "nextDueOn": "2026-10-25",
+      "patient": { "id", "name", "species" },
+      "client": { "id", "firstName", "lastName", "phone" | null, "email" | null, "preferredContactMethod" | null } | null
+    }
+
+It carries no lot, notes or other clinical detail, because reception reads it. Audited (`vaccination.due_listed`, with
+the range and the vaccination ids shown).
 
 ## 10. Billing
 `GET /api/invoices`
