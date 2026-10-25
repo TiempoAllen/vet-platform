@@ -50,6 +50,9 @@ public static class Permissions
     /// <summary>Sign a consultation off. Veterinarians only: completion is the clinical sign-off (ADR-011).</summary>
     public const string ConsultationsComplete = "consultations.complete";
 
+    /// <summary>Add, edit, remove and cancel prescriptions. Veterinarians only (ADR-013).</summary>
+    public const string PrescriptionsIssue = "prescriptions.issue";
+
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
@@ -60,7 +63,7 @@ public static class Permissions
         [Role.Veterinarian] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn, AppointmentsRead, AppointmentsManage,
-            ClinicalRead, ClinicalWrite, ConsultationsComplete,
+            ClinicalRead, ClinicalWrite, ConsultationsComplete, PrescriptionsIssue,
         }.ToFrozenSet(),
         [Role.Nurse] = new[]
         {

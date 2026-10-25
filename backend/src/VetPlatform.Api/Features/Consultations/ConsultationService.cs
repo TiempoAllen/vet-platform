@@ -366,7 +366,9 @@ public sealed partial class ConsultationService(
             .Include(c => c.CreatedBy)
             .Include(c => c.Addenda).ThenInclude(a => a.Author)
             .Include(c => c.Diagnoses)
-            .Include(c => c.Treatments);
+            .Include(c => c.Treatments)
+            .Include(c => c.Prescriptions).ThenInclude(p => p.PrescribedBy)
+            .Include(c => c.Prescriptions).ThenInclude(p => p.CancelledBy);
 
     private async Task<Consultation> FindAsync(Guid id, bool tracking, CancellationToken cancellationToken)
     {

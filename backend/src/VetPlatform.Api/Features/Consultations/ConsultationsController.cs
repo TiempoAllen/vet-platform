@@ -97,6 +97,46 @@ public sealed class ConsultationsController(ConsultationService consultations) :
         CancellationToken cancellationToken) =>
         consultations.ListPatientDiagnosesAsync(patientId, query, cancellationToken);
 
+    // ---- Prescriptions (B-13, ADR-013): veterinarians only ----
+
+    [HttpPost("api/consultations/{id:guid}/prescriptions")]
+    [RequirePermission(Permissions.PrescriptionsIssue)]
+    public Task<ConsultationResponse> AddPrescription(Guid id, CreatePrescriptionRequest request, CancellationToken cancellationToken) =>
+        consultations.AddPrescriptionAsync(id, request, cancellationToken);
+
+    [HttpPatch("api/consultations/{id:guid}/prescriptions/{prescriptionId:guid}")]
+    [RequirePermission(Permissions.PrescriptionsIssue)]
+    public Task<ConsultationResponse> UpdatePrescription(
+        Guid id,
+        Guid prescriptionId,
+        UpdatePrescriptionRequest request,
+        CancellationToken cancellationToken) =>
+        consultations.UpdatePrescriptionAsync(id, prescriptionId, request, cancellationToken);
+
+    [HttpDelete("api/consultations/{id:guid}/prescriptions/{prescriptionId:guid}")]
+    [RequirePermission(Permissions.PrescriptionsIssue)]
+    public Task<ConsultationResponse> RemovePrescription(Guid id, Guid prescriptionId, CancellationToken cancellationToken) =>
+        consultations.RemovePrescriptionAsync(id, prescriptionId, cancellationToken);
+
+    /// <summary>Only for prescriptions of completed consultations; in progress, edit or remove them instead.</summary>
+    [HttpPost("api/consultations/{id:guid}/prescriptions/{prescriptionId:guid}/cancel")]
+    [RequirePermission(Permissions.PrescriptionsIssue)]
+    public Task<ConsultationResponse> CancelPrescription(
+        Guid id,
+        Guid prescriptionId,
+        CancelPrescriptionRequest request,
+        CancellationToken cancellationToken) =>
+        consultations.CancelPrescriptionAsync(id, prescriptionId, request, cancellationToken);
+
+    /// <summary>The patient's medication list: prescriptions of completed consultations. A clinical read: audited.</summary>
+    [HttpGet("api/patients/{patientId:guid}/prescriptions")]
+    [RequirePermission(Permissions.ClinicalRead)]
+    public Task<PagedResponse<PatientPrescriptionResponse>> ListPatientPrescriptions(
+        Guid patientId,
+        [FromQuery] PatientPrescriptionListQuery query,
+        CancellationToken cancellationToken) =>
+        consultations.ListPatientPrescriptionsAsync(patientId, query, cancellationToken);
+
     [HttpPost("api/consultations/{id:guid}/addenda")]
     [RequirePermission(Permissions.ClinicalWrite)]
     public Task<ConsultationResponse> AddAddendum(Guid id, AddAddendumRequest request, CancellationToken cancellationToken) =>

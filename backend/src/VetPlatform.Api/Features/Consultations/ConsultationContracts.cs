@@ -44,6 +44,39 @@ public sealed record TreatmentResponse(
         new(t.Id, t.Name, t.Type, t.DiagnosisId, t.Dose, t.Route, t.Frequency, t.Duration, t.Notes, t.CreatedAt, t.UpdatedAt);
 }
 
+/// <summary>A prescription (docs/API.md section 9). <c>cancelledAt</c> carries the clinic's offset.</summary>
+public sealed record PrescriptionResponse(
+    Guid Id,
+    string MedicationName,
+    string Dose,
+    string? Route,
+    string Frequency,
+    string? Duration,
+    decimal Quantity,
+    string QuantityUnit,
+    int Refills,
+    string? Instructions,
+    Guid? DiagnosisId,
+    PrescriptionStatus Status,
+    AppointmentPersonSummary? PrescribedBy,
+    DateTimeOffset? CancelledAt,
+    AppointmentPersonSummary? CancelledBy,
+    string? CancelReason,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>The prescriber and canceller must be loaded (a missing one, e.g. another clinic's, shows null).</summary>
+    public static PrescriptionResponse From(Prescription p, TimeZoneInfo zone) =>
+        new(
+            p.Id, p.MedicationName, p.Dose, p.Route, p.Frequency, p.Duration,
+            p.Quantity / 1.000000000000000000000000000000000m, // numeric(10,3) returns 14.000; respond with 14
+            p.QuantityUnit, p.Refills, p.Instructions, p.DiagnosisId, p.Status,
+            p.PrescribedBy is { } by ? new AppointmentPersonSummary(by.Id, by.Name) : null,
+            p.CancelledAt is { } at ? TimeZoneInfo.ConvertTime(at, zone) : null,
+            p.CancelledBy is { } canceller ? new AppointmentPersonSummary(canceller.Id, canceller.Name) : null,
+            p.CancelReason, p.CreatedAt, p.UpdatedAt);
+}
+
 public sealed record ConsultationAddendumResponse(Guid Id, string Text, AppointmentPersonSummary? Author, DateTimeOffset CreatedAt);
 
 /// <summary>A consultation as returned by the API (docs/API.md section 8). Clinical instants carry the clinic's offset.</summary>
@@ -65,6 +98,7 @@ public sealed record ConsultationResponse(
     ConsultationVitals Vitals,
     IReadOnlyList<DiagnosisResponse> Diagnoses,
     IReadOnlyList<TreatmentResponse> Treatments,
+    IReadOnlyList<PrescriptionResponse> Prescriptions,
     IReadOnlyList<ConsultationAddendumResponse> Addenda,
     AppointmentPersonSummary? CreatedBy,
     DateTimeOffset CreatedAt,
@@ -96,6 +130,7 @@ public sealed record ConsultationResponse(
             c.Diagnoses.OrderByDescending(d => d.IsPrimary).ThenBy(d => d.CreatedAt).ThenBy(d => d.Id)
                 .Select(DiagnosisResponse.From).ToList(),
             c.Treatments.OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).Select(TreatmentResponse.From).ToList(),
+            c.Prescriptions.OrderBy(p => p.CreatedAt).ThenBy(p => p.Id).Select(p => PrescriptionResponse.From(p, zone)).ToList(),
             c.Addenda.OrderBy(a => a.CreatedAt).ThenBy(a => a.Id)
                 .Select(a => new ConsultationAddendumResponse(a.Id, a.Text, Person(a.Author), TimeZoneInfo.ConvertTime(a.CreatedAt, zone)))
                 .ToList(),
@@ -232,6 +267,63 @@ public sealed class PatientDiagnosisListQuery : PageQuery, IValidatableObject
         if (Status is not null && ParsedStatus is null)
         {
             yield return new ValidationResult($"Status must be one of {StrictEnum.Names<DiagnosisStatus>()}.", [nameof(Status)]);
+        }
+    }
+}
+
+/// <summary>
+/// Adds a prescription. <c>medicationName</c>, <c>dose</c>, <c>frequency</c>, <c>quantity</c> and <c>quantityUnit</c> are
+/// required; optional text may be omitted, null or blank (stores nothing). <c>refills</c> defaults to 0.
+/// </summary>
+public sealed record CreatePrescriptionRequest(
+    [Required, MaxLength(Prescription.MedicationNameMaxLength)] string? MedicationName,
+    [Required, MaxLength(Prescription.DetailMaxLength)] string? Dose,
+    [MaxLength(Prescription.DetailMaxLength)] string? Route,
+    [Required, MaxLength(Prescription.DetailMaxLength)] string? Frequency,
+    [MaxLength(Prescription.DetailMaxLength)] string? Duration,
+    [Required] decimal? Quantity,
+    [Required, MaxLength(Prescription.QuantityUnitMaxLength)] string? QuantityUnit,
+    int? Refills,
+    [MaxLength(Prescription.InstructionsMaxLength)] string? Instructions,
+    Guid? DiagnosisId);
+
+/// <summary>
+/// Partial update of a prescription of an in-progress consultation; omitted or null fields are unchanged, <c>""</c>
+/// clears optional text (required text cannot be blank), and <c>diagnosisId</c> is cleared with an explicit null.
+/// </summary>
+public sealed record UpdatePrescriptionRequest(
+    [MaxLength(Prescription.MedicationNameMaxLength)] string? MedicationName,
+    [MaxLength(Prescription.DetailMaxLength)] string? Dose,
+    [MaxLength(Prescription.DetailMaxLength)] string? Route,
+    [MaxLength(Prescription.DetailMaxLength)] string? Frequency,
+    [MaxLength(Prescription.DetailMaxLength)] string? Duration,
+    decimal? Quantity,
+    [MaxLength(Prescription.QuantityUnitMaxLength)] string? QuantityUnit,
+    int? Refills,
+    [MaxLength(Prescription.InstructionsMaxLength)] string? Instructions,
+    Optional<Guid?> DiagnosisId);
+
+public sealed record CancelPrescriptionRequest([Required, MaxLength(Prescription.ReasonMaxLength)] string? Reason);
+
+/// <summary>A prescription in the patient's medication list, with the consultation it came from.</summary>
+public sealed record PatientPrescriptionResponse(
+    PrescriptionResponse Prescription,
+    Guid ConsultationId,
+    DateTimeOffset ConsultationCompletedAt,
+    AppointmentPersonSummary Veterinarian);
+
+public sealed class PatientPrescriptionListQuery : PageQuery, IValidatableObject
+{
+    public string? Status { get; init; }
+
+    public PrescriptionStatus? ParsedStatus =>
+        StrictEnum.TryParse<PrescriptionStatus>(Status, out var status) ? status : null;
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Status is not null && ParsedStatus is null)
+        {
+            yield return new ValidationResult($"Status must be one of {StrictEnum.Names<PrescriptionStatus>()}.", [nameof(Status)]);
         }
     }
 }

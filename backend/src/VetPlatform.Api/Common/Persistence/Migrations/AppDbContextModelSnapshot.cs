@@ -647,6 +647,143 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Prescription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CancelReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancel_reason");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<Guid?>("CancelledByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cancelled_by_user_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<Guid>("ConsultationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("consultation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("DiagnosisId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("diagnosis_id");
+
+                    b.Property<string>("Dose")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("dose");
+
+                    b.Property<string>("Duration")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("duration");
+
+                    b.Property<string>("Frequency")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("frequency");
+
+                    b.Property<string>("Instructions")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("instructions");
+
+                    b.Property<string>("MedicationName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("medication_name");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<Guid>("PrescribedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prescribed_by_user_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(10, 3)
+                        .HasColumnType("numeric(10,3)")
+                        .HasColumnName("quantity");
+
+                    b.Property<string>("QuantityUnit")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("quantity_unit");
+
+                    b.Property<int>("Refills")
+                        .HasColumnType("integer")
+                        .HasColumnName("refills");
+
+                    b.Property<string>("Route")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("route");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_prescriptions");
+
+                    b.HasIndex("ClinicId", "CancelledByUserId")
+                        .HasDatabaseName("ix_prescriptions_clinic_id_cancelled_by_user_id");
+
+                    b.HasIndex("ClinicId", "PrescribedByUserId")
+                        .HasDatabaseName("ix_prescriptions_clinic_id_prescribed_by_user_id");
+
+                    b.HasIndex("ClinicId", "ConsultationId", "DiagnosisId")
+                        .HasDatabaseName("ix_prescriptions_clinic_id_consultation_id_diagnosis_id");
+
+                    b.HasIndex("ClinicId", "PatientId", "ConsultationId")
+                        .HasDatabaseName("ix_prescriptions_clinic_id_patient_id_consultation_id");
+
+                    b.ToTable("prescriptions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_prescriptions_dose", "btrim(dose) <> ''");
+
+                            t.HasCheckConstraint("ck_prescriptions_frequency", "btrim(frequency) <> ''");
+
+                            t.HasCheckConstraint("ck_prescriptions_lifecycle", "CASE status WHEN 'Active' THEN cancelled_at IS NULL AND cancelled_by_user_id IS NULL AND cancel_reason IS NULL WHEN 'Cancelled' THEN cancelled_at IS NOT NULL AND cancelled_by_user_id IS NOT NULL AND cancel_reason IS NOT NULL AND btrim(cancel_reason) <> '' ELSE false END");
+
+                            t.HasCheckConstraint("ck_prescriptions_medication_name", "btrim(medication_name) <> ''");
+
+                            t.HasCheckConstraint("ck_prescriptions_quantity", "quantity > 0 AND quantity <= 100000");
+
+                            t.HasCheckConstraint("ck_prescriptions_quantity_unit", "btrim(quantity_unit) <> ''");
+
+                            t.HasCheckConstraint("ck_prescriptions_refills", "refills BETWEEN 0 AND 12");
+
+                            t.HasCheckConstraint("ck_prescriptions_status", "status IN ('Active', 'Cancelled')");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Treatment", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1382,6 +1519,50 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_diagnoses_consultations_clinic_id_patient_id_consultation_id");
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Prescription", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_prescriptions_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "CancelledBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "CancelledByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_prescriptions_users_clinic_id_cancelled_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "PrescribedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PrescribedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_prescriptions_users_clinic_id_prescribed_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Diagnosis", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ConsultationId", "DiagnosisId")
+                        .HasPrincipalKey("ClinicId", "ConsultationId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_prescriptions_diagnoses_clinic_id_consultation_id_diagnosis");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Consultation", null)
+                        .WithMany("Prescriptions")
+                        .HasForeignKey("ClinicId", "PatientId", "ConsultationId")
+                        .HasPrincipalKey("ClinicId", "PatientId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_prescriptions_consultations_clinic_id_patient_id_consultati");
+
+                    b.Navigation("CancelledBy");
+
+                    b.Navigation("PrescribedBy");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Treatment", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
@@ -1508,6 +1689,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("Addenda");
 
                     b.Navigation("Diagnoses");
+
+                    b.Navigation("Prescriptions");
 
                     b.Navigation("Treatments");
                 });

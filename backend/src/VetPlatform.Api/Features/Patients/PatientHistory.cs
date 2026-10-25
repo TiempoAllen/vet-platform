@@ -65,10 +65,14 @@ public sealed record PatientHistoryConsultation(
     Guid? AppointmentId,
     AppointmentPersonSummary Veterinarian,
     string? Assessment,
-    IReadOnlyList<PatientHistoryDiagnosis> Diagnoses);
+    IReadOnlyList<PatientHistoryDiagnosis> Diagnoses,
+    IReadOnlyList<PatientHistoryPrescription> Prescriptions);
 
 /// <summary>A diagnosis as summarised in the history (primary first).</summary>
 public sealed record PatientHistoryDiagnosis(Guid Id, string Name, DiagnosisStatus Status, bool IsPrimary);
+
+/// <summary>A prescription as summarised in the history (in the order recorded), with its current status.</summary>
+public sealed record PatientHistoryPrescription(Guid Id, string MedicationName, PrescriptionStatus Status);
 
 /// <summary>Details of <c>ConsultationCompleted</c>.</summary>
 public sealed record PatientConsultationDetails(PatientHistoryConsultation Consultation);
@@ -175,6 +179,8 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
             : await db.Consultations.AsNoTracking()
                 .Include(c => c.Veterinarian)
                 .Include(c => c.Diagnoses)
+                .Include(c => c.Prescriptions)
+                .AsSplitQuery()
                 .Where(c => consultationIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id, cancellationToken);
 
@@ -210,6 +216,10 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                         consultation.Diagnoses
                             .OrderByDescending(d => d.IsPrimary).ThenBy(d => d.CreatedAt).ThenBy(d => d.Id)
                             .Select(d => new PatientHistoryDiagnosis(d.Id, d.Name, d.Status, d.IsPrimary))
+                            .ToList(),
+                        consultation.Prescriptions
+                            .OrderBy(p => p.CreatedAt).ThenBy(p => p.Id)
+                            .Select(p => new PatientHistoryPrescription(p.Id, p.MedicationName, p.Status))
                             .ToList())));
             }
 
