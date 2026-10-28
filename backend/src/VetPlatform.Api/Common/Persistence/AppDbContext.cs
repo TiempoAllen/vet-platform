@@ -2,6 +2,8 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using VetPlatform.Api.Common.Auditing;
 using VetPlatform.Api.Features.Appointments;
+using VetPlatform.Api.Features.Attachments;
+using VetPlatform.Api.Features.ClinicalNotes;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Consultations;
@@ -65,6 +67,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
     public DbSet<Prescription> Prescriptions => Set<Prescription>();
 
     public DbSet<Vaccination> Vaccinations => Set<Vaccination>();
+
+    public DbSet<ClinicalNote> ClinicalNotes => Set<ClinicalNote>();
+
+    public DbSet<Attachment> Attachments => Set<Attachment>();
 
     /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
     public const string ClinicFilter = "Clinic";

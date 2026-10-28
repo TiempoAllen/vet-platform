@@ -92,6 +92,8 @@ command-line. Environments: `Development`, `Testing` (automated tests), `Staging
 - Set values with environment variables using `__` for nesting, e.g. `Logging__LogLevel__Default=Warning`.
 - Secrets (connection strings, keys) come from environment variables or a secret store. Never commit them.
   The API refuses to start without `ConnectionStrings:Default` (env var `ConnectionStrings__Default`).
+  It also needs `FileStorage:LocalRoot`, the private directory for uploaded files (Development uses
+  `App_Data/files`, which is git-ignored; see `docs/RUNBOOK.md`).
   Local-only overrides may go in `appsettings.Development.local.json` style files, which are git-ignored.
 - Logging: structured JSON on the console in every environment except Development, which uses readable text.
 

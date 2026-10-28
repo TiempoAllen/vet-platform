@@ -241,6 +241,137 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Attachments.Attachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<Guid?>("ConsultationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("consultation_id");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("content_type");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("description");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("file_name");
+
+                    b.Property<Guid?>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("sha256")
+                        .IsFixedLength();
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character(32)")
+                        .HasColumnName("storage_key")
+                        .IsFixedLength();
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UploadedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("uploaded_by_user_id");
+
+                    b.Property<string>("WithdrawReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("withdraw_reason");
+
+                    b.Property<DateTimeOffset?>("WithdrawnAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("withdrawn_at");
+
+                    b.Property<Guid?>("WithdrawnByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("withdrawn_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_attachments");
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_attachments_storage_key");
+
+                    b.HasIndex("ClinicId", "UploadedByUserId")
+                        .HasDatabaseName("ix_attachments_clinic_id_uploaded_by_user_id");
+
+                    b.HasIndex("ClinicId", "WithdrawnByUserId")
+                        .HasDatabaseName("ix_attachments_clinic_id_withdrawn_by_user_id");
+
+                    b.HasIndex("ClinicId", "ClientId", "CreatedAt")
+                        .HasDatabaseName("ix_attachments_clinic_id_client_id_created_at");
+
+                    b.HasIndex("ClinicId", "PatientId", "ConsultationId")
+                        .HasDatabaseName("ix_attachments_clinic_id_patient_id_consultation_id");
+
+                    b.HasIndex("ClinicId", "PatientId", "CreatedAt")
+                        .HasDatabaseName("ix_attachments_clinic_id_patient_id_created_at");
+
+                    b.ToTable("attachments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_attachments_content_type", "content_type IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')");
+
+                            t.HasCheckConstraint("ck_attachments_file_name", "btrim(file_name) <> ''");
+
+                            t.HasCheckConstraint("ck_attachments_lifecycle", "CASE status WHEN 'Active' THEN withdrawn_at IS NULL AND withdrawn_by_user_id IS NULL AND withdraw_reason IS NULL WHEN 'Withdrawn' THEN withdrawn_at IS NOT NULL AND withdrawn_by_user_id IS NOT NULL AND withdraw_reason IS NOT NULL AND btrim(withdraw_reason) <> '' ELSE false END");
+
+                            t.HasCheckConstraint("ck_attachments_owner", "(client_id IS NOT NULL AND patient_id IS NULL AND consultation_id IS NULL) OR (client_id IS NULL AND patient_id IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_attachments_sha256", "sha256 ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("ck_attachments_size_bytes", "size_bytes BETWEEN 1 AND 20971520");
+
+                            t.HasCheckConstraint("ck_attachments_status", "status IN ('Active', 'Withdrawn')");
+
+                            t.HasCheckConstraint("ck_attachments_storage_key", "storage_key ~ '^[0-9a-f]{32}$'");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Clients.Client", b =>
                 {
                     b.Property<Guid>("Id")
@@ -352,6 +483,57 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                             t.HasCheckConstraint("ck_clients_preferred_contact_method", "preferred_contact_method IN ('Email', 'Phone', 'Sms')");
 
                             t.HasCheckConstraint("ck_clients_status", "status IN ('Active', 'Inactive')");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.ClinicalNotes.ClinicalNote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("AuthorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_user_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<Guid?>("ConsultationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("consultation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("text");
+
+                    b.HasKey("Id")
+                        .HasName("pk_clinical_notes");
+
+                    b.HasIndex("ClinicId", "AuthorUserId")
+                        .HasDatabaseName("ix_clinical_notes_clinic_id_author_user_id");
+
+                    b.HasIndex("ClinicId", "PatientId", "ConsultationId")
+                        .HasDatabaseName("ix_clinical_notes_clinic_id_patient_id_consultation_id");
+
+                    b.HasIndex("ClinicId", "PatientId", "CreatedAt")
+                        .HasDatabaseName("ix_clinical_notes_clinic_id_patient_id_created_at");
+
+                    b.ToTable("clinical_notes", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_clinical_notes_text", "btrim(text) <> ''");
                         });
                 });
 
@@ -1529,6 +1711,55 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("Veterinarian");
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Attachments.Attachment", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_attachments_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Clients.Client", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ClientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_attachments_clients_clinic_id_client_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Patients.Patient", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_attachments_patients_clinic_id_patient_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "UploadedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "UploadedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_attachments_users_clinic_id_uploaded_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "WithdrawnBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "WithdrawnByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_attachments_users_clinic_id_withdrawn_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Consultation", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId", "ConsultationId")
+                        .HasPrincipalKey("ClinicId", "PatientId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_attachments_consultations_clinic_id_patient_id_consultation");
+
+                    b.Navigation("UploadedBy");
+
+                    b.Navigation("WithdrawnBy");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Clients.Client", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
@@ -1537,6 +1768,41 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_clients_clinics_clinic_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.ClinicalNotes.ClinicalNote", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_clinical_notes_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "Author")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "AuthorUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_clinical_notes_users_clinic_id_author_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Patients.Patient", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_clinical_notes_patients_clinic_id_patient_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Consultation", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId", "ConsultationId")
+                        .HasPrincipalKey("ClinicId", "PatientId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_clinical_notes_consultations_clinic_id_patient_id_consultat");
+
+                    b.Navigation("Author");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Consultation", b =>

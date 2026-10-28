@@ -66,6 +66,12 @@ Validate:
 
 Do not execute uploaded files. Prefer private storage with authorized access.
 
+Since B-15 (ADR-015): the permission is checked before the body is read; only JPEG, PNG, WebP and PDF are accepted,
+recognised from the leading bytes (name and declared type ignored); at most 20 MB; content is stored under a random
+32-hex key outside any web root, never under the uploader's name; downloads go only through the API, always as
+`attachment` with `nosniff`, a sandboxing CSP and `no-store`; the uploader's file name is reduced to a safe download
+name. There is no malware scanning yet (X-05); files are never opened server-side beyond the first 12 bytes.
+
 ## 7. Sensitive information
 Avoid unnecessary collection and logging of personal, clinical, and financial information.
 

@@ -13,6 +13,7 @@ public static class ErrorCodes
     public const string MethodNotAllowed = "METHOD_NOT_ALLOWED";
     public const string Conflict = "CONFLICT";
     public const string UnsupportedMediaType = "UNSUPPORTED_MEDIA_TYPE";
+    public const string PayloadTooLarge = "PAYLOAD_TOO_LARGE";
     public const string ValidationError = "VALIDATION_ERROR";
     public const string RateLimited = "RATE_LIMITED";
     public const string InternalError = "INTERNAL_ERROR";
@@ -26,6 +27,7 @@ public static class ErrorCodes
         (int)HttpStatusCode.NotFound => (NotFound, "The requested resource was not found."),
         (int)HttpStatusCode.MethodNotAllowed => (MethodNotAllowed, "The HTTP method is not allowed for this resource."),
         (int)HttpStatusCode.Conflict => (Conflict, "The request conflicts with the current state of the resource."),
+        (int)HttpStatusCode.RequestEntityTooLarge => (PayloadTooLarge, "The request body is too large."),
         (int)HttpStatusCode.UnsupportedMediaType => (UnsupportedMediaType, "The request content type is not supported."),
         (int)HttpStatusCode.UnprocessableEntity => (ValidationError, "The request failed validation."),
         (int)HttpStatusCode.TooManyRequests => (RateLimited, "Too many requests. Please try again later."),

@@ -6,6 +6,9 @@ obj/
 TestResults/
 coverage*/
 
+# Uploaded files of local development (FileStorage:LocalRoot) - never commit
+App_Data/
+
 # Secrets and local configuration - never commit
 .env
 .env.*
