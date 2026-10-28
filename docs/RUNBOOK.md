@@ -30,9 +30,11 @@ completed with concrete commands when the platform is selected.
 | `Auth__LockoutDuration` | No | `00:15:00` | Lockout length. |
 | `Auth__LoginAttemptsPerMinute` | No | `10` | Per client address (IPv6 /64). |
 | `Logging__LogLevel__Default` | No | `Information` | Raise to `Debug` only temporarily. |
+| `FileStorage__LocalRoot` | Yes | — (Development: `App_Data/files`) | Directory for uploaded files (B-15); absolute, or relative to the content root. Must be private (never served by a web server), writable by the API, and backed up with the database. Startup fails without it. |
+| `FileStorage__Provider` | No | `Local` | The only provider until X-05 adds object storage. |
 
 Precedence: `appsettings.json` < `appsettings.{Environment}.json` < environment variables < command line. Invalid
-`Auth` values stop the app at startup.
+`Auth` values and a missing `FileStorage__LocalRoot` stop the app at startup.
 
 ## 3. Local environment setup
 Prerequisites: .NET 10 SDK, Docker Desktop (needs WSL 2 on Windows), Git.
@@ -115,6 +117,17 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<host>/api/health
 Keys encrypt session and antiforgery cookies. Rotation via the key ring keeps old keys for decryption, so users stay
 signed in. Revoking keys (after a suspected leak) signs everyone out: announce it to clinics first.
 
+### 4.7 File store housekeeping
+Files are written to a temporary name and then moved into place, and the row is saved after the file (ADR-015). A
+crash in between can leave:
+- `*.tmp` files older than a day under `FileStorage__LocalRoot`: delete them;
+- files whose name (the storage key) has no row: compare the store with
+  `SELECT storage_key FROM attachments` and move unmatched files older than a day to a quarantine folder (never delete
+  in the same step; a backup restore may still need them).
+
+Watch the volume's free space; there is no upload quota yet (X-05). Keep `Include Error Detail` off in production
+connection strings.
+
 ## 5. Backup and restore **[X-05]**
 Targets until X-05 sets final values: RPO ≤ 24 h, RTO ≤ 4 h (`SRS.md` NFR-REL-4).
 
@@ -130,6 +143,10 @@ Targets until X-05 sets final values: RPO ≤ 24 h, RTO ≤ 4 h (`SRS.md` NFR-RE
   financial data.
 - Back up the Data Protection key ring with the database (without it, a restored system signs everyone out, which
   is acceptable but must be expected).
+- Back up the file store (`FileStorage__LocalRoot`) with the database, after it: rows reference files by key, so a
+  file backup older than the database backup can miss recent uploads (their downloads then fail with 500 and are
+  logged). Files are never deleted by the application (withdrawn files stay), so restoring a newer file backup is
+  harmless.
 
 ### 5.2 Restore
 1. Restore into a **new** database, never over the live one:

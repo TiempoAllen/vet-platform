@@ -90,6 +90,9 @@ public static class AuditActions
     public const string PrescriptionCancelled = "prescription.cancelled";
     public const string VaccinationRecorded = "vaccination.recorded";
     public const string VaccinationVoided = "vaccination.voided";
+    public const string ClinicalNoteAdded = "clinical_note.added";
+    public const string AttachmentUploaded = "attachment.uploaded";
+    public const string AttachmentWithdrawn = "attachment.withdrawn";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";
@@ -102,6 +105,13 @@ public static class AuditActions
 
     /// <summary>The clinic-wide due list (owner contact details, vaccine names and due dates).</summary>
     public const string VaccinationsDueListed = "vaccination.due_listed";
+    public const string ClinicalNoteViewed = "clinical_note.viewed";
+    public const string ClinicalNotesListed = "clinical_note.listed";
+
+    /// <summary>Reads of attachments (any owner): metadata, lists and content downloads.</summary>
+    public const string AttachmentViewed = "attachment.viewed";
+    public const string AttachmentsListed = "attachment.listed";
+    public const string AttachmentDownloaded = "attachment.downloaded";
 }
 
 /// <summary>

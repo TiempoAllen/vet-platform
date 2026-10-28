@@ -6,6 +6,8 @@ using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Appointments;
+using VetPlatform.Api.Features.Attachments;
+using VetPlatform.Api.Features.ClinicalNotes;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Vaccinations;
 
@@ -28,6 +30,12 @@ public enum PatientHistoryEntryType
 
     /// <summary>Clinical, like <see cref="ConsultationCompleted"/>: a vaccine dose (voided ones included, flagged).</summary>
     VaccinationGiven,
+
+    /// <summary>Clinical: a clinical note, with its text.</summary>
+    ClinicalNoteAdded,
+
+    /// <summary>Clinical: a file attached to the patient or one of its consultations (withdrawn files disappear).</summary>
+    AttachmentAdded,
 }
 
 /// <summary>Who caused an entry; null when there was no signed-in user (the CLI) or the account cannot be shown.</summary>
@@ -91,6 +99,24 @@ public sealed record PatientHistoryVaccination(
     AppointmentPersonSummary? Veterinarian,
     VaccinationStatus Status);
 
+/// <summary>The note a <c>ClinicalNoteAdded</c> entry is about; the actor is its author.</summary>
+public sealed record PatientHistoryNote(Guid Id, string Text, Guid? ConsultationId);
+
+/// <summary>Details of <c>ClinicalNoteAdded</c>.</summary>
+public sealed record PatientClinicalNoteDetails(PatientHistoryNote Note);
+
+/// <summary>The file an <c>AttachmentAdded</c> entry is about; the actor is its uploader.</summary>
+public sealed record PatientHistoryAttachment(
+    Guid Id,
+    string FileName,
+    string ContentType,
+    long SizeBytes,
+    string? Description,
+    Guid? ConsultationId);
+
+/// <summary>Details of <c>AttachmentAdded</c>.</summary>
+public sealed record PatientAttachmentDetails(PatientHistoryAttachment Attachment);
+
 /// <summary>Details of <c>VaccinationGiven</c>.</summary>
 public sealed record PatientVaccinationDetails(PatientHistoryVaccination Vaccination);
 
@@ -140,6 +166,8 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         const string noShow = nameof(PatientHistoryEntryType.AppointmentNoShow);
         const string consultationCompleted = nameof(PatientHistoryEntryType.ConsultationCompleted);
         const string vaccinationGiven = nameof(PatientHistoryEntryType.VaccinationGiven);
+        const string noteAdded = nameof(PatientHistoryEntryType.ClinicalNoteAdded);
+        const string attachmentAdded = nameof(PatientHistoryEntryType.AttachmentAdded);
 
         var registrations = db.ForCurrentClinic(tenant)
             .Where(entry => entry.EntityType == nameof(Patient)
@@ -174,6 +202,13 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
             sources = sources.Concat(db.Vaccinations
                 .Where(v => v.PatientId == patientId)
                 .Select(v => new HistoryKey { Type = vaccinationGiven, Id = v.Id, OccurredAt = v.AdministeredDayStartsAt }));
+            sources = sources.Concat(db.ClinicalNotes
+                .Where(n => n.PatientId == patientId)
+                .Select(n => new HistoryKey { Type = noteAdded, Id = n.Id, OccurredAt = n.CreatedAt }));
+            // Patient and consultation files (both carry patient_id); client files are not part of a patient's history.
+            sources = sources.Concat(db.Attachments
+                .Where(a => a.PatientId == patientId && a.Status == AttachmentStatus.Active)
+                .Select(a => new HistoryKey { Type = attachmentAdded, Id = a.Id, OccurredAt = a.CreatedAt }));
         }
 
         // Documented order: occurredAt, then id, then type, all descending.
@@ -187,6 +222,8 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         var appointmentIds = keys.Data.Where(k => k.Type is completed or cancelled or noShow).Select(k => k.Id).ToList();
         var consultationIds = keys.Data.Where(k => k.Type == consultationCompleted).Select(k => k.Id).ToList();
         var vaccinationIds = keys.Data.Where(k => k.Type == vaccinationGiven).Select(k => k.Id).ToList();
+        var noteIds = keys.Data.Where(k => k.Type == noteAdded).Select(k => k.Id).ToList();
+        var attachmentIds = keys.Data.Where(k => k.Type == attachmentAdded).Select(k => k.Id).ToList();
         var auditEntries = auditIds.Count == 0
             ? []
             : await db.ForCurrentClinic(tenant).AsNoTracking()
@@ -216,11 +253,20 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                 .Where(v => vaccinationIds.Contains(v.Id))
                 .ToDictionaryAsync(v => v.Id, cancellationToken);
 
+        var noteRows = noteIds.Count == 0
+            ? []
+            : await db.ClinicalNotes.AsNoTracking().Where(n => noteIds.Contains(n.Id)).ToDictionaryAsync(n => n.Id, cancellationToken);
+        var attachmentRows = attachmentIds.Count == 0
+            ? []
+            : await db.Attachments.AsNoTracking().Where(a => attachmentIds.Contains(a.Id)).ToDictionaryAsync(a => a.Id, cancellationToken);
+
         var actors = await ActorsAsync(
             auditEntries.Values.Select(entry => entry.ActorUserId)
                 .Concat(appointmentRows.Values.Select(a => a.StatusChangedByUserId))
                 .Concat(consultationRows.Values.Select(c => c.CompletedByUserId))
-                .Concat(vaccinationRows.Values.Select(v => v.RecordedByUserId)),
+                .Concat(vaccinationRows.Values.Select(v => v.RecordedByUserId))
+                .Concat(noteRows.Values.Select(n => (Guid?)n.AuthorUserId))
+                .Concat(attachmentRows.Values.Select(a => a.UploadedByUserId)),
             cancellationToken);
         var clients = await ClientsAsync(auditEntries.Values, cancellationToken);
 
@@ -268,6 +314,24 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                         vaccination.Status)));
             }
 
+            if (type == PatientHistoryEntryType.ClinicalNoteAdded)
+            {
+                var note = noteRows[key.Id];
+                return new PatientHistoryEntry(
+                    key.Id, type, key.OccurredAt, Actor(note.AuthorUserId),
+                    new PatientClinicalNoteDetails(new PatientHistoryNote(note.Id, note.Text, note.ConsultationId)));
+            }
+
+            if (type == PatientHistoryEntryType.AttachmentAdded)
+            {
+                var attachment = attachmentRows[key.Id];
+                return new PatientHistoryEntry(
+                    key.Id, type, key.OccurredAt, Actor(attachment.UploadedByUserId),
+                    new PatientAttachmentDetails(new PatientHistoryAttachment(
+                        attachment.Id, attachment.FileName, attachment.ContentType, attachment.SizeBytes,
+                        attachment.Description, attachment.ConsultationId)));
+            }
+
             var appointment = appointmentRows[key.Id];
             var summary = new PatientHistoryAppointment(
                 appointment.Id, appointment.StartAt, appointment.EndAt, appointment.Type,
@@ -279,9 +343,11 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         }).ToList();
 
         // Reading clinical entries is a clinical read (SECURITY.md section 10): record which ones were shown.
-        if (consultationIds.Count > 0 || vaccinationIds.Count > 0)
+        if (consultationIds.Count > 0 || vaccinationIds.Count > 0 || noteIds.Count > 0 || attachmentIds.Count > 0)
         {
-            audit.Record(AuditActions.PatientHistoryViewed, nameof(Patient), patientId, new { consultationIds, vaccinationIds });
+            audit.Record(
+                AuditActions.PatientHistoryViewed, nameof(Patient), patientId,
+                new { consultationIds, vaccinationIds, noteIds, attachmentIds });
             await db.SaveChangesAsync(cancellationToken);
         }
 

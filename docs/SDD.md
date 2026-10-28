@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-14). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-15). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -18,7 +18,7 @@ flowchart LR
   web -->|/api, cookies + CSRF header| api[VetPlatform.Api<br/>ASP.NET Core .NET 10]
   op([Operator]) -->|create-admin CLI,<br/>migrations| api
   api -->|Npgsql / EF Core| db[(PostgreSQL)]
-  api -.->|planned B-15| files[(Object storage)]
+  api -->|IFileStore: local disk;<br/>object storage in X-05| files[(File storage)]
   api -.->|planned B-25| notify[Email / SMS provider]
   api -->|JSON logs on stdout| logs[Log collector]
 ```
@@ -137,7 +137,7 @@ erDiagram
   }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13), `AddVaccinations` (B-14). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13), `AddVaccinations` (B-14), `AddClinicalNotesAndAttachments` (B-15). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms
@@ -202,7 +202,9 @@ emails. Action names so far:
 `patient.history_viewed`, `diagnosis.added`, `diagnosis.updated`, `diagnosis.removed`, `treatment.added`,
 `treatment.updated`, `treatment.removed`, `prescription.added`, `prescription.updated`, `prescription.removed`,
 `prescription.cancelled`, `vaccination.recorded`, `vaccination.voided`, and the clinical reads `diagnosis.listed`,
-`prescription.listed`, `vaccination.viewed`, `vaccination.listed`, `vaccination.due_listed`.
+`prescription.listed`, `vaccination.viewed`, `vaccination.listed`, `vaccination.due_listed`; since B-15
+`clinical_note.added`, `attachment.uploaded`, `attachment.withdrawn`, and the reads `clinical_note.viewed`,
+`clinical_note.listed`, `attachment.viewed`, `attachment.listed`, `attachment.downloaded`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 
@@ -270,7 +272,7 @@ Module-specific design notes:
 | Module | Design decision to make in its milestone |
 |---|---|
 | Scheduling (B-08–B-10) | Prevent overlaps in the database with a PostgreSQL exclusion constraint on (`veterinarian_id`, `tstzrange(start_at, end_at)`) for active statuses, plus availability checks in the service. Status transitions as an explicit state table in code. Times stored UTC, displayed in the clinic timezone. |
-| Clinical (B-11–B-15) | Completed consultations become read-only; corrections are addenda rows. Attachments stored in private object storage under random keys, served through an authorised endpoint, never by public URL. |
+| Clinical (B-11–B-15) | Completed consultations become read-only; corrections are addenda rows. Attachments stored in private storage (`IFileStore`, local disk until X-05) under random keys, served through an authorised, sandboxed download endpoint, never by public URL (ADR-015). |
 | Billing (B-16–B-18) | Totals recomputed server-side on every change; invoice numbers from a per-clinic sequence row locked in the transaction; payments and invoice balance updated in one transaction; voids instead of deletes. |
 | Inventory (B-19–B-22) | `stock_lots.quantity` changed only by the service that writes the matching `stock_movements` row in the same transaction, with a row lock on the lot; CHECK `quantity >= 0` unless Q-5 decides otherwise. |
 | Reports (B-23–B-24) | Read-only queries through the tenant filter; heavy reports may later use a read replica (X-04). |

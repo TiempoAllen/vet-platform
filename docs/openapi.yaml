@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.14.0
-  summary: Implemented endpoints as of milestone B-14.
+  version: 0.15.0
+  summary: Implemented endpoints as of milestone B-15.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -33,6 +33,8 @@ tags:
   - name: Appointments
   - name: Consultations
   - name: Vaccinations
+  - name: Attachments
+  - name: ClinicalNotes
   - name: Operations
 security:
   - sessionCookie: []
@@ -1747,6 +1749,335 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/patients/{patientId}/attachments:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Attachments]
+      operationId: uploadPatientAttachment
+      summary: Upload a file for a patient
+      description: >
+        Requires `clinical.write`. Any patient status. multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
+        recognised by its content; at most 20 MB) and an optional `description` (max 500). Order of checks: owner
+        (404/409, before the body is read); request (415 not multipart, 413 body over the limit, 400 malformed);
+        form fields (422); type (415); size (413). The stored fileName gets the detected type's extension.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/AttachmentUpload' }
+      responses:
+        '201':
+          description: Stored.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/attachments/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedFile' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      tags: [Attachments]
+      operationId: listPatientAttachments
+      summary: Files of a patient
+      description: Requires `clinical.read`. Includes the files of the patient's consultations. Newest first; Active files unless `status=Withdrawn`. Unknown owner 404. Audited (attachment.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AttachmentStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of attachments.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/consultations/{consultationId}/attachments:
+    parameters:
+      - { name: consultationId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Attachments]
+      operationId: uploadConsultationAttachment
+      summary: Upload a file for a consultation
+      description: >
+        Requires `clinical.write`. In-progress or completed consultations; a discarded one is 409. multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
+        recognised by its content; at most 20 MB) and an optional `description` (max 500). Order of checks: owner
+        (404/409, before the body is read); request (415 not multipart, 413 body over the limit, 400 malformed);
+        form fields (422); type (415); size (413). The stored fileName gets the detected type's extension.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/AttachmentUpload' }
+      responses:
+        '201':
+          description: Stored.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/attachments/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedFile' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      tags: [Attachments]
+      operationId: listConsultationAttachments
+      summary: Files of a consultation
+      description: Requires `clinical.read`. Newest first; Active files unless `status=Withdrawn`. Unknown owner 404. Audited (attachment.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AttachmentStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of attachments.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/clients/{clientId}/attachments:
+    parameters:
+      - { name: clientId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Attachments]
+      operationId: uploadClientAttachment
+      summary: Upload a file for a client
+      description: >
+        Requires `clients.manage`. Any client status (consent forms, ID documents). multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
+        recognised by its content; at most 20 MB) and an optional `description` (max 500). Order of checks: owner
+        (404/409, before the body is read); request (415 not multipart, 413 body over the limit, 400 malformed);
+        form fields (422); type (415); size (413). The stored fileName gets the detected type's extension.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/AttachmentUpload' }
+      responses:
+        '201':
+          description: Stored.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/attachments/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedFile' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      tags: [Attachments]
+      operationId: listClientAttachments
+      summary: Files of a client
+      description: Requires `clients.read`. Newest first; Active files unless `status=Withdrawn`. Unknown owner 404. Audited (attachment.listed).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AttachmentStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of attachments.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/attachments/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Attachments]
+      operationId: getAttachment
+      summary: An attachment's metadata
+      description: Requires `clients.read` for client files, `clinical.read` otherwise (403 when the caller lacks the one the file needs). Other clinics' files 404. Audited (attachment.viewed).
+      responses:
+        '200':
+          description: The attachment.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/attachments/{id}/content:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Attachments]
+      operationId: downloadAttachment
+      summary: Download an attachment's content
+      description: >
+        Same permission as the metadata. Always a download (Content-Disposition attachment with the sanitised file
+        name), with X-Content-Type-Options nosniff, Content-Security-Policy "default-src 'none'; sandbox" and
+        Cache-Control "private, no-store". A withdrawn file is 409. Audited (attachment.downloaded).
+      responses:
+        '200':
+          description: The file content.
+          headers:
+            Content-Disposition: { schema: { type: string }, description: 'attachment; filename=...; filename*=UTF-8''''...' }
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            application/pdf: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/attachments/{id}/withdraw:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Attachments]
+      operationId: withdrawAttachment
+      summary: Withdraw a mistaken upload
+      description: 'Requires `clients.manage` for client files, `clinical.write` otherwise. Active to Withdrawn, recording who and when; an already withdrawn file is 409. The row and the stored content stay. The reason is never audited.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WithdrawAttachmentRequest' }
+      responses:
+        '200':
+          description: The withdrawn attachment.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/patients/{patientId}/clinical-notes:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [ClinicalNotes]
+      operationId: listClinicalNotes
+      summary: The patient's clinical notes
+      description: Requires `clinical.read`. Newest first. Unknown patient 404. Audited (clinical_note.listed).
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of notes.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClinicalNotePage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [ClinicalNotes]
+      operationId: addClinicalNote
+      summary: Add a clinical note
+      description: Requires `clinical.write`. Any patient status. Append-only; there is no edit or delete. Optional link to an in-progress or completed consultation of the same patient (422 otherwise).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddClinicalNoteRequest' }
+      responses:
+        '201':
+          description: Added.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/clinical-notes/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClinicalNote' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/clinical-notes/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [ClinicalNotes]
+      operationId: getClinicalNote
+      summary: One clinical note
+      description: Requires `clinical.read`. Other clinics' notes 404. Audited (clinical_note.viewed).
+      responses:
+        '200':
+          description: The note.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClinicalNote' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -2148,13 +2479,13 @@ components:
         clients must accept unknown types as this base schema and narrow on `type` themselves. Known types and their
         schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry; AppointmentCompleted and
         AppointmentNoShow → PatientAppointmentEntry; AppointmentCancelled → PatientAppointmentCancelledEntry;
-        ConsultationCompleted → PatientConsultationEntry; VaccinationGiven → PatientVaccinationEntry (both only for callers
-        with clinical.read).
+        ConsultationCompleted → PatientConsultationEntry; VaccinationGiven → PatientVaccinationEntry; ClinicalNoteAdded →
+        PatientClinicalNoteEntry; AttachmentAdded → PatientAttachmentEntry (all four only for callers with clinical.read).
       properties:
         id: { type: string, format: uuid, description: Id of the source record; unique per type. }
         type:
           type: string
-          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted, VaccinationGiven. More types are added by later milestones.'
+          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted, VaccinationGiven, ClinicalNoteAdded, AttachmentAdded. More types are added by later milestones.'
           examples: [PatientRegistered]
         occurredAt: { type: string, format: date-time }
         actor:
@@ -2172,6 +2503,8 @@ components:
         AppointmentCancelled: '#/components/schemas/PatientAppointmentCancelledEntry'
         ConsultationCompleted: '#/components/schemas/PatientConsultationEntry'
         VaccinationGiven: '#/components/schemas/PatientVaccinationEntry'
+        ClinicalNoteAdded: '#/components/schemas/PatientClinicalNoteEntry'
+        AttachmentAdded: '#/components/schemas/PatientAttachmentEntry'
 
     PatientRegisteredEntry:
       allOf:
@@ -2309,6 +2642,51 @@ components:
                         - $ref: '#/components/schemas/PersonSummary'
                         - type: 'null'
                     status: { $ref: '#/components/schemas/VaccinationStatus', description: As it is now. }
+
+    PatientClinicalNoteEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          description: occurredAt is when the note was added; actor is its author.
+          properties:
+            type: { const: ClinicalNoteAdded }
+            details:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note:
+                  type: object
+                  additionalProperties: false
+                  required: [id, text, consultationId]
+                  properties:
+                    id: { type: string, format: uuid }
+                    text: { type: string }
+                    consultationId: { type: [string, 'null'], format: uuid }
+
+    PatientAttachmentEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          description: A patient or consultation file that is not withdrawn; occurredAt is the upload time, actor the uploader.
+          properties:
+            type: { const: AttachmentAdded }
+            details:
+              type: object
+              additionalProperties: false
+              required: [attachment]
+              properties:
+                attachment:
+                  type: object
+                  additionalProperties: false
+                  required: [id, fileName, contentType, sizeBytes, description, consultationId]
+                  properties:
+                    id: { type: string, format: uuid }
+                    fileName: { type: string }
+                    contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+                    sizeBytes: { type: integer, format: int64 }
+                    description: { type: [string, 'null'] }
+                    consultationId: { type: [string, 'null'], format: uuid }
 
     PatientRegisteredDetails:
       type: object
@@ -3070,6 +3448,93 @@ components:
                   - type: 'null'
         pagination: { $ref: '#/components/schemas/Pagination' }
 
+    AttachmentStatus:
+      type: string
+      description: Withdrawn means uploaded by mistake; hidden from lists and not downloadable, but kept.
+      enum: [Active, Withdrawn]
+
+    Attachment:
+      type: object
+      additionalProperties: false
+      required: [id, ownerType, patientId, consultationId, clientId, fileName, contentType, sizeBytes, sha256, description, status, withdrawnAt, withdrawnBy, withdrawReason, uploadedBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        ownerType: { type: string, enum: [Patient, Consultation, Client] }
+        patientId: { type: [string, 'null'], format: uuid, description: Set for patient and consultation files. }
+        consultationId: { type: [string, 'null'], format: uuid }
+        clientId: { type: [string, 'null'], format: uuid }
+        fileName: { type: string, maxLength: 255, description: 'The uploader''s base name without path, control or invisible formatting characters or quotes, with the detected type''s extension; only the download name.' }
+        contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf], description: Recognised from the content. }
+        sizeBytes: { type: integer, format: int64, minimum: 1, maximum: 20971520 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        description: { type: [string, 'null'], maxLength: 500 }
+        status: { $ref: '#/components/schemas/AttachmentStatus' }
+        withdrawnAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        withdrawnBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        withdrawReason: { type: [string, 'null'], maxLength: 500 }
+        uploadedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AttachmentPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Attachment' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    AttachmentUpload:
+      type: object
+      required: [file]
+      properties:
+        file: { type: string, format: binary, description: Exactly one file part; at most 20 MB. }
+        description: { type: string, maxLength: 500 }
+
+    WithdrawAttachmentRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    ClinicalNote:
+      type: object
+      additionalProperties: false
+      required: [id, patientId, consultationId, text, author, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        patientId: { type: string, format: uuid }
+        consultationId: { type: [string, 'null'], format: uuid }
+        text: { type: string, maxLength: 4000 }
+        author:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time, description: With the clinic's local offset. }
+
+    ClinicalNotePage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ClinicalNote' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    AddClinicalNoteRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 4000 }
+        consultationId: { type: [string, 'null'], format: uuid }
+
     Health:
       type: object
       required: [status]
@@ -3079,7 +3544,7 @@ components:
     ErrorCode:
       type: string
       enum: [BAD_REQUEST, UNAUTHENTICATED, FORBIDDEN, CSRF_TOKEN_INVALID, NOT_FOUND, METHOD_NOT_ALLOWED, CONFLICT,
-             UNSUPPORTED_MEDIA_TYPE, VALIDATION_ERROR, RATE_LIMITED, INTERNAL_ERROR]
+             PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, VALIDATION_ERROR, RATE_LIMITED, INTERNAL_ERROR]
 
     ErrorResponse:
       type: object
@@ -3134,6 +3599,16 @@ components:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
     Conflict:
       description: Business rule conflict (CONFLICT); show error.message.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    PayloadTooLarge:
+      description: The file is over 20 MB (PAYLOAD_TOO_LARGE).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    UnsupportedFile:
+      description: Not multipart/form-data, or the file is not a JPEG, PNG, WebP image or PDF by its content (UNSUPPORTED_MEDIA_TYPE).
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
