@@ -589,15 +589,21 @@ Choose the simplest solution that satisfies documented requirements, security, m
   `/api/attachments/{id}` (metadata, content, withdraw) takes either permission at the door and the service checks
   the one the file's owner needs (`403`). Other clinics' files and owners are `404`, as everywhere.
 - **Upload handling:** the controller reads the multipart form itself (MVC's form value providers are disabled on the
-  upload actions so an oversized form is a `413`, not a generic `400`). Order of checks: owner (`404` / `409`), form
-  (`422`), type (`415`), size (`413`). The content's SHA-256 is recorded. Content is written to the store before the
-  row; if the row cannot be saved the content is removed again (best effort; a crash in between leaves an orphan file
-  with no row, harmless and left to an X-05 sweep).
+  upload actions so an oversized form is a `413`, not a generic `400`). Order of checks: permission (`403`); owner (`404` / `409`, checked before the body is read); the request itself (`415` if it is not `multipart/form-data`, `413` if the body exceeds 20 MB plus framing, `400` if the multipart body is malformed); form fields (`422`); file type (`415`); file size (`413`). The
+  owner is resolved before the body is read (found in the B-15 review), so an unknown or discarded owner never makes the
+  server buffer a large body; a consultation owner is checked again under its lock at insert. The content's SHA-256 is
+  recorded. Content is written to the store before the row; if the row cannot be saved the content is removed again,
+  except when the commit itself failed with an unknown outcome: then the content is kept, because an orphan file is
+  harmless and a row without content is not (best effort; a crash in between leaves an orphan, swept per RUNBOOK 4.7).
 - **Storage keys** are 32 random lowercase hex characters (`RandomNumberGenerator`), validated before any path is
   built, and laid out as `root/xx/key`; the uploader's name never touches the file system. Writes go to a temporary
   name and are moved into place without overwriting.
-- **Downloads** only through the API: `Content-Disposition: attachment` with a sanitised name (no path, control
-  characters or quotes; at most 255 characters), `X-Content-Type-Options: nosniff`,
+- **Download names** (found in the B-15 review): the signature check reads only the first bytes, so a polyglot
+  (a valid JPEG header followed by HTA or batch lines) could otherwise be saved by a colleague's browser under an
+  executable name such as `xray.hta`, or one disguised with a right-to-left override. The stored name therefore keeps
+  only the uploader's base name, drops control, format (bidirectional) and separator characters and quotes, and takes
+  the extension of the detected type.
+- **Downloads** only through the API: `Content-Disposition: attachment` with that name, `X-Content-Type-Options: nosniff`,
   `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-store`. Every download is
   audited. A row whose content is missing is a logged `500` (an operational fault, see RUNBOOK backups).
 - **Immutable in the database:** `attachments_guard` allows INSERT of `Active` rows only, the one-way UPDATE `Active` →
@@ -612,5 +618,10 @@ Choose the simplest solution that satisfies documented requirements, security, m
   only offered as downloads; scanning belongs with object storage in X-05); content is not checked beyond its
   signature (a PDF with a valid header but broken body is stored as given); withdrawn content is kept until a
   retention policy exists (X-05, Q-8); no thumbnails or previews (frontend topic); the local provider assumes a single
-  API instance or a shared volume; orphan files from crashes are not swept yet; the request-size limit is enforced by
-  Kestrel in production (the in-memory test server does not, so tests rely on the form limit).
+  API instance or a shared volume; orphan files from crashes are swept by hand (RUNBOOK 4.7) until X-05 automates it;
+  the request-size limit is enforced by Kestrel in production (the in-memory test server does not, so tests rely on
+  the form limit; check it on the real host, and IIS `maxAllowedContentLength` if IIS is used); there is no per-user
+  upload rate limit or per-clinic storage quota yet, so a compromised staff account could fill the volume (X-05: rate
+  limiting on the upload routes, a quota, volume alerts); `Include Error Detail` must stay off in production
+  connection strings so constraint errors never log row values (file names, descriptions); a frontend that shows
+  content through blob URLs loses the API's CSP and must not render PDFs inline in its own origin.

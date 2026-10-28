@@ -174,10 +174,10 @@ Tests live in `backend/tests/VetPlatform.Api.Tests/`.
 | NFR-SEC-3 | `CsrfAndAccessTests.CsrfEndpoint_*`, `UnsafeRequest_*`, `EveryUnsafeMethod_RequiresACsrfToken`, `EveryUnsafeEndpoint_IsAControllerAction_SoTheCsrfFilterCoversIt`, `Login_WithoutCsrfToken_IsRejectedBeforeCredentialsAreChecked`; `AuthTests.CsrfToken_*`, `AfterSessionExpiry_TheStaleCsrfTokenIsRejected_*` |
 | NFR-SEC-4 | `AuthTests.Login_WithValidCredentials_SetsHardenedSessionCookie_AndMeReturnsTheUser` |
 | NFR-SEC-5 | `PasswordAndBootstrapTests.ChangePassword_EnforcesThePasswordPolicy`; `UsersTests.Create_RejectsInvalidInput` |
-| NFR-SEC-9 | `AttachmentsTests.OtherContent_Is415_WhateverItsName`, `FilesOver20Megabytes_Are413`, `ANurse_UploadsAPatientFile_AndItDownloadsSafely`, `FileNames_AreReducedToASafeDownloadName` |
 | NFR-SEC-6 | `AuthTests.Credentials_AreNeverWrittenToLogs`; `RequestLoggingTests.QueryStringValues_AreNeverLogged` |
 | NFR-SEC-7 | `UsersTests.AuditLog_IsAppendOnly_InTheDatabase`; `B04ReviewTests.AuditRecordedAt_IsAlwaysTheDatabaseClock`, `AuditEntries_CannotReferenceUnknownClinicsOrUsers`, `RollingBackPastB04_IsRefusedWhileTheAuditLogHasEntries` |
 | NFR-SEC-8 | `ErrorHandlingTests.*`; `ClientsTests.TextWithANulCharacter_IsRejectedWith400_NotA500` |
+| NFR-SEC-9 | `AttachmentsTests.OtherContent_Is415_WhateverItsName`, `FilesOver20Megabytes_Are413`, `ANurse_UploadsAPatientFile_AndItDownloadsSafely`, `FileNames_AreReducedToASafeDownloadName_WithTheDetectedExtension` |
 | NFR-REL-2 | `AuthTests.Database_RejectsInvalidUserValues`, `Database_RejectsAnEmailDifferingOnlyInCase_EvenWhenAWriterSkipsNormalisation`; `ClientsTests.Database_RejectsInvalidClientValues` (status, contact method, blank names, upper-case email); `PatientsTests.Database_RejectsInvalidPatientValues`; `SchedulingTests.Database_RejectsInvalidExceptions`, `Database_RejectsInvalidBlocks`; `AppointmentsTests.Database_RejectsInvalidAppointments`; `ConsultationsTests.Database_KeepsConsultationsConsistent` |
 | NFR-REL-5 | `DatabaseTests.Health_IsAnonymousAndReportsHealthy_WhenDatabaseIsReachable`; `HealthEndpointTests.Health_Returns503Unhealthy_WhenDatabaseIsUnreachable` |
 | NFR-OPS-1 | `RequestIdTests.*` |

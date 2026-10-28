@@ -1757,9 +1757,10 @@ paths:
       operationId: uploadPatientAttachment
       summary: Upload a file for a patient
       description: >
-        Requires `clinical.write`. Any patient status. The list also includes the files of the patient's consultations. multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
+        Requires `clinical.write`. Any patient status. multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
         recognised by its content; at most 20 MB) and an optional `description` (max 500). Order of checks: owner
-        (404/409), form fields (422), type (415), size (413).
+        (404/409, before the body is read); request (415 not multipart, 413 body over the limit, 400 malformed);
+        form fields (422); type (415); size (413). The stored fileName gets the detected type's extension.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -1790,7 +1791,7 @@ paths:
       tags: [Attachments]
       operationId: listPatientAttachments
       summary: Files of a patient
-      description: Requires `clinical.read`. Newest first; Active files unless `status=Withdrawn`. Unknown owner 404. Audited (attachment.listed).
+      description: Requires `clinical.read`. Includes the files of the patient's consultations. Newest first; Active files unless `status=Withdrawn`. Unknown owner 404. Audited (attachment.listed).
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/AttachmentStatus' } }
         - $ref: '#/components/parameters/Page'
@@ -1818,7 +1819,8 @@ paths:
       description: >
         Requires `clinical.write`. In-progress or completed consultations; a discarded one is 409. multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
         recognised by its content; at most 20 MB) and an optional `description` (max 500). Order of checks: owner
-        (404/409), form fields (422), type (415), size (413).
+        (404/409, before the body is read); request (415 not multipart, 413 body over the limit, 400 malformed);
+        form fields (422); type (415); size (413). The stored fileName gets the detected type's extension.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -1877,7 +1879,8 @@ paths:
       description: >
         Requires `clients.manage`. Any client status (consent forms, ID documents). multipart/form-data with exactly one `file` part (JPEG, PNG, WebP or PDF,
         recognised by its content; at most 20 MB) and an optional `description` (max 500). Order of checks: owner
-        (404/409), form fields (422), type (415), size (413).
+        (404/409, before the body is read); request (415 not multipart, 413 body over the limit, 400 malformed);
+        form fields (422); type (415); size (413). The stored fileName gets the detected type's extension.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2680,7 +2683,7 @@ components:
                   properties:
                     id: { type: string, format: uuid }
                     fileName: { type: string }
-                    contentType: { type: string }
+                    contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
                     sizeBytes: { type: integer, format: int64 }
                     description: { type: [string, 'null'] }
                     consultationId: { type: [string, 'null'], format: uuid }
@@ -3460,7 +3463,7 @@ components:
         patientId: { type: [string, 'null'], format: uuid, description: Set for patient and consultation files. }
         consultationId: { type: [string, 'null'], format: uuid }
         clientId: { type: [string, 'null'], format: uuid }
-        fileName: { type: string, maxLength: 255, description: 'The uploader''s name without path, control characters or quotes; only the download name.' }
+        fileName: { type: string, maxLength: 255, description: 'The uploader''s base name without path, control or invisible formatting characters or quotes, with the detected type''s extension; only the download name.' }
         contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf], description: Recognised from the content. }
         sizeBytes: { type: integer, format: int64, minimum: 1, maximum: 20971520 }
         sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
