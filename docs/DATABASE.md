@@ -251,7 +251,8 @@ Implemented in B-15 (table `clinical_notes`, ADR-015). `author_id` / `content` i
 - author_user_id (composite FK to users), text (max 4000, CHECK not blank), created_at
 
 **Append-only:** trigger `clinical_notes_guard` refuses UPDATE and DELETE, and an INSERT linking a discarded
-consultation (status read `FOR SHARE`, then tested); TRUNCATE is refused. Index (clinic_id, patient_id, created_at).
+consultation (status read `FOR SHARE`, then tested); TRUNCATE is refused. Indexes (clinic_id, patient_id, created_at),
+(clinic_id, patient_id, consultation_id) for the consultation key, and one for the author key.
 
 ## 6. Documents
 ### Attachment

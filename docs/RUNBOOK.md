@@ -117,6 +117,17 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<host>/api/health
 Keys encrypt session and antiforgery cookies. Rotation via the key ring keeps old keys for decryption, so users stay
 signed in. Revoking keys (after a suspected leak) signs everyone out: announce it to clinics first.
 
+### 4.7 File store housekeeping
+Files are written to a temporary name and then moved into place, and the row is saved after the file (ADR-015). A
+crash in between can leave:
+- `*.tmp` files older than a day under `FileStorage__LocalRoot`: delete them;
+- files whose name (the storage key) has no row: compare the store with
+  `SELECT storage_key FROM attachments` and move unmatched files older than a day to a quarantine folder (never delete
+  in the same step; a backup restore may still need them).
+
+Watch the volume's free space; there is no upload quota yet (X-05). Keep `Include Error Detail` off in production
+connection strings.
+
 ## 5. Backup and restore **[X-05]**
 Targets until X-05 sets final values: RPO ≤ 24 h, RTO ≤ 4 h (`SRS.md` NFR-REL-4).
 

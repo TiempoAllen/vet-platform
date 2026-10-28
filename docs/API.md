@@ -21,6 +21,8 @@ Use consistent HTTP semantics:
 - `403` authenticated but unauthorized
 - `404` resource not found or intentionally hidden
 - `409` conflict
+- `413` upload too large
+- `415` unsupported media type or file type
 - `422` validation failure where the framework supports it
 - `429` rate limited
 - `500` unexpected server error
@@ -896,8 +898,10 @@ optional `description` text part (max 500). `201` with the attachment and `Locat
 - **Owners:** patients and clients of any status (records of inactive or deceased animals still grow);
   in-progress or completed consultations (late lab reports), but a discarded one is `409`. Unknown or another
   clinic's owner `404`.
-- Order of checks: permission (`403`), owner (`404` / `409`), form (`422`), type (`415`), size (`413`).
-- `fileName` is the uploader's name without any path, control characters or quotes, at most 255 characters ("file"
+- Order of checks: permission (`403`); owner (`404` / `409`, checked before the body is read); the request itself (`415` if it is not `multipart/form-data`, `413` if the body exceeds 20 MB plus framing, `400` if the multipart body is malformed); form fields (`422`); file type (`415`); file size (`413`).
+- `fileName` is the uploader's base name without any path, control or invisible formatting characters (e.g.
+  bidirectional overrides) or quotes, with the extension replaced by the detected type's (`.jpg`, `.png`, `.webp`,
+  `.pdf`), so a file can never be saved as something executable; at most 255 characters ("file" plus the extension
   when nothing is left). It is used only as the download name.
 - Audited (`attachment.uploaded`) with ids, owner type, content type and size; never the file name or description.
 
@@ -915,7 +919,9 @@ permission (`403` without it; another clinic's or unknown `404`) and are audited
 `POST /api/attachments/:id/withdraw` (the owner's write permission): `{ "reason": "..." }` (required, max 500,
 trimmed). `Active` → `Withdrawn`, recording who and when; an already withdrawn file is `409`. The file disappears from
 lists and downloads; its row and stored content stay (purging content is a retention task, X-05). Audited
-(`attachment.withdrawn`) without the reason. There is no `PATCH` and no `DELETE`; the database refuses both.
+(`attachment.withdrawn`) without the reason. As everywhere, a missing or too long `reason` is `422` before the file
+is looked up, so it comes before `404` and the owner-based `403`. There is no `PATCH` and no `DELETE`; the database
+refuses both.
 
 ### Clinical notes
 Implemented in B-15 (ADR-015). A dated, signed text note on a patient outside the SOAP notes (phone advice, a lab
