@@ -15,7 +15,7 @@ namespace VetPlatform.Api.Features.Billing;
 /// payment or refund row and the invoice's amount paid are saved in one transaction. Nothing here is ever edited or
 /// deleted. Audit metadata holds ids, amounts and methods, never references or reasons.
 /// </summary>
-public sealed class PaymentService(
+public sealed partial class PaymentService(
     AppDbContext db,
     ITenantContext tenant,
     AuditTrail audit,
@@ -63,7 +63,7 @@ public sealed class PaymentService(
         }
 
         var reference = NullIfBlank(request.Reference);
-        if (LooksLikeCardNumber(reference))
+        if (ContainsCardNumber(reference))
         {
             problems.Add(new ApiErrorDetail("reference", "Never enter a card number; use the terminal slip or authorisation number."));
         }
@@ -115,6 +115,11 @@ public sealed class PaymentService(
 
         var problems = new List<ApiErrorDetail>();
         CheckAmount(request.Amount!.Value, invoice, refundable, "what remains of the payment", problems);
+        if (ContainsCardNumber(request.Reason))
+        {
+            problems.Add(new ApiErrorDetail("reason", "Never enter a card number; describe the refund without it."));
+        }
+
         ThrowIfAny(problems);
 
         var refund = new Refund
@@ -143,22 +148,40 @@ public sealed class PaymentService(
     }
 
     /// <summary>
-    /// True for 13 to 19 digits (spaces and dashes ignored) that pass the Luhn check: the shape of a card number, which
-    /// must never be stored (SECURITY.md section 7).
+    /// True when the text contains 13 to 19 digits, in one group or in consecutive groups joined by single separators
+    /// (space, dash, dot, slash), that pass the Luhn check: the shape of a card number, which must never be stored (SECURITY.md section 7).
+    /// Applied to payment references and refund reasons.
     /// </summary>
-    public static bool LooksLikeCardNumber(string? reference)
+    public static bool ContainsCardNumber(string? text)
     {
-        if (reference is null)
+        if (text is null)
         {
             return false;
         }
 
-        var digits = reference.Where(c => c is not (' ' or '-')).ToArray();
-        if (digits.Length is < 13 or > 19 || !digits.All(char.IsAsciiDigit))
+        foreach (System.Text.RegularExpressions.Match run in DigitRuns().Matches(text))
         {
-            return false;
+            // Any consecutive digit groups of the run ("123 4111 1111 1111 1111" holds a card in groups 2 to 5).
+            var groups = run.Value.Split([' ', '-', '.', '/']);
+            for (var start = 0; start < groups.Length; start++)
+            {
+                var digits = "";
+                for (var end = start; end < groups.Length && digits.Length < 19; end++)
+                {
+                    digits += groups[end];
+                    if (digits.Length is >= 13 and <= 19 && PassesLuhn(digits.ToCharArray()))
+                    {
+                        return true;
+                    }
+                }
+            }
         }
 
+        return false;
+    }
+
+    private static bool PassesLuhn(char[] digits)
+    {
         var sum = 0;
         for (var i = 0; i < digits.Length; i++)
         {
@@ -177,6 +200,10 @@ public sealed class PaymentService(
 
         return sum % 10 == 0;
     }
+
+    /// <summary>Maximal runs of digits with at most one separator between two digits.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"\d(?:[ \-./]?\d)*")]
+    private static partial System.Text.RegularExpressions.Regex DigitRuns();
 
     private static void CheckAmount(decimal amount, Invoice invoice, decimal limit, string limitName, List<ApiErrorDetail> problems)
     {

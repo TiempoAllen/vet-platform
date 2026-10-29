@@ -1016,7 +1016,7 @@ invoice is never edited or deleted, only voided (its number stays taken). The da
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `GET /api/invoices` | `billing.read` | Newest first, paginated; filters `status`, `clientId`, `patientId`, `paymentStatus` (`Unpaid`, `PartiallyPaid`, `Paid`; issued invoices only) and `overdue=true` (issued, balance left, `dueOn` before the clinic-local today). |
+| `GET /api/invoices` | `billing.read` | Newest first, paginated; filters `status`, `clientId`, `patientId`, `paymentStatus` (`Unpaid`, `PartiallyPaid`, `Paid`; issued invoices only) and `overdue=true` (issued, balance left, `dueOn` before the clinic-local today; `false` or omitted applies no filter). |
 | `GET /api/invoices/:id` | `billing.read` | `200` or `404`. |
 | `POST /api/invoices` | `billing.manage` | `{ "clientId", "patientId"?, "notes"? }`: a draft. The clinic currency must be set (`409`). The client must be active; the patient (optional) must currently belong to the client, any patient status (`422`). `201` with `Location: /api/invoices/:id`. |
 | `PATCH /api/invoices/:id` | `billing.manage` | Drafts only. `clientId`, `patientId` (`null` removes it), `notes` (`""` clears; max 2000). Changing the patient while lines bill its consultations is `409`. |
@@ -1067,7 +1067,7 @@ database enforces the same rules.
     }
 
 `paidAt` and `refundedAt` carry the clinic's offset; `createdAt` is UTC. `invoice` is the invoice's payment state
-after the change, so the screen need not reload it. Refunds are oldest first.
+after the change (in `GET`, its current state), so the screen need not reload it. Refunds are oldest first.
 
 - `GET /api/invoices/:id/payments` (`billing.read`): the invoice's payments, oldest `paidAt` first, each with its
   refunds (a plain array; at most 100 payments per invoice). Unknown or another clinic's invoice `404`.
@@ -1076,22 +1076,25 @@ after the change, so the screen need not reload it. Refunds are oldest first.
   - `amount` (required): above 0, in the currency's minor units, and **at most the balance due**; an overpayment is
     `422` (for cash, the frontend works out the change and records only the amount applied).
   - `method` (required): an exact method name (anything else `400`).
-  - `reference` (optional, max 100, trimmed): a terminal slip, authorisation or cheque number. **A card number is
-    refused** (`422`): 13 to 19 digits, spaces and dashes ignored, passing the Luhn check.
+  - `reference` (optional, max 100 as sent, trimmed; blank is stored as `null`): a terminal slip, authorisation or
+    cheque number. **A card number anywhere in it is refused** (`422`): 13 to 19 digits, in one group or in
+    consecutive groups joined by single spaces, dashes, dots or slashes, passing the Luhn check.
   - `paidAt` (optional, with an explicit offset): defaults to now; may be earlier, but not in the future and not
     before the invoice was issued (`422`).
   - A draft or void invoice is `409`; more than 100 payments on one invoice `409`.
   - `201` with the payment (no `Location`: there is no single-payment `GET`).
 - `POST /api/invoices/:id/payments/:paymentId/refunds` (`payments.refund`: Admin only):
   `{ "amount": 5, "method": "Cash", "reason": "..." }`. `amount` above 0 in minor units and at most what remains of the
-  payment (`422`); a fully refunded payment is `409`; `reason` required (max 500, trimmed); at most 20 refunds per
-  payment (`409`). Dated now. A refund on a void invoice cannot happen (it holds no money). `201` with the whole payment.
+  payment (`422`); `method` as for payments (`400` for anything else); `reason` required (max 500, trimmed) and, like a
+  reference, never a card number (`422`); a fully refunded payment is `409`; at most 20 refunds per payment (`409`).
+  Dated now. A void invoice's payments are all refunded, so a refund there is `409`. `201` with the whole payment.
   Another clinic's invoice, or a payment of another invoice, is `404`.
 - Concurrent payments and refunds on one invoice are applied one after the other under the invoice's row lock, so
   the balance is always exact and never negative (tested: of six simultaneous payments that together exceed the
   balance, only those that fit succeed).
-- Order of checks: permission (`403`), missing or too long fields (`422`), unknown invoice or payment (`404`), the
-  invoice's or payment's state (`409`), then the value rules (`422`, reported together).
+- Order of checks: permission (`403`), malformed body or enum (`400`), missing or too long fields (`422`), unknown
+  invoice or payment (`404`), the invoice's or payment's state and the caps (`409`), then the value rules (`422`,
+  reported together).
 - Audited (`payment.recorded`, `payment.refunded`) with ids, amount, method and currency; never the reference or
   the reason.
 

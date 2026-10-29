@@ -282,17 +282,114 @@ public sealed class PaymentsTests(DatabaseApiFactory factory) : IClassFixture<Da
         await OkAsync(await PayAsync(clinic, id, new { amount = 10, method = "Cash" }), HttpStatusCode.Created);
         var voidWithMoney = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
             "UPDATE invoices SET status = 'Void', voided_at = now(), voided_by_user_id = issued_by_user_id, void_reason = 'x' WHERE id = {0}", id)));
-        Assert.Equal(PostgresErrorCodes.CheckViolation, voidWithMoney.SqlState);
+        Assert.Equal("42501", voidWithMoney.SqlState); // the guard checks the ledger before the CHECK would
+    }
+
+    [Fact]
+    public async Task Caps_FieldLimits_AndRefundValidation()
+    {
+        var clinic = await ClinicAsync();
+        var id = await IssuedAsync(clinic);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PayAsync(clinic, id, new { amount = 1, method = "Cash", reference = new string('r', 101) })).StatusCode);
+
+        // 100 payments of 0.01, seeded with the matching amount_paid in one transaction.
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO payments (id, clinic_id, invoice_id, amount, method, paid_at, received_by_user_id, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, id, 0.01, 'Cash', now(), issued_by_user_id, now(), now() FROM invoices, generate_series(1, 100) WHERE id = {0}; " +
+            "UPDATE invoices SET amount_paid = 1 WHERE id = {0};", id));
+        Assert.Equal(HttpStatusCode.Conflict, (await PayAsync(clinic, id, new { amount = 1, method = "Cash" })).StatusCode);
+
+        var other = await IssuedAsync(clinic);
+        var payment = (await OkAsync(await PayAsync(clinic, other, new { amount = 1, method = "Cash" }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        var url = $"/api/invoices/{other}/payments/{payment}/refunds";
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Admin.PostAsJsonAsync(url, new { amount = 0.01m, method = "Cash" })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Admin.PostAsJsonAsync(url, new { amount = 0.01m, method = "Cash", reason = new string('x', 501) })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await clinic.Admin.PostAsJsonAsync(url, new { amount = 0.01m, method = "Gold", reason = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Admin.PostAsJsonAsync($"/api/invoices/{Guid.NewGuid()}/payments/{payment}/refunds", new { amount = 0.01m })).StatusCode);
+
+        // 20 refunds of 0.01, seeded with the matching amount_paid.
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO refunds (id, clinic_id, invoice_id, payment_id, amount, method, reason, refunded_at, refunded_by_user_id, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, invoice_id, id, 0.01, 'Cash', 'seed', now(), received_by_user_id, now(), now() FROM payments, generate_series(1, 20) WHERE id = {0}; " +
+            "UPDATE invoices SET amount_paid = 0.80 WHERE id = {1};", payment, other));
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Admin.PostAsJsonAsync(url, new { amount = 0.01m, method = "Cash", reason = "x" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task AZeroTotalInvoice_IsPaid_AndTakesNoPayment()
+    {
+        var clinic = await ClinicAsync();
+        var id = (await OkAsync(await clinic.Desk.PostAsJsonAsync("/api/invoices", new { clientId = clinic.ClientId }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        await OkAsync(await clinic.Desk.PostAsJsonAsync($"/api/invoices/{id}/items", new { description = "Free check", quantity = 1, unitPrice = 0, taxRateId = clinic.Standard }));
+        var issued = await OkAsync(await clinic.Desk.PostAsync($"/api/invoices/{id}/issue", null));
+
+        Assert.Equal("Paid", issued.GetProperty("paymentStatus").GetString());
+        var paid = await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/invoices?clientId={clinic.ClientId}&paymentStatus=Paid");
+        Assert.Contains(paid.GetProperty("data").EnumerateArray(), i => i.GetProperty("id").GetGuid() == id);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await PayAsync(clinic, id, new { amount = 0.01m, method = "Cash" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task ConcurrentRefunds_NeverExceedThePayment()
+    {
+        var clinic = await ClinicAsync();
+        var id = await IssuedAsync(clinic);
+        var payment = (await OkAsync(await PayAsync(clinic, id, new { amount = 54, method = "Card" }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ =>
+            clinic.Admin.PostAsJsonAsync($"/api/invoices/{id}/payments/{payment}/refunds", new { amount = 20, method = "Card", reason = "x" })));
+
+        Assert.Equal(2, responses.Count(r => r.StatusCode == HttpStatusCode.Created));
+        var invoice = await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/invoices/{id}");
+        Assert.Equal(14m, Amount(invoice, "amountPaid"));
     }
 
     [Theory]
     [InlineData("4111 1111 1111 1111", true)]
     [InlineData("4111-1111-1111-1111", true)]
+    [InlineData("4111.1111.1111.1111", true)]
+    [InlineData("4111/1111/1111/1111", true)]
+    [InlineData("Visa 4111111111111111", true)]
+    [InlineData("auth 123 4111 1111 1111 1111", true)]
+    [InlineData("Refunded to card 5555 5555 5555 4444", true)]
     [InlineData("5555555555554444", true)]
     [InlineData("1234567812345678", false)]
     [InlineData("411111111111", false)]
-    [InlineData("Slip 0042", false)]
+    [InlineData("Slip 0042, auth 993412", false)]
     [InlineData(null, false)]
-    public void CardNumbers_AreRecognisedByLengthAndLuhn(string? reference, bool expected) =>
-        Assert.Equal(expected, PaymentService.LooksLikeCardNumber(reference));
+    public void CardNumbers_AreFoundAnywhereInTheText(string? text, bool expected) =>
+        Assert.Equal(expected, PaymentService.ContainsCardNumber(text));
+
+    [Fact]
+    public async Task CardNumbers_AreRefused_InReferencesAndRefundReasons()
+    {
+        var clinic = await ClinicAsync();
+        var id = await IssuedAsync(clinic);
+        var reference = await PayAsync(clinic, id, new { amount = 10, method = "Card", reference = "Visa 4111.1111.1111.1111" });
+        Assert.Equal("reference", Assert.Single((await ErrorOf(reference)).Details).Field);
+
+        var payment = (await OkAsync(await PayAsync(clinic, id, new { amount = 10, method = "Card" }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        var reason = await clinic.Admin.PostAsJsonAsync($"/api/invoices/{id}/payments/{payment}/refunds", new { amount = 5, method = "Card", reason = "Back to card 4111 1111 1111 1111" });
+        Assert.Equal("reason", Assert.Single((await ErrorOf(reason)).Details).Field);
+    }
+
+    [Fact]
+    public async Task Database_RefusesLedgerRowsThatTheInvoiceDoesNotReflect()
+    {
+        var clinic = await ClinicAsync();
+        var id = await IssuedAsync(clinic);
+
+        // A payment inserted without updating amount_paid cannot be committed (deferred check at commit).
+        var orphan = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO payments (id, clinic_id, invoice_id, amount, method, paid_at, received_by_user_id, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, id, 10, 'Cash', now(), issued_by_user_id, now(), now() FROM invoices WHERE id = {0}", id)));
+        Assert.Equal("42501", orphan.SqlState);
+
+        // Issuing a draft as already paid is refused too.
+        var draft = (await OkAsync(await clinic.Desk.PostAsJsonAsync("/api/invoices", new { clientId = clinic.ClientId }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        await OkAsync(await clinic.Desk.PostAsJsonAsync($"/api/invoices/{draft}/items", new { description = "Exam", quantity = 1, unitPrice = 45, taxRateId = clinic.Standard }));
+        var paidOnIssue = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "UPDATE invoices SET status = 'Issued', number = 999, issued_at = now(), due_on = current_date, issued_by_user_id = created_by_user_id, amount_paid = total WHERE id = {0}", draft)));
+        Assert.Equal("42501", paidOnIssue.SqlState);
+    }
 }
