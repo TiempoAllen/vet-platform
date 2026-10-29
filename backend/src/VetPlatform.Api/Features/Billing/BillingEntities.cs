@@ -51,6 +51,12 @@ public sealed class Invoice : Entity, IClinicOwned
     public const int ReasonMaxLength = 500;
     public const int MaxItems = 200;
 
+    /// <summary>
+    /// Upper bound for a line total and an invoice total, well inside numeric(19,4) (15 integer digits) even with 200
+    /// lines and a 100% tax rate.
+    /// </summary>
+    public const decimal MaxAmount = 1_000_000_000_000m;
+
     /// <summary>Partial unique index: one invoice per number in a clinic.</summary>
     public const string NumberIndex = "ux_invoices_clinic_number";
 
@@ -227,7 +233,7 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
             table.HasCheckConstraint(
                 "ck_invoices_totals",
                 "subtotal >= 0 AND discount_total >= 0 AND discount_total <= subtotal AND tax_total >= 0 " +
-                "AND total = subtotal - discount_total + tax_total");
+                $"AND total = subtotal - discount_total + tax_total AND total <= {Invoice.MaxAmount}");
         });
         builder.Property(i => i.Status).HasConversion<string>().HasMaxLength(16);
         builder.Property(i => i.Currency).HasMaxLength(3).IsFixedLength();
@@ -293,7 +299,7 @@ internal sealed class InvoiceItemConfiguration : IEntityTypeConfiguration<Invoic
             table.HasCheckConstraint("ck_invoice_items_tax_rate_percent", "tax_rate_percent BETWEEN 0 AND 100");
             table.HasCheckConstraint(
                 "ck_invoice_items_amounts",
-                "net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax");
+                $"net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax AND total <= {Invoice.MaxAmount}");
         });
         builder.Property(i => i.Description).HasMaxLength(InvoiceItem.DescriptionMaxLength);
         builder.Property(i => i.Quantity).HasPrecision(12, 3);

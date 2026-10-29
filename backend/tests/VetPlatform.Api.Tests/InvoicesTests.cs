@@ -416,4 +416,97 @@ public sealed class InvoicesTests(DatabaseApiFactory factory) : IClassFixture<Da
             "UPDATE invoice_items SET total = total + 1 WHERE invoice_id = {0}", draft)));
         Assert.Equal(PostgresErrorCodes.CheckViolation, inconsistent.SqlState);
     }
+
+    // ---------- Review follow-ups ----------
+
+    [Fact]
+    public async Task AmountsBeyondTheMaximum_Are422_NotAnOverflow()
+    {
+        var clinic = await ClinicAsync();
+        var draft = await DraftAsync(clinic);
+
+        var huge = await clinic.Desk.PostAsJsonAsync($"/api/invoices/{draft}/items", new { description = "x", quantity = 1_000_000, unitPrice = 1_000_000_000, taxRateId = clinic.Standard });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, huge.StatusCode);
+        Assert.Contains("cannot exceed", Assert.Single((await ErrorOf(huge)).Details).Message);
+
+        // Each line fits, but together they would pass the invoice maximum.
+        await AddLineAsync(clinic, draft, new { description = "a", quantity = 600, unitPrice = 1_000_000_000m, taxRateId = clinic.Zero });
+        var second = await clinic.Desk.PostAsJsonAsync($"/api/invoices/{draft}/items", new { description = "b", quantity = 600, unitPrice = 1_000_000_000m, taxRateId = clinic.Zero });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, second.StatusCode);
+    }
+
+    [Fact]
+    public async Task Issuing_IsRefused_WhenThePatientChangedOwner()
+    {
+        var clinic = await ClinicAsync();
+        var draft = await DraftAsync(clinic);
+        await AddLineAsync(clinic, draft, Exam(clinic));
+        var newOwner = await ClientAsync(clinic.Desk);
+        await OkAsync(await clinic.Desk.PatchAsJsonAsync($"/api/patients/{clinic.PatientId}", new { clientId = newOwner }));
+
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Desk.PostAsync($"/api/invoices/{draft}/issue", null)).StatusCode);
+        await OkAsync(await clinic.Desk.PatchAsJsonAsync($"/api/invoices/{draft}", new { clientId = newOwner }));
+        await IssueAsync(clinic, draft);
+    }
+
+    [Fact]
+    public async Task MoreTenancyAndPermissionChecks()
+    {
+        var clinic = await ClinicAsync();
+        var other = await ClinicAsync();
+        var theirs = await DraftAsync(other);
+        var theirConsultation = (await OkAsync(await other.Vet.PostAsJsonAsync("/api/consultations", new { patientId = other.PatientId, veterinarianId = other.VetUser.Id }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        var mine = await DraftAsync(clinic);
+
+        var theirPatient = await clinic.Desk.PostAsJsonAsync("/api/invoices", new { clientId = clinic.ClientId, patientId = other.PatientId });
+        Assert.Equal("patientId", Assert.Single((await ErrorOf(theirPatient)).Details).Field);
+        var linkTheirs = await clinic.Desk.PostAsJsonAsync($"/api/invoices/{mine}/items", new { description = "x", quantity = 1, unitPrice = 1, taxRateId = clinic.Standard, consultationId = theirConsultation });
+        Assert.Equal("consultationId", Assert.Single((await ErrorOf(linkTheirs)).Details).Field);
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Desk.PostAsJsonAsync($"/api/invoices/{theirs}/items", Exam(clinic))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Desk.PostAsJsonAsync($"/api/invoices/{theirs}/void", new { reason = "x" })).StatusCode);
+
+        var line = (await AddLineAsync(clinic, mine, Exam(clinic))).GetProperty("items")[0].GetProperty("id").GetGuid();
+        var vetAttempts = new[]
+        {
+            await clinic.Vet.PatchAsJsonAsync($"/api/invoices/{mine}", new { notes = "x" }),
+            await clinic.Vet.PostAsJsonAsync($"/api/invoices/{mine}/items", Exam(clinic)),
+            await clinic.Vet.PatchAsJsonAsync($"/api/invoices/{mine}/items/{line}", new { quantity = 2 }),
+            await clinic.Vet.DeleteAsync($"/api/invoices/{mine}/items/{line}"),
+            await clinic.Vet.PostAsJsonAsync($"/api/invoices/{mine}/void", new { reason = "x" }),
+            await clinic.Vet.DeleteAsync($"/api/invoices/{mine}"),
+            await clinic.Vet.PostAsJsonAsync("/api/tax-rates", new { name = "Vet", ratePercent = 1 }),
+            await clinic.Vet.PatchAsJsonAsync("/api/clinic", new { currency = "USD" }),
+        };
+        Assert.All(vetAttempts, r => Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Admin.PatchAsJsonAsync($"/api/tax-rates/{Guid.NewGuid()}", new { name = " " })).StatusCode);
+    }
+
+    [Fact]
+    public async Task Database_GuardsTaxRates_AndBilledConsultations()
+    {
+        var clinic = await ClinicAsync();
+        var percent = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+            db.Database.ExecuteSqlRawAsync("UPDATE tax_rates SET rate_percent = 21 WHERE id = {0}", clinic.Standard)));
+        Assert.Equal("42501", percent.SqlState);
+        var delete = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+            db.Database.ExecuteSqlRawAsync("DELETE FROM tax_rates WHERE id = {0}", clinic.Zero)));
+        Assert.Equal("42501", delete.SqlState);
+        await factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync("UPDATE tax_rates SET name = 'Renamed' WHERE id = {0}", clinic.Zero));
+
+        var draft = await DraftAsync(clinic);
+        await AddLineAsync(clinic, draft, Exam(clinic));
+        var otherPatient = await PatientAsync(clinic.Desk, clinic.ClientId, "Tom");
+        var otherPatientsConsultation = (await OkAsync(await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = otherPatient, veterinarianId = clinic.VetUser.Id }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        var discarded = (await OkAsync(await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = clinic.PatientId, veterinarianId = clinic.VetUser.Id }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        await OkAsync(await clinic.Vet.PostAsJsonAsync($"/api/consultations/{discarded}/discard", new { reason = "x" }));
+
+        foreach (var consultation in new[] { otherPatientsConsultation, discarded })
+        {
+            var link = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db =>
+                db.Database.ExecuteSqlRawAsync("UPDATE invoice_items SET consultation_id = {0} WHERE invoice_id = {1}", consultation, draft)));
+            Assert.Equal("42501", link.SqlState);
+        }
+    }
 }

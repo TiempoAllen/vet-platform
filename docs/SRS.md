@@ -182,7 +182,7 @@ A user may hold several roles; their permissions are the union.
 | FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Planned (B-23, B-24) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
 | FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); currency and tax rates (B-16); the rest B-26 |
-| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Done for auth, users, clients and patients; rest Planned |
+| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16) and clinic settings; stock adjustments (B-20) and sensitive exports (B-23/B-24) later |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
 ### 3.10 Dashboard and UI (FR-UI) — F-01..F-22
