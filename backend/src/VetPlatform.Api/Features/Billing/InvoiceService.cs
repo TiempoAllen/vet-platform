@@ -342,6 +342,19 @@ public sealed class InvoiceService(
             invoice.DueOn = dueOn;
             invoice.IssuedByUserId = CallerId;
             invoice.IssuedBy = await db.Users.SingleAsync(u => u.Id == CallerId, cancellationToken);
+
+            // Freeze who the invoice is addressed to (ADR-018): a later rename or move changes no printed invoice.
+            var client = await db.Clients.AsNoTracking().SingleAsync(c => c.Id == invoice.ClientId, cancellationToken);
+            invoice.BillToName = $"{client.FirstName} {client.LastName}";
+            invoice.BillToAddressLine1 = client.AddressLine1;
+            invoice.BillToAddressLine2 = client.AddressLine2;
+            invoice.BillToCity = client.City;
+            invoice.BillToRegion = client.Region;
+            invoice.BillToPostalCode = client.PostalCode;
+            invoice.BillToCountry = client.Country;
+            invoice.BillToPatientName = invoice.PatientId is { } pid
+                ? await db.Patients.AsNoTracking().Where(p => p.Id == pid).Select(p => p.Name).SingleAsync(cancellationToken)
+                : null;
             return (object?)new { number, total = invoice.Total, currency = invoice.Currency, dueOn };
         }, cancellationToken);
 

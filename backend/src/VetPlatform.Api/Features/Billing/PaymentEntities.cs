@@ -134,6 +134,9 @@ internal sealed class RefundConfiguration : IEntityTypeConfiguration<Refund>
         builder.Property(r => r.Amount).HasPrecision(19, 4);
         builder.Property(r => r.Method).HasConversion<string>().HasMaxLength(16);
         builder.Property(r => r.Reason).HasMaxLength(Refund.ReasonMaxLength);
+
+        // Receipts reference a refund of their own payment through this key (B-18).
+        builder.HasAlternateKey(r => new { r.ClinicId, r.PaymentId, r.Id }).HasName("ak_refunds_clinic_id_payment_id_id");
         builder.HasOne(r => r.RefundedBy).WithMany()
             .HasForeignKey(r => new { r.ClinicId, r.RefundedByUserId })
             .HasPrincipalKey(u => new { u.ClinicId, u.Id })

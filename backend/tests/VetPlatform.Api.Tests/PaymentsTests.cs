@@ -71,7 +71,7 @@ public sealed class PaymentsTests(DatabaseApiFactory factory) : IClassFixture<Da
 
         var first = await OkAsync(await PayAsync(clinic, id, new { amount = 20, method = "Cash" }), HttpStatusCode.Created);
         Assert.Equal(
-            ["id", "amount", "method", "reference", "paidAt", "receivedBy", "refundedAmount", "refunds", "invoice", "createdAt"],
+            ["id", "amount", "method", "reference", "paidAt", "receivedBy", "refundedAmount", "refunds", "receipt", "invoice", "createdAt"],
             first.EnumerateObject().Select(p => p.Name));
         Assert.Equal(("PartiallyPaid", 20m, 34m),
             (first.GetProperty("invoice").GetProperty("paymentStatus").GetString(), Amount(first.GetProperty("invoice"), "amountPaid"), Amount(first.GetProperty("invoice"), "balanceDue")));
@@ -159,7 +159,7 @@ public sealed class PaymentsTests(DatabaseApiFactory factory) : IClassFixture<Da
 
         Assert.Equal(10m, Amount(partial, "refundedAmount"));
         var refund = partial.GetProperty("refunds")[0];
-        Assert.Equal(["id", "amount", "method", "reason", "refundedAt", "refundedBy"], refund.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "amount", "method", "reason", "refundedAt", "refundedBy", "receipt"], refund.EnumerateObject().Select(p => p.Name));
         Assert.Equal("Goodwill", refund.GetProperty("reason").GetString());
         Assert.Equal(("PartiallyPaid", 44m, 10m),
             (partial.GetProperty("invoice").GetProperty("paymentStatus").GetString(), Amount(partial.GetProperty("invoice"), "amountPaid"), Amount(partial.GetProperty("invoice"), "balanceDue")));
@@ -255,7 +255,7 @@ public sealed class PaymentsTests(DatabaseApiFactory factory) : IClassFixture<Da
     [InlineData("UPDATE refunds SET amount = 1 WHERE invoice_id = {0}")]
     [InlineData("UPDATE invoices SET amount_paid = 0 WHERE id = {0}")]
     [InlineData("INSERT INTO refunds (id, clinic_id, invoice_id, payment_id, amount, method, reason, refunded_at, refunded_by_user_id, created_at, updated_at) SELECT gen_random_uuid(), clinic_id, invoice_id, id, amount, 'Cash', 'x', now(), received_by_user_id, now(), now() FROM payments WHERE invoice_id = {0}")]
-    [InlineData("TRUNCATE payments, refunds")]
+    [InlineData("TRUNCATE receipts, refunds, payments")]
     public async Task Database_KeepsTheLedgerImmutable_AndTheAmountPaidExact(string sql)
     {
         var clinic = await ClinicAsync();

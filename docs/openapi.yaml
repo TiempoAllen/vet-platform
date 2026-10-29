@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.17.0
-  summary: Implemented endpoints as of milestone B-17.
+  version: 0.18.0
+  summary: Implemented endpoints as of milestone B-18.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -2500,6 +2500,73 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/receipts:
+    get:
+      tags: [Billing]
+      operationId: listReceipts
+      summary: Receipts
+      description: Requires `billing.read`. Newest number first. Filters by invoice and exact number (positive; 422 otherwise). Audited once per call (receipt.listed).
+      parameters:
+        - { name: invoiceId, in: query, schema: { type: string, format: uuid } }
+        - { name: number, in: query, schema: { type: integer, minimum: 1 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of receipts.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReceiptPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/receipts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Billing]
+      operationId: getReceipt
+      summary: One receipt (view or reprint)
+      description: Requires `billing.read`. Everything on it is frozen. Other clinics' receipts are 404. Audited (receipt.viewed).
+      responses:
+        '200':
+          description: The receipt.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Receipt' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/invoices/{id}/activity:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Billing]
+      operationId: getInvoiceActivity
+      summary: How an invoice reached its state
+      description: Requires `billing.read`. The audit entries of the invoice, its payments and its receipts (including receipt.viewed reads), oldest first. Unknown invoice 404.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of activity entries.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceActivityPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -4069,7 +4136,7 @@ components:
     Invoice:
       type: object
       additionalProperties: false
-      required: [id, number, status, client, patient, currency, notes, items, subtotal, discountTotal, taxTotal, total, amountPaid, balanceDue, paymentStatus, issuedAt, dueOn, issuedBy, voidedAt, voidedBy, voidReason, createdBy, createdAt, updatedAt]
+      required: [id, number, status, client, patient, billTo, currency, notes, items, subtotal, discountTotal, taxTotal, total, amountPaid, balanceDue, paymentStatus, issuedAt, dueOn, issuedBy, voidedAt, voidedBy, voidReason, createdBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         number: { type: [integer, 'null'], description: Gapless per clinic; null for drafts. }
@@ -4093,6 +4160,11 @@ components:
                 id: { type: string, format: uuid }
                 name: { type: string }
                 species: { $ref: '#/components/schemas/Species' }
+            - type: 'null'
+        billTo:
+          description: Who the invoice is addressed to, frozen at issue; null on drafts. Print from this.
+          oneOf:
+            - $ref: '#/components/schemas/InvoiceBillTo'
             - type: 'null'
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         notes: { type: [string, 'null'], maxLength: 2000 }
@@ -4207,7 +4279,7 @@ components:
     Payment:
       type: object
       additionalProperties: false
-      required: [id, amount, method, reference, paidAt, receivedBy, refundedAmount, refunds, invoice, createdAt]
+      required: [id, amount, method, reference, paidAt, receivedBy, refundedAmount, refunds, receipt, invoice, createdAt]
       properties:
         id: { type: string, format: uuid }
         amount: { type: number, exclusiveMinimum: 0 }
@@ -4225,7 +4297,7 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [id, amount, method, reason, refundedAt, refundedBy]
+            required: [id, amount, method, reason, refundedAt, refundedBy, receipt]
             properties:
               id: { type: string, format: uuid }
               amount: { type: number, exclusiveMinimum: 0 }
@@ -4236,6 +4308,15 @@ components:
                 oneOf:
                   - $ref: '#/components/schemas/PersonSummary'
                   - type: 'null'
+              receipt:
+                oneOf:
+                  - $ref: '#/components/schemas/ReceiptSummary'
+                  - type: 'null'
+        receipt:
+          description: The payment's receipt; null only for money recorded before B-18.
+          oneOf:
+            - $ref: '#/components/schemas/ReceiptSummary'
+            - type: 'null'
         invoice:
           type: object
           additionalProperties: false
@@ -4268,6 +4349,103 @@ components:
         amount: { type: number, exclusiveMinimum: 0, description: At most what remains of the payment. }
         method: { $ref: '#/components/schemas/PaymentMethod' }
         reason: { type: string, minLength: 1, maxLength: 500, description: Never a card number (refused). }
+
+    InvoiceBillTo:
+      type: object
+      additionalProperties: false
+      required: [name, addressLine1, addressLine2, city, region, postalCode, country, patientName]
+      properties:
+        name: { type: string, description: The client's "First Last" name at issue. }
+        addressLine1: { type: [string, 'null'] }
+        addressLine2: { type: [string, 'null'] }
+        city: { type: [string, 'null'] }
+        region: { type: [string, 'null'] }
+        postalCode: { type: [string, 'null'] }
+        country: { type: [string, 'null'] }
+        patientName: { type: [string, 'null'] }
+
+    ReceiptSummary:
+      type: object
+      additionalProperties: false
+      required: [id, number]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+
+    Receipt:
+      type: object
+      additionalProperties: false
+      required: [id, number, kind, clinicName, invoice, billTo, paymentId, refundId, amount, method, reference, occurredAt, amountPaidAfter, balanceDueAfter, issuedBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer, minimum: 1, description: Gapless per clinic, shared by payment and refund receipts. }
+        kind: { type: string, enum: [Payment, Refund] }
+        clinicName: { type: string }
+        invoice:
+          type: object
+          additionalProperties: false
+          required: [id, number, total, currency]
+          properties:
+            id: { type: string, format: uuid }
+            number: { type: integer }
+            total: { type: number }
+            currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billTo:
+          $ref: '#/components/schemas/InvoiceBillTo'
+          description: The invoice's frozen block; never null (receipts exist only for issued invoices).
+        paymentId: { type: string, format: uuid }
+        refundId: { type: [string, 'null'], format: uuid }
+        amount: { type: number, exclusiveMinimum: 0, description: Always positive; kind tells the direction. }
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+          description: The payment's method, or the refund's own method on refund receipts.
+        reference: { type: [string, 'null'], description: The payment's reference; refund receipts have none. }
+        occurredAt: { type: string, format: date-time, description: The payment's paidAt or the refund's refundedAt (clinic offset). }
+        amountPaidAfter: { type: number }
+        balanceDueAfter: { type: number }
+        issuedBy:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          description: The cashier, with the name as printed.
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    ReceiptPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Receipt' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    InvoiceActivityPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, occurredAt, action, entityType, entityId, actor, details]
+            properties:
+              id: { type: string, format: uuid }
+              occurredAt: { type: string, format: date-time, description: With the clinic's local offset. }
+              action: { type: string, examples: [payment.recorded] }
+              entityType: { type: string, enum: [Invoice, Payment, Receipt] }
+              entityId: { type: string, format: uuid }
+              actor:
+                oneOf:
+                  - $ref: '#/components/schemas/PersonSummary'
+                  - type: 'null'
+              details:
+                type: [object, 'null']
+                description: The entry's metadata as recorded; never free text.
+        pagination: { $ref: '#/components/schemas/Pagination' }
 
     Health:
       type: object

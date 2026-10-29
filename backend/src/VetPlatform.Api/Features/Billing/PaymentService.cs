@@ -32,7 +32,8 @@ public sealed partial class PaymentService(
             .OrderBy(p => p.PaidAt).ThenBy(p => p.Id)
             .AsSplitQuery()
             .ToListAsync(cancellationToken);
-        return payments.Select(p => PaymentResponse.From(p, invoice, zone)).ToList();
+        var receipts = new InvoiceReceipts(await db.Receipts.AsNoTracking().Where(r => r.InvoiceId == invoiceId).ToListAsync(cancellationToken));
+        return payments.Select(p => PaymentResponse.From(p, invoice, zone, receipts)).ToList();
     }
 
     public async Task<PaymentResponse> RecordAsync(Guid invoiceId, RecordPaymentRequest request, CancellationToken cancellationToken)
@@ -89,8 +90,9 @@ public sealed partial class PaymentService(
         await db.SaveChangesAsync(cancellationToken);
         invoice.AmountPaid += payment.Amount;
         await db.SaveChangesAsync(cancellationToken);
+        var receipt = await IssueReceiptAsync(invoice, payment, refund: null, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return PaymentResponse.From(payment, invoice, zone);
+        return PaymentResponse.From(payment, invoice, zone, new InvoiceReceipts([receipt]));
     }
 
     /// <summary>Returns money against one payment; the invoice's balance goes up by the same amount.</summary>
@@ -143,8 +145,55 @@ public sealed partial class PaymentService(
         await db.SaveChangesAsync(cancellationToken);
         invoice.AmountPaid -= refund.Amount;
         await db.SaveChangesAsync(cancellationToken);
+        await IssueReceiptAsync(invoice, payment, refund, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return PaymentResponse.From(payment, invoice, zone);
+        var receipts = await db.Receipts.AsNoTracking().Where(r => r.PaymentId == payment.Id).ToListAsync(cancellationToken);
+        return PaymentResponse.From(payment, invoice, zone, new InvoiceReceipts(receipts));
+    }
+
+    /// <summary>
+    /// Creates the receipt of a payment (or of a refund) in the caller's transaction, with the clinic's next gapless
+    /// receipt number (sequence row updated here; lock order: invoice, then receipt sequence) and everything printed
+    /// on it frozen now. The invoice's amount paid must already include the change.
+    /// </summary>
+    private async Task<Receipt> IssueReceiptAsync(Invoice invoice, Payment payment, Refund? refund, CancellationToken cancellationToken)
+    {
+        await db.Database.ExecuteSqlAsync(
+            $"INSERT INTO receipt_number_sequences (clinic_id, next_number) VALUES ({invoice.ClinicId}, 1) ON CONFLICT (clinic_id) DO NOTHING",
+            cancellationToken);
+        // ToListAsync, not SingleAsync: an UPDATE ... RETURNING cannot be composed into a larger query.
+        var number = (await db.Database.SqlQuery<int>(
+                $"UPDATE receipt_number_sequences SET next_number = next_number + 1 WHERE clinic_id = {invoice.ClinicId} RETURNING next_number - 1 AS \"Value\"")
+            .ToListAsync(cancellationToken)).Single();
+
+        var cashier = refund?.RefundedBy ?? payment.ReceivedBy ?? await db.Users.SingleAsync(u => u.Id == CallerId, cancellationToken);
+        var receipt = new Receipt
+        {
+            ClinicId = invoice.ClinicId,
+            Number = number,
+            Kind = refund is null ? ReceiptKind.Payment : ReceiptKind.Refund,
+            InvoiceId = invoice.Id,
+            PaymentId = payment.Id,
+            RefundId = refund?.Id,
+            ClinicName = await db.Clinics.AsNoTracking().Where(c => c.Id == invoice.ClinicId).Select(c => c.Name).SingleAsync(cancellationToken),
+            InvoiceNumber = invoice.Number!.Value,
+            Currency = invoice.Currency,
+            InvoiceTotal = invoice.Total,
+            Amount = refund?.Amount ?? payment.Amount,
+            Method = refund?.Method ?? payment.Method,
+            Reference = refund is null ? payment.Reference : null,
+            OccurredAt = refund?.RefundedAt ?? payment.PaidAt,
+            AmountPaidAfter = invoice.AmountPaid,
+            BalanceDueAfter = invoice.BalanceDue,
+            IssuedByUserId = cashier.Id,
+            IssuedByName = cashier.Name,
+        };
+        db.Receipts.Add(receipt);
+        audit.Record(
+            AuditActions.ReceiptIssued, nameof(Receipt), receipt.Id,
+            new { number, kind = receipt.Kind, invoiceId = invoice.Id, paymentId = payment.Id, refundId = refund?.Id, amount = receipt.Amount });
+        await db.SaveChangesAsync(cancellationToken);
+        return receipt;
     }
 
     /// <summary>
