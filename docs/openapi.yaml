@@ -2170,7 +2170,7 @@ paths:
         - { name: clientId, in: query, schema: { type: string, format: uuid } }
         - { name: patientId, in: query, schema: { type: string, format: uuid } }
         - { name: paymentStatus, in: query, schema: { $ref: '#/components/schemas/PaymentStatus' } }
-        - { name: overdue, in: query, schema: { type: boolean } }
+        - { name: overdue, in: query, schema: { type: boolean }, description: 'true filters; false or omitted applies no filter.' }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
       responses:
@@ -4240,7 +4240,7 @@ components:
           type: object
           additionalProperties: false
           required: [id, total, amountPaid, balanceDue, paymentStatus]
-          description: The invoice's payment state after the change.
+          description: The invoice's payment state after the change (in the list, its current state).
           properties:
             id: { type: string, format: uuid }
             total: { type: number }
@@ -4258,7 +4258,7 @@ components:
       properties:
         amount: { type: number, exclusiveMinimum: 0, description: In the currency's minor units; at most the balance due. }
         method: { $ref: '#/components/schemas/PaymentMethod' }
-        reference: { type: [string, 'null'], maxLength: 100, description: Never a card number (refused). }
+        reference: { type: [string, 'null'], maxLength: 100, description: 'Never a card number anywhere in it (refused); blank is stored as null.' }
         paidAt: { type: [string, 'null'], format: date-time, description: 'With an explicit offset; defaults to now; not in the future nor before the issue.' }
 
     RefundPaymentRequest:
@@ -4267,7 +4267,7 @@ components:
       properties:
         amount: { type: number, exclusiveMinimum: 0, description: At most what remains of the payment. }
         method: { $ref: '#/components/schemas/PaymentMethod' }
-        reason: { type: string, minLength: 1, maxLength: 500 }
+        reason: { type: string, minLength: 1, maxLength: 500, description: Never a card number (refused). }
 
     Health:
       type: object

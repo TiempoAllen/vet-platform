@@ -164,8 +164,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         INTO line_count, sum_net, sum_discount, sum_tax, sum_total
                         FROM invoice_items WHERE invoice_id = NEW.id AND clinic_id = NEW.clinic_id;
                         IF line_count = 0 OR sum_net <> NEW.subtotal OR sum_discount <> NEW.discount_total
-                            OR sum_tax <> NEW.tax_total OR sum_total <> NEW.total THEN
-                            RAISE EXCEPTION 'an invoice is issued only with lines whose sums equal its totals'
+                            OR sum_tax <> NEW.tax_total OR sum_total <> NEW.total OR NEW.amount_paid <> 0 THEN
+                            RAISE EXCEPTION 'an invoice is issued only with lines whose sums equal its totals and nothing paid'
                                 USING ERRCODE = 'insufficient_privilege';
                         END IF;
                         RETURN NEW;
@@ -186,7 +186,14 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     IF OLD.status = 'Issued' AND NEW.status = 'Void'
                         AND (to_jsonb(NEW) - 'status' - 'voided_at' - 'voided_by_user_id' - 'void_reason' - 'updated_at')
                           = (to_jsonb(OLD) - 'status' - 'voided_at' - 'voided_by_user_id' - 'void_reason' - 'updated_at') THEN
-                        RETURN NEW;
+                        SELECT COALESCE((SELECT sum(amount) FROM payments WHERE invoice_id = NEW.id AND clinic_id = NEW.clinic_id), 0)
+                             - COALESCE((SELECT sum(amount) FROM refunds WHERE invoice_id = NEW.id AND clinic_id = NEW.clinic_id), 0)
+                        INTO paid;
+                        IF paid = 0 THEN
+                            RETURN NEW;
+                        END IF;
+                        RAISE EXCEPTION 'an invoice holding payments cannot be voided; refund them first'
+                            USING ERRCODE = 'insufficient_privilege';
                     END IF;
                     RAISE EXCEPTION 'a % invoice cannot be changed this way', OLD.status USING ERRCODE = 'insufficient_privilege';
                 END;
@@ -219,14 +226,16 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     refunded numeric;
                 BEGIN
                     IF TG_OP = 'INSERT' THEN
+                        -- FOR NO KEY UPDATE (payments never change): concurrent refunds of one payment queue here, so
+                        -- each sees the others' amounts. It does not block the refunds' own foreign-key checks.
                         SELECT amount INTO paid FROM payments
                         WHERE id = NEW.payment_id AND invoice_id = NEW.invoice_id AND clinic_id = NEW.clinic_id
-                        FOR SHARE;
+                        FOR NO KEY UPDATE;
                         IF paid IS NULL THEN
                             RETURN NEW; -- left to the foreign key
                         END IF;
                         SELECT COALESCE(sum(amount), 0) INTO refunded FROM refunds
-                        WHERE payment_id = NEW.payment_id AND clinic_id = NEW.clinic_id;
+                        WHERE clinic_id = NEW.clinic_id AND invoice_id = NEW.invoice_id AND payment_id = NEW.payment_id;
                         IF refunded + NEW.amount > paid THEN
                             RAISE EXCEPTION 'refunds cannot exceed their payment' USING ERRCODE = 'insufficient_privilege';
                         END IF;
@@ -239,6 +248,35 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 CREATE TRIGGER refunds_guard
                     BEFORE INSERT OR UPDATE OR DELETE ON refunds
                     FOR EACH ROW EXECUTE FUNCTION refunds_guard();
+
+                -- At commit (deferred), the invoice of every new payment or refund must show exactly its payments minus
+                -- refunds as amount_paid: a row inserted without updating the invoice cannot be committed.
+                CREATE FUNCTION ledger_matches_invoice() RETURNS trigger LANGUAGE plpgsql AS $$
+                DECLARE
+                    stored numeric;
+                    paid numeric;
+                BEGIN
+                    SELECT amount_paid INTO stored FROM invoices WHERE id = NEW.invoice_id AND clinic_id = NEW.clinic_id;
+                    SELECT COALESCE((SELECT sum(amount) FROM payments WHERE invoice_id = NEW.invoice_id AND clinic_id = NEW.clinic_id), 0)
+                         - COALESCE((SELECT sum(amount) FROM refunds WHERE invoice_id = NEW.invoice_id AND clinic_id = NEW.clinic_id), 0)
+                    INTO paid;
+                    IF stored IS DISTINCT FROM paid THEN
+                        RAISE EXCEPTION 'the invoice''s amount_paid must equal its payments minus refunds'
+                            USING ERRCODE = 'insufficient_privilege';
+                    END IF;
+                    RETURN NULL;
+                END;
+                $$;
+
+                CREATE CONSTRAINT TRIGGER payments_match_invoice
+                    AFTER INSERT ON payments
+                    DEFERRABLE INITIALLY DEFERRED
+                    FOR EACH ROW EXECUTE FUNCTION ledger_matches_invoice();
+
+                CREATE CONSTRAINT TRIGGER refunds_match_invoice
+                    AFTER INSERT ON refunds
+                    DEFERRABLE INITIALLY DEFERRED
+                    FOR EACH ROW EXECUTE FUNCTION ledger_matches_invoice();
 
                 CREATE TRIGGER payments_no_truncate
                     BEFORE TRUNCATE ON payments
@@ -263,6 +301,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 END;
                 $$;
 
+                DROP TRIGGER IF EXISTS refunds_match_invoice ON refunds;
+                DROP TRIGGER IF EXISTS payments_match_invoice ON payments;
+                DROP FUNCTION IF EXISTS ledger_matches_invoice();
                 DROP TRIGGER IF EXISTS refunds_guard ON refunds;
                 DROP TRIGGER IF EXISTS payments_guard ON payments;
                 DROP TRIGGER IF EXISTS refunds_no_truncate ON refunds;
