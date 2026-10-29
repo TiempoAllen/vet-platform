@@ -49,6 +49,7 @@ builder.Services.AddScoped<AttachmentService>();
 builder.Services.AddScoped<TaxRateService>();
 builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddScoped<PaymentService>();
+builder.Services.AddScoped<ReceiptService>();
 builder.Services.AddFileStorage(builder.Configuration);
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection

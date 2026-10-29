@@ -105,6 +105,7 @@ public static class AuditActions
     public const string InvoiceVoided = "invoice.voided";
     public const string PaymentRecorded = "payment.recorded";
     public const string PaymentRefunded = "payment.refunded";
+    public const string ReceiptIssued = "receipt.issued";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";
@@ -124,6 +125,9 @@ public static class AuditActions
     public const string AttachmentViewed = "attachment.viewed";
     public const string AttachmentsListed = "attachment.listed";
     public const string AttachmentDownloaded = "attachment.downloaded";
+
+    /// <summary>A receipt opened (viewed or reprinted).</summary>
+    public const string ReceiptViewed = "receipt.viewed";
 }
 
 /// <summary>

@@ -367,6 +367,30 @@ issuing requires amount_paid 0, and voiding requires the payments minus refunds 
 on amount_paid). The service saves the payment or refund row before the invoice in the same transaction. Rolling back the migration refuses
 while payments exist and restores the B-16 guard.
 
+### Receipt
+Implemented in B-18 (table `receipts`, ADR-018); numbers from `receipt_number_sequences` (clinic_id PK, next_number),
+updated in the creating transaction, so gapless per clinic.
+- id, clinic_id; number (CHECK > 0; unique (clinic_id, number) `ux_receipts_clinic_number`); kind (`Payment`,
+  `Refund`; CHECK; refund_id set exactly for `Refund`)
+- invoice_id, payment_id: composite FK (clinic_id, invoice_id, payment_id) → payments; refund_id (nullable): composite
+  FK (clinic_id, payment_id, refund_id) → refunds (clinic_id, payment_id, id); unique payment_id where kind is
+  `Payment`, unique refund_id where set (one receipt per payment and per refund)
+- frozen copies: clinic_name, invoice_number, currency (CHECK pattern), invoice_total, amount (CHECK > 0 and ≤
+  1,000,000,000,000), method (CHECK), reference, occurred_at, amount_paid_after (0 to invoice_total),
+  balance_due_after (CHECK = invoice_total − amount_paid_after), issued_by_user_id (composite FK to users) and
+  issued_by_name (CHECK not blank)
+- created_at, updated_at; index (clinic_id, invoice_id, number)
+
+Trigger `receipts_guard`: a new receipt must state its payment's or refund's own amount and method (source read `FOR
+SHARE`); no UPDATE or DELETE; TRUNCATE refused.
+
+### Invoice bill-to block (B-18)
+`invoices.bill_to_name` (max 201), `bill_to_address_line1/2`, `bill_to_city`, `bill_to_region`, `bill_to_postal_code`,
+`bill_to_country`, `bill_to_patient_name`: copied from the client and patient when the invoice is issued.
+`ck_invoices_lifecycle` now requires bill_to_name on issued and void invoices and no bill-to on drafts; the existing
+`invoices_guard` whole-row comparison freezes them like every other column. The migration backfilled invoices issued
+before B-18 from the clients' then-current data. Rolling back refuses while receipts or non-draft invoices exist.
+
 ## 8. Inventory
 ### Product
 - id

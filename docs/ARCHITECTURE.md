@@ -707,3 +707,32 @@ Choose the simplest solution that satisfies documented requirements, security, m
   payment belongs to one invoice); refund methods are free to differ from the payment's (e.g. a card payment refunded
   in cash is recorded as such); no gateway integration (payments are recorded, not processed); other free-text fields
   (invoice notes, line descriptions) are not scanned for card numbers; receipts and a printable statement are B-18.
+
+### ADR-018: Receipts, frozen bill-to and invoice activity (decided in B-18)
+- **Confirmed with the user:** receipts are structured JSON documents the frontend renders and prints (no server PDF,
+  so no PDF dependency or licence); every payment and every refund gets its own receipt with a gapless per-clinic number
+  and everything printed on it frozen at that moment, so a reprint is identical; issuing an invoice freezes who it is
+  addressed to (`billTo`: the client's name and address and the patient's name), closing the gap ADR-016 left; a
+  per-invoice activity endpoint lists the audit entries of the invoice, its payments and receipts, and opening a receipt
+  is audited. The clinic-wide audit search stays in B-27.
+- **Made here (recorded for review):** receipts are read with `billing.read`, like invoices; there is no separate
+  receipt permission. Payment and refund receipts share one number sequence (`receipt_number_sequences`, updated with
+  `UPDATE ... RETURNING` in the payment or refund transaction; lock order invoice, then receipt sequence), so receipt
+  numbers never collide with or depend on invoice numbers. A receipt does not copy the address: it shows the invoice's
+  own frozen `billTo`, which cannot change after issue (the invoice guard compares whole rows). It does copy what can
+  change: the clinic name, the cashier's name, the invoice number and total, and the amount paid and balance after
+  the change. Refund receipts do not print the refund reason (free text, possibly sensitive) or a reference. No
+  receipts were backfilled for payments recorded before B-18 (none exist in any deployment; `receipt` is `null` for
+  them); invoices issued before B-18 were backfilled with the clients' then-current details, the best available.
+- **Database:** `receipts_guard` refuses UPDATE, DELETE and TRUNCATE and a receipt whose amount or method differs from
+  its payment or refund; unique indexes allow one receipt per payment and one per refund; CHECKs keep the frozen
+  amounts consistent (balance after = total − paid after). The receipt references its payment through
+  (clinic_id, invoice_id, payment_id) and its refund through (clinic_id, payment_id, refund_id), so it can never name
+  another invoice's money.
+- **Activity:** `audit_logs` is read only through `AuditLogQueries.ForCurrentClinic` (ADR-007), selecting entries whose
+  entity is the invoice, one of its payments (refunds are recorded on their payment) or one of its receipts; actors are
+  resolved through the clinic-filtered users. Reading the activity is not itself audited (it shows audit data and is
+  billing, not clinical); opening a receipt is (`receipt.viewed`).
+- **Accepted for now:** no clinic address, tax number or logo on receipts until B-26 adds those settings (the
+  frontend may print what it has); no credit notes; receipts are not emailed until B-25; `TRUNCATE payments` now fails
+  on the receipts foreign key before its own guard (either way it is refused).

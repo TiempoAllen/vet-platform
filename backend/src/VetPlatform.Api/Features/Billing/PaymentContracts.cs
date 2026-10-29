@@ -4,17 +4,35 @@ using VetPlatform.Api.Features.Appointments;
 
 namespace VetPlatform.Api.Features.Billing;
 
+/// <summary>The receipt of a payment or refund; null only for money recorded before receipts existed (B-18).</summary>
+public sealed record ReceiptSummary(Guid Id, int Number);
+
+/// <summary>The receipts of one invoice, looked up by payment (payment receipts) and by refund.</summary>
+public sealed class InvoiceReceipts(IEnumerable<Receipt> receipts)
+{
+    private readonly Dictionary<Guid, ReceiptSummary> _byPayment = receipts.Where(r => r.Kind == ReceiptKind.Payment)
+        .ToDictionary(r => r.PaymentId, r => new ReceiptSummary(r.Id, r.Number));
+
+    private readonly Dictionary<Guid, ReceiptSummary> _byRefund = receipts.Where(r => r.RefundId is not null)
+        .ToDictionary(r => r.RefundId!.Value, r => new ReceiptSummary(r.Id, r.Number));
+
+    public ReceiptSummary? ForPayment(Guid paymentId) => _byPayment.GetValueOrDefault(paymentId);
+
+    public ReceiptSummary? ForRefund(Guid refundId) => _byRefund.GetValueOrDefault(refundId);
+}
+
 public sealed record RefundResponse(
     Guid Id,
     decimal Amount,
     PaymentMethod Method,
     string Reason,
     DateTimeOffset RefundedAt,
-    AppointmentPersonSummary? RefundedBy)
+    AppointmentPersonSummary? RefundedBy,
+    ReceiptSummary? Receipt)
 {
-    public static RefundResponse From(Refund r, TimeZoneInfo zone) =>
+    public static RefundResponse From(Refund r, TimeZoneInfo zone, InvoiceReceipts receipts) =>
         new(r.Id, Currencies.Shortest(r.Amount), r.Method, r.Reason, TimeZoneInfo.ConvertTime(r.RefundedAt, zone),
-            r.RefundedBy is { } by ? new AppointmentPersonSummary(by.Id, by.Name) : null);
+            r.RefundedBy is { } by ? new AppointmentPersonSummary(by.Id, by.Name) : null, receipts.ForRefund(r.Id));
 }
 
 /// <summary>The invoice's payment state after a payment or refund, so a client need not reload the invoice.</summary>
@@ -34,15 +52,17 @@ public sealed record PaymentResponse(
     AppointmentPersonSummary? ReceivedBy,
     decimal RefundedAmount,
     IReadOnlyList<RefundResponse> Refunds,
+    ReceiptSummary? Receipt,
     InvoicePaymentSummary Invoice,
     DateTimeOffset CreatedAt)
 {
-    public static PaymentResponse From(Payment p, Invoice invoice, TimeZoneInfo zone) =>
+    public static PaymentResponse From(Payment p, Invoice invoice, TimeZoneInfo zone, InvoiceReceipts receipts) =>
         new(
             p.Id, Currencies.Shortest(p.Amount), p.Method, p.Reference, TimeZoneInfo.ConvertTime(p.PaidAt, zone),
             p.ReceivedBy is { } by ? new AppointmentPersonSummary(by.Id, by.Name) : null,
             Currencies.Shortest(p.Refunds.Sum(r => r.Amount)),
-            p.Refunds.OrderBy(r => r.RefundedAt).ThenBy(r => r.Id).Select(r => RefundResponse.From(r, zone)).ToList(),
+            p.Refunds.OrderBy(r => r.RefundedAt).ThenBy(r => r.Id).Select(r => RefundResponse.From(r, zone, receipts)).ToList(),
+            receipts.ForPayment(p.Id),
             InvoicePaymentSummary.From(invoice),
             p.CreatedAt);
 }

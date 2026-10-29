@@ -993,6 +993,7 @@ creates, edits, issues, voids and deletes drafts. Tax rates are managed with `se
     {
       "id": "uuid", "number": 42 | null, "status": "Draft" | "Issued" | "Void",
       "client": { "id", "firstName", "lastName" } | null, "patient": { "id", "name", "species" } | null,
+      "billTo": { "name", "addressLine1", "addressLine2", "city", "region", "postalCode", "country", "patientName" } | null,
       "currency": "EUR", "notes": "..." | null,
       "items": [ {
         "id": "uuid", "position": 1, "description": "Consultation", "quantity": 1, "unitPrice": 45,
@@ -1009,6 +1010,9 @@ creates, edits, issues, voids and deletes drafts. Tax rates are managed with `se
 
 `issuedAt` and `voidedAt` carry the clinic's offset; `createdAt` / `updatedAt` are UTC; `dueOn` is a clinic-local
 date. Lines are ordered by `position`. `client` or `patient` is `null` only if it can no longer be shown.
+`client` and `patient` show today's names; **`billTo`** (B-18) is who the invoice is addressed to, **frozen when it is
+issued** (the client's "First Last" name and address, the patient's name; address parts may be `null`), and is
+`null` on drafts. Print an issued invoice from `billTo`, so it never changes after a rename or a move.
 
 **Lifecycle:** `Draft` → `Issued` → `Void`. A draft is freely editable, has no number and may be deleted. Issuing
 assigns the clinic's next **gapless** number (1, 2, 3, ... per clinic, never reused) and freezes the invoice; an issued
@@ -1061,7 +1065,8 @@ database enforces the same rules.
       "reference": "Slip 0042" | null, "paidAt": "...", "receivedBy": { "id", "name" } | null,
       "refundedAmount": 0,
       "refunds": [ { "id": "uuid", "amount": 5, "method": "Cash", "reason": "...", "refundedAt": "...",
-                     "refundedBy": { "id", "name" } | null } ],
+                     "refundedBy": { "id", "name" } | null, "receipt": { "id": "uuid", "number": 2 } | null } ],
+      "receipt": { "id": "uuid", "number": 1 } | null,
       "invoice": { "id": "uuid", "total": 54, "amountPaid": 20, "balanceDue": 34, "paymentStatus": "PartiallyPaid" },
       "createdAt": "..."
     }
@@ -1097,6 +1102,47 @@ after the change (in `GET`, its current state), so the screen need not reload it
   reported together).
 - Audited (`payment.recorded`, `payment.refunded`) with ids, amount, method and currency; never the reference or
   the reason.
+- Since B-18 every payment and every refund gets a **receipt** in the same transaction (section 10.5); `receipt` is
+  its id and number (`null` only for money recorded before B-18).
+
+### 10.5 Receipts
+Implemented in B-18 (ADR-018). A receipt is a structured document the frontend renders and prints; everything on it
+is **frozen** when it is created, so a reprint is always identical. Payment and refund receipts share one **gapless**
+number sequence per clinic. Receipts are never changed or deleted (the database refuses both).
+
+    {
+      "id": "uuid", "number": 1, "kind": "Payment" | "Refund", "clinicName": "Happy Paws",
+      "invoice": { "id": "uuid", "number": 42, "total": 54, "currency": "EUR" },
+      "billTo": { "name", "addressLine1", ... , "patientName" },
+      "paymentId": "uuid", "refundId": "uuid" | null,
+      "amount": 20, "method": "Card", "reference": "Slip 0042" | null, "occurredAt": "...",
+      "amountPaidAfter": 20, "balanceDueAfter": 34,
+      "issuedBy": { "id": "uuid", "name": "Pat Desk" }, "createdAt": "..."
+    }
+
+- `amount` is always positive; `kind` says whether money came in (`Payment`) or went back (`Refund`). `reference` is
+  the payment's (refund receipts have none; refund reasons are not printed). `occurredAt` is the payment's `paidAt` or
+  the refund's `refundedAt` (clinic offset); `createdAt` is UTC.
+- `clinicName`, the invoice number and total, the amounts after the change and the cashier's name (`issuedBy.name`) are
+  copies made at the time; `billTo` is the invoice's frozen block (section 10.3).
+- `GET /api/receipts/:id` (`billing.read`): `200` or `404`. Opening a receipt (a view or a reprint) is audited
+  (`receipt.viewed`).
+- `GET /api/receipts` (`billing.read`): newest number first, paginated; filters `invoiceId` and `number` (an exact
+  positive number; `422` otherwise). Listing is not audited.
+- Creating a receipt is audited (`receipt.issued`) with its number, kind, ids and amount.
+
+### 10.6 Invoice activity
+`GET /api/invoices/:id/activity` (`billing.read`): how an invoice reached its state. The audit entries of the invoice,
+its payments (refunds are recorded on their payment) and its receipts, **oldest first**, paginated. Unknown or another
+clinic's invoice `404`.
+
+    { "id": "uuid", "occurredAt": "...", "action": "payment.recorded", "entityType": "Payment", "entityId": "uuid",
+      "actor": { "id", "name" } | null, "details": { ... } | null }
+
+`occurredAt` carries the clinic's offset. `details` is the entry's metadata as recorded (ids, field names, numbers,
+amounts, methods, statuses), which never holds descriptions, notes, references or reasons. `actor` is `null` when the
+entry had no signed-in user or the account cannot be shown (only this clinic's staff are named). The clinic-wide audit
+search is B-27.
 
 ## 11. Inventory
 `GET /api/products`
