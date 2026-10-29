@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.11, 2026-10-25, updated for B-15.
+Veterinary Management Platform. Version 1.12, 2026-10-30, updated for B-16.
 
 ## 1. Introduction
 
@@ -84,7 +84,7 @@ A user may hold several roles; their permissions are the union.
 | C-7 | Emails are unique platform-wide: one account belongs to one clinic. |
 
 ### 2.5 Assumptions and dependencies
-- Each clinic operates in one timezone and one currency (to be configured in B-26).
+- Each clinic operates in one timezone (B-08) and one currency (B-16, fixed once it has invoices).
 - Email and SMS delivery providers are not chosen; notifications (B-25) depend on that choice.
 - File storage: a local-disk provider behind `IFileStore` since B-15 (Q-2); the production provider (e.g.
   S3-compatible) is chosen with hosting in X-05.
@@ -161,11 +161,11 @@ A user may hold several roles; their permissions are the union.
 ### 3.7 Billing (FR-BIL) — B-16..B-18, F-14, F-15
 | ID | Requirement | Status |
 |---|---|---|
-| FR-BIL-1 | Invoices with line items (services/products) can be created for a client and optionally a patient; invoice numbers are unique per clinic. | Planned (B-16) |
-| FR-BIL-2 | Subtotal, discounts, tax, total and balance due are calculated by the server, using clinic tax configuration; client-supplied totals are ignored. | Planned (B-16) |
+| FR-BIL-1 | Invoices with line items (services/products) can be created for a client and optionally a patient; invoice numbers are unique per clinic. | Done (B-16; gapless numbers assigned on issue; products linked from B-19) |
+| FR-BIL-2 | Subtotal, discounts, tax, total and balance due are calculated by the server, using clinic tax configuration; client-supplied totals are ignored. | Partly done (B-16: subtotal, discounts, tax and total from the clinic tax-rate table; balance due with payments in B-17) |
 | FR-BIL-3 | Payments (amount, method, reference) can be recorded against an invoice; the balance updates atomically; overpayment rules are defined in B-17. | Planned (B-17) |
 | FR-BIL-4 | Receipts can be produced; every invoice and payment change is audited. | Planned (B-18) |
-| FR-BIL-5 | Issued invoices and payments are never physically deleted; corrections use adjustments or voids. | Planned |
+| FR-BIL-5 | Issued invoices and payments are never physically deleted; corrections use adjustments or voids. | Partly done (B-16: issued invoices are only voided, enforced by the database; payments in B-17) |
 
 ### 3.8 Inventory (FR-INV) — B-19..B-22, F-16..F-18
 | ID | Requirement | Status |
@@ -181,8 +181,8 @@ A user may hold several roles; their permissions are the union.
 |---|---|---|
 | FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Planned (B-23, B-24) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
-| FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); the rest B-26 |
-| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Done for auth, users, clients and patients; rest Planned |
+| FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); currency and tax rates (B-16); the rest B-26 |
+| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16) and clinic settings; stock adjustments (B-20) and sensitive exports (B-23/B-24) later |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
 ### 3.10 Dashboard and UI (FR-UI) — F-01..F-22
@@ -259,7 +259,7 @@ Targets for a single clinic of up to 50 concurrent staff; verified in X-04.
 | Q-1 | Frontend framework and component library. | F-01 |
 | Q-2 | File storage provider and maximum upload size. | **Answered (ADR-015):** an `IFileStore` abstraction with a local-disk provider now, an S3-compatible provider with hosting (X-05); at most 20 MB; JPEG, PNG, WebP and PDF only, recognised by content. |
 | Q-3 | Appointment slot granularity, buffer times, and whether double-booking can be overridden. | **Answered (ADR-008):** 5-minute grid; no buffers (a per-clinic buffer may come with B-26); conflicts may be overridden by `appointments.manage` holders with a required, audited reason (B-09). |
-| Q-4 | Tax model (inclusive/exclusive, per-line rates) and rounding rules. | B-16 |
+| Q-4 | Tax model (inclusive/exclusive, per-line rates) and rounding rules. | **Answered (ADR-016):** prices exclude tax; a per-line rate from a clinic tax-rate table (copied onto the line); each line rounded half away from zero to the currency's minor units; invoice totals are the sums of the lines. |
 | Q-5 | Whether stock may go negative and how controlled drugs are logged. | B-20 |
 | Q-6 | Email/SMS provider. | B-25 |
 | Q-7 | Hosting platform, backup tooling, final RPO/RTO. | X-05 |
