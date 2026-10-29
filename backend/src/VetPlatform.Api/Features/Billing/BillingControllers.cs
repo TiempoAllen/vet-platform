@@ -102,6 +102,28 @@ public sealed class PaymentsController(PaymentService payments) : ControllerBase
         StatusCode(StatusCodes.Status201Created, await payments.RefundAsync(id, paymentId, request, cancellationToken));
 }
 
+/// <summary>
+/// Receipts and the per-invoice activity trail (B-18, ADR-018), read with <c>billing.read</c>. Receipts are created with
+/// each payment and refund; opening one is audited.
+/// </summary>
+[ApiController]
+public sealed class ReceiptsController(ReceiptService receipts) : ControllerBase
+{
+    [HttpGet("api/receipts")]
+    [RequirePermission(Permissions.BillingRead)]
+    public Task<PagedResponse<ReceiptResponse>> List([FromQuery] ReceiptListQuery query, CancellationToken cancellationToken) =>
+        receipts.ListAsync(query, cancellationToken);
+
+    [HttpGet("api/receipts/{id:guid}")]
+    [RequirePermission(Permissions.BillingRead)]
+    public Task<ReceiptResponse> Get(Guid id, CancellationToken cancellationToken) => receipts.GetAsync(id, cancellationToken);
+
+    [HttpGet("api/invoices/{id:guid}/activity")]
+    [RequirePermission(Permissions.BillingRead)]
+    public Task<PagedResponse<InvoiceActivityEntry>> Activity(Guid id, [FromQuery] PageQuery query, CancellationToken cancellationToken) =>
+        receipts.ActivityAsync(id, query, cancellationToken);
+}
+
 /// <summary>Tax rates: readable by billing staff and administrators; managed with <c>settings.manage</c> (Admin).</summary>
 [ApiController]
 public sealed class TaxRatesController(TaxRateService taxRates) : ControllerBase

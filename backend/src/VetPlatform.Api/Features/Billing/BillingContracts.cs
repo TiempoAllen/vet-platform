@@ -42,6 +42,24 @@ public sealed class TaxRateListQuery : PageQuery, IValidatableObject
 
 public sealed record InvoiceClientSummary(Guid Id, string FirstName, string LastName);
 
+/// <summary>Who an issued invoice is addressed to, frozen at issue (ADR-018).</summary>
+public sealed record InvoiceBillTo(
+    string Name,
+    string? AddressLine1,
+    string? AddressLine2,
+    string? City,
+    string? Region,
+    string? PostalCode,
+    string? Country,
+    string? PatientName)
+{
+    public static InvoiceBillTo? From(Invoice i) =>
+        i.BillToName is null
+            ? null
+            : new(i.BillToName, i.BillToAddressLine1, i.BillToAddressLine2, i.BillToCity, i.BillToRegion, i.BillToPostalCode,
+                i.BillToCountry, i.BillToPatientName);
+}
+
 public sealed record InvoiceTaxRateSummary(Guid Id, string Name, decimal Percent);
 
 public sealed record InvoiceItemResponse(
@@ -75,6 +93,7 @@ public sealed record InvoiceResponse(
     InvoiceStatus Status,
     InvoiceClientSummary? Client,
     AppointmentPatientSummary? Patient,
+    InvoiceBillTo? BillTo,
     string Currency,
     string? Notes,
     IReadOnlyList<InvoiceItemResponse> Items,
@@ -101,6 +120,7 @@ public sealed record InvoiceResponse(
             i.Id, i.Number, i.Status,
             i.Client is { } c ? new InvoiceClientSummary(c.Id, c.FirstName, c.LastName) : null,
             i.Patient is { } p ? new AppointmentPatientSummary(p.Id, p.Name, p.Species) : null,
+            InvoiceBillTo.From(i),
             i.Currency, i.Notes,
             i.Items.OrderBy(item => item.Position).Select(InvoiceItemResponse.From).ToList(),
             Currencies.Shortest(i.Subtotal), Currencies.Shortest(i.DiscountTotal), Currencies.Shortest(i.TaxTotal),

@@ -89,7 +89,7 @@ public sealed class InvoicesTests(DatabaseApiFactory factory) : IClassFixture<Da
         var id = draft.GetProperty("id").GetGuid();
         Assert.EndsWith($"/api/invoices/{id}", response.Headers.Location!.ToString());
         Assert.Equal(
-            ["id", "number", "status", "client", "patient", "currency", "notes", "items", "subtotal", "discountTotal", "taxTotal",
+            ["id", "number", "status", "client", "patient", "billTo", "currency", "notes", "items", "subtotal", "discountTotal", "taxTotal",
              "total", "amountPaid", "balanceDue", "paymentStatus", "issuedAt", "dueOn", "issuedBy", "voidedAt", "voidedBy", "voidReason", "createdBy", "createdAt", "updatedAt"],
             draft.EnumerateObject().Select(p => p.Name));
         Assert.Equal("Draft", draft.GetProperty("status").GetString());

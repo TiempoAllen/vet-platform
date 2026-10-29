@@ -108,6 +108,10 @@ as money leaves the clinic). Payments and refunds are never edited or deleted; o
 reference that looks like a card number (13 to 19 digits passing the Luhn check) is refused, so card data is never
 stored; references and refund reasons never reach the audit log.
 
+Since B-18 (ADR-018): receipts are frozen copies, never changed or deleted (database-enforced), read with
+`billing.read`; opening one and each list call are audited. The per-invoice activity trail shows audit metadata only, which never holds
+free text, and names only the caller's clinic's staff.
+
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 
