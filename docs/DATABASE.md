@@ -381,15 +381,19 @@ updated in the creating transaction, so gapless per clinic.
   issued_by_name (CHECK not blank)
 - created_at, updated_at; index (clinic_id, invoice_id, number)
 
-Trigger `receipts_guard`: a new receipt must state its payment's or refund's own amount and method (source read `FOR
-SHARE`); no UPDATE or DELETE; TRUNCATE refused.
+Trigger `receipts_guard`: a new receipt must state exactly its payment's or refund's amount, method, reference and
+time (source read `FOR SHARE`) and its invoice's number, currency and total, and its number must already have been
+handed out by the clinic's sequence (below `next_number`); no UPDATE or DELETE; TRUNCATE refused. Refunds gained the
+unique key `ak_refunds_clinic_id_payment_id_id` for the refund reference.
 
 ### Invoice bill-to block (B-18)
 `invoices.bill_to_name` (max 201), `bill_to_address_line1/2`, `bill_to_city`, `bill_to_region`, `bill_to_postal_code`,
 `bill_to_country`, `bill_to_patient_name`: copied from the client and patient when the invoice is issued.
-`ck_invoices_lifecycle` now requires bill_to_name on issued and void invoices and no bill-to on drafts; the existing
-`invoices_guard` whole-row comparison freezes them like every other column. The migration backfilled invoices issued
-before B-18 from the clients' then-current data. Rolling back refuses while receipts or non-draft invoices exist.
+`ck_invoices_lifecycle` now requires bill_to_name on issued and void invoices (and a patient name exactly when the
+invoice has a patient) and none of the eight bill-to columns on drafts; the existing `invoices_guard` whole-row
+comparison freezes them like every other column. The migration backfilled invoices issued before B-18 from the
+clients' and patients' details **at migration time**, not at issue (the best available; a client who moved in between
+shows the newer address on those old invoices). Rolling back refuses while receipts or non-draft invoices exist.
 
 ## 8. Inventory
 ### Product

@@ -186,6 +186,27 @@ public sealed class ReceiptsTests(DatabaseApiFactory factory) : IClassFixture<Da
         Assert.Equal(0, list.GetProperty("pagination").GetProperty("total").GetInt32());
     }
 
+    [Fact]
+    public async Task ReceiptLookups_AreAudited_AndCarryTheClinicsOffset()
+    {
+        var clinic = await ClinicAsync();
+        await OkAsync(await clinic.Admin.PatchAsJsonAsync("/api/clinic", new { timeZone = "Asia/Tokyo" })); // UTC+9
+        var (id, _) = await IssuedAsync(clinic);
+        var receipt = (await PayAsync(clinic, id, 10)).GetProperty("receipt").GetProperty("id").GetGuid();
+
+        var read = await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/receipts/{receipt}");
+        Assert.EndsWith("+09:00", read.GetProperty("occurredAt").GetString());
+        Assert.EndsWith("+00:00", read.GetProperty("createdAt").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, (await clinic.Desk.GetAsync($"/api/receipts/{Guid.NewGuid()}")).StatusCode);
+
+        await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/receipts?invoiceId={id}");
+        var listed = (await factory.AuditEntriesAsync(clinic.AdminUser.ClinicId)).Last(e => e.Action == AuditActions.ReceiptsListed);
+        Assert.Contains(receipt.ToString(), listed.Metadata);
+
+        var activity = await clinic.Desk.GetFromJsonAsync<JsonElement>($"/api/invoices/{id}/activity");
+        Assert.Contains(activity.GetProperty("data").EnumerateArray(), e => e.GetProperty("action").GetString() == AuditActions.ReceiptViewed);
+    }
+
     // ---------- Database rules ----------
 
     [Theory]

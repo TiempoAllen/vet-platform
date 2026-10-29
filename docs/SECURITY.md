@@ -109,7 +109,7 @@ reference that looks like a card number (13 to 19 digits passing the Luhn check)
 stored; references and refund reasons never reach the audit log.
 
 Since B-18 (ADR-018): receipts are frozen copies, never changed or deleted (database-enforced), read with
-`billing.read`; opening one is audited. The per-invoice activity trail shows audit metadata only, which never holds
+`billing.read`; opening one and each list call are audited. The per-invoice activity trail shows audit metadata only, which never holds
 free text, and names only the caller's clinic's staff.
 
 ## 10. Clinical records

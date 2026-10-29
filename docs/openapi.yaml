@@ -2505,7 +2505,7 @@ paths:
       tags: [Billing]
       operationId: listReceipts
       summary: Receipts
-      description: Requires `billing.read`. Newest number first. Filters by invoice and exact number (positive; 422 otherwise). Not audited.
+      description: Requires `billing.read`. Newest number first. Filters by invoice and exact number (positive; 422 otherwise). Audited once per call (receipt.listed).
       parameters:
         - { name: invoiceId, in: query, schema: { type: string, format: uuid } }
         - { name: number, in: query, schema: { type: integer, minimum: 1 } }
@@ -2550,7 +2550,7 @@ paths:
       tags: [Billing]
       operationId: getInvoiceActivity
       summary: How an invoice reached its state
-      description: Requires `billing.read`. The audit entries of the invoice, its payments and its receipts, oldest first. Unknown invoice 404.
+      description: Requires `billing.read`. The audit entries of the invoice, its payments and its receipts (including receipt.viewed reads), oldest first. Unknown invoice 404.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
@@ -4391,13 +4391,14 @@ components:
             total: { type: number }
             currency: { type: string, pattern: '^[A-Z]{3}$' }
         billTo:
-          oneOf:
-            - $ref: '#/components/schemas/InvoiceBillTo'
-            - type: 'null'
+          $ref: '#/components/schemas/InvoiceBillTo'
+          description: The invoice's frozen block; never null (receipts exist only for issued invoices).
         paymentId: { type: string, format: uuid }
         refundId: { type: [string, 'null'], format: uuid }
         amount: { type: number, exclusiveMinimum: 0, description: Always positive; kind tells the direction. }
-        method: { $ref: '#/components/schemas/PaymentMethod' }
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+          description: The payment's method, or the refund's own method on refund receipts.
         reference: { type: [string, 'null'], description: The payment's reference; refund receipts have none. }
         occurredAt: { type: string, format: date-time, description: The payment's paidAt or the refund's refundedAt (clinic offset). }
         amountPaidAfter: { type: number }
@@ -4435,8 +4436,8 @@ components:
               id: { type: string, format: uuid }
               occurredAt: { type: string, format: date-time, description: With the clinic's local offset. }
               action: { type: string, examples: [payment.recorded] }
-              entityType: { type: [string, 'null'], enum: [Invoice, Payment, Receipt, null] }
-              entityId: { type: [string, 'null'], format: uuid }
+              entityType: { type: string, enum: [Invoice, Payment, Receipt] }
+              entityId: { type: string, format: uuid }
               actor:
                 oneOf:
                   - $ref: '#/components/schemas/PersonSummary'

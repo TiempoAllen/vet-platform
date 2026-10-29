@@ -128,6 +128,7 @@ public static class AuditActions
 
     /// <summary>A receipt opened (viewed or reprinted).</summary>
     public const string ReceiptViewed = "receipt.viewed";
+    public const string ReceiptsListed = "receipt.listed";
 }
 
 /// <summary>

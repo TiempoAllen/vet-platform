@@ -724,15 +724,22 @@ Choose the simplest solution that satisfies documented requirements, security, m
   the change. Refund receipts do not print the refund reason (free text, possibly sensitive) or a reference. No
   receipts were backfilled for payments recorded before B-18 (none exist in any deployment; `receipt` is `null` for
   them); invoices issued before B-18 were backfilled with the clients' then-current details, the best available.
-- **Database:** `receipts_guard` refuses UPDATE, DELETE and TRUNCATE and a receipt whose amount or method differs from
-  its payment or refund; unique indexes allow one receipt per payment and one per refund; CHECKs keep the frozen
+- **Database:** `receipts_guard` refuses UPDATE, DELETE and TRUNCATE, and (widened in the B-18 review) a receipt whose
+  amount, method, reference or time differs from its payment or refund, whose invoice number, currency or total
+  differs from its invoice, or whose number was not handed out by the clinic's sequence; unique indexes allow one receipt per payment and one per refund; CHECKs keep the frozen
   amounts consistent (balance after = total − paid after). The receipt references its payment through
   (clinic_id, invoice_id, payment_id) and its refund through (clinic_id, payment_id, refund_id), so it can never name
   another invoice's money.
 - **Activity:** `audit_logs` is read only through `AuditLogQueries.ForCurrentClinic` (ADR-007), selecting entries whose
   entity is the invoice, one of its payments (refunds are recorded on their payment) or one of its receipts; actors are
   resolved through the clinic-filtered users. Reading the activity is not itself audited (it shows audit data and is
-  billing, not clinical); opening a receipt is (`receipt.viewed`).
+  billing, not clinical); opening a receipt is (`receipt.viewed`), and so is each receipt list call
+  (`receipt.listed`, added in the B-18 review because a list returns the same details as opening each receipt). The
+  activity therefore shows receipt views next to changes.
+- **Review fixes (B-18):** the lifecycle CHECK requires all eight bill-to columns to be empty on drafts and the patient
+  name to be present exactly when the invoice has a patient; the receipt list sorts after its join; the refunds key got
+  its plural name. The backfilled bill-to of invoices issued before B-18 uses the details at migration time, not at
+  issue (documented in DATABASE.md).
 - **Accepted for now:** no clinic address, tax number or logo on receipts until B-26 adds those settings (the
   frontend may print what it has); no credit notes; receipts are not emailed until B-25; `TRUNCATE payments` now fails
   on the receipts foreign key before its own guard (either way it is refused).
