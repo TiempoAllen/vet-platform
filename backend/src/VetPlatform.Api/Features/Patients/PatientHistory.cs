@@ -122,8 +122,18 @@ public sealed record PatientHistoryAttachment(
 /// <summary>Details of <c>AttachmentAdded</c>.</summary>
 public sealed record PatientAttachmentDetails(PatientHistoryAttachment Attachment);
 
-/// <summary>The invoice an <c>InvoiceIssued</c> entry is about, with its current status (Issued or Void).</summary>
-public sealed record PatientHistoryInvoice(Guid Id, int Number, decimal Total, string Currency, InvoiceStatus Status);
+/// <summary>
+/// The invoice an <c>InvoiceIssued</c> entry is about, with its current status (Issued or Void) and, since B-17, its
+/// current payment state.
+/// </summary>
+public sealed record PatientHistoryInvoice(
+    Guid Id,
+    int Number,
+    decimal Total,
+    string Currency,
+    InvoiceStatus Status,
+    PaymentStatus? PaymentStatus,
+    decimal BalanceDue);
 
 /// <summary>Details of <c>InvoiceIssued</c>.</summary>
 public sealed record PatientInvoiceDetails(PatientHistoryInvoice Invoice);
@@ -350,7 +360,8 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                 return new PatientHistoryEntry(
                     key.Id, type, key.OccurredAt, Actor(invoice.IssuedByUserId),
                     new PatientInvoiceDetails(new PatientHistoryInvoice(
-                        invoice.Id, invoice.Number!.Value, Currencies.Shortest(invoice.Total), invoice.Currency, invoice.Status)));
+                        invoice.Id, invoice.Number!.Value, Currencies.Shortest(invoice.Total), invoice.Currency, invoice.Status,
+                        invoice.PaymentStatus, Currencies.Shortest(invoice.BalanceDue))));
             }
 
             if (type == PatientHistoryEntryType.ClinicalNoteAdded)

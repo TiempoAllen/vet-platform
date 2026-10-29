@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.16.0
-  summary: Implemented endpoints as of milestone B-16.
+  version: 0.17.0
+  summary: Implemented endpoints as of milestone B-17.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -2164,11 +2164,13 @@ paths:
       tags: [Billing]
       operationId: listInvoices
       summary: Invoices
-      description: Requires `billing.read`. Newest first. Filters by exact status, client and patient.
+      description: Requires `billing.read`. Newest first. Filters by exact status, client, patient, payment status (issued invoices only) and overdue (issued, balance left, due date before the clinic-local today).
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/InvoiceStatus' } }
         - { name: clientId, in: query, schema: { type: string, format: uuid } }
         - { name: patientId, in: query, schema: { type: string, format: uuid } }
+        - { name: paymentStatus, in: query, schema: { $ref: '#/components/schemas/PaymentStatus' } }
+        - { name: overdue, in: query, schema: { type: boolean } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
       responses:
@@ -2391,7 +2393,7 @@ paths:
       tags: [Billing]
       operationId: voidInvoice
       summary: Void an issued invoice
-      description: Requires `billing.manage`. Issued only (a draft or a void invoice is 409). The number stays taken. The reason is never audited.
+      description: Requires `billing.manage`. Issued only (a draft, a void invoice, or one that still holds payments is 409; refund them first). The number stays taken. The reason is never audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2407,6 +2409,90 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/invoices/{id}/payments:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Billing]
+      operationId: listPayments
+      summary: An invoice's payments with their refunds
+      description: Requires `billing.read`. Oldest paidAt first; a plain array (at most 100). Unknown invoice 404.
+      responses:
+        '200':
+          description: The payments.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Payment' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Billing]
+      operationId: recordPayment
+      summary: Record a payment
+      description: >
+        Requires `payments.record` (Admin, Receptionist). Issued invoices only (409). amount at most the balance due
+        (422); a reference that looks like a card number is 422; paidAt not in the future nor before the issue (422).
+        No Location header (there is no single-payment GET). Audited without the reference.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordPaymentRequest' }
+      responses:
+        '201':
+          description: Recorded.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/invoices/{id}/payments/{paymentId}/refunds:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Billing]
+      operationId: refundPayment
+      summary: Refund (part of) a payment
+      description: >
+        Requires `payments.refund` (Admin). amount at most what remains of the payment (422); a fully refunded payment is
+        409; reason required. Returns the whole payment. Audited without the reason.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefundPaymentRequest' }
+      responses:
+        '201':
+          description: Refunded; the payment with all its refunds.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
@@ -2512,7 +2598,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -3041,13 +3127,19 @@ components:
                 invoice:
                   type: object
                   additionalProperties: false
-                  required: [id, number, total, currency, status]
+                  required: [id, number, total, currency, status, paymentStatus, balanceDue]
                   properties:
                     id: { type: string, format: uuid }
                     number: { type: integer }
                     total: { type: number }
                     currency: { type: string, pattern: '^[A-Z]{3}$' }
                     status: { type: string, enum: [Issued, Void], description: As it is now. }
+                    paymentStatus:
+                      description: As it is now; null for void invoices.
+                      oneOf:
+                        - $ref: '#/components/schemas/PaymentStatus'
+                        - type: 'null'
+                    balanceDue: { type: number }
 
     PatientRegisteredDetails:
       type: object
@@ -3977,7 +4069,7 @@ components:
     Invoice:
       type: object
       additionalProperties: false
-      required: [id, number, status, client, patient, currency, notes, items, subtotal, discountTotal, taxTotal, total, issuedAt, dueOn, issuedBy, voidedAt, voidedBy, voidReason, createdBy, createdAt, updatedAt]
+      required: [id, number, status, client, patient, currency, notes, items, subtotal, discountTotal, taxTotal, total, amountPaid, balanceDue, paymentStatus, issuedAt, dueOn, issuedBy, voidedAt, voidedBy, voidReason, createdBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         number: { type: [integer, 'null'], description: Gapless per clinic; null for drafts. }
@@ -4012,6 +4104,13 @@ components:
         discountTotal: { type: number }
         taxTotal: { type: number }
         total: { type: number, description: subtotal − discountTotal + taxTotal. }
+        amountPaid: { type: number, description: Payments minus refunds; 0 for drafts and void invoices. }
+        balanceDue: { type: number, description: total − amountPaid. }
+        paymentStatus:
+          description: Only issued invoices have one.
+          oneOf:
+            - $ref: '#/components/schemas/PaymentStatus'
+            - type: 'null'
         issuedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
         dueOn: { type: [string, 'null'], format: date }
         issuedBy:
@@ -4095,6 +4194,79 @@ components:
       type: object
       required: [reason]
       properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    PaymentStatus:
+      type: string
+      enum: [Unpaid, PartiallyPaid, Paid]
+
+    PaymentMethod:
+      type: string
+      enum: [Cash, Card, BankTransfer, Cheque, Other]
+
+    Payment:
+      type: object
+      additionalProperties: false
+      required: [id, amount, method, reference, paidAt, receivedBy, refundedAmount, refunds, invoice, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        amount: { type: number, exclusiveMinimum: 0 }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
+        reference: { type: [string, 'null'], maxLength: 100 }
+        paidAt: { type: string, format: date-time, description: With the clinic's local offset. }
+        receivedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        refundedAmount: { type: number }
+        refunds:
+          type: array
+          description: Oldest first.
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, amount, method, reason, refundedAt, refundedBy]
+            properties:
+              id: { type: string, format: uuid }
+              amount: { type: number, exclusiveMinimum: 0 }
+              method: { $ref: '#/components/schemas/PaymentMethod' }
+              reason: { type: string, maxLength: 500 }
+              refundedAt: { type: string, format: date-time, description: With the clinic's local offset. }
+              refundedBy:
+                oneOf:
+                  - $ref: '#/components/schemas/PersonSummary'
+                  - type: 'null'
+        invoice:
+          type: object
+          additionalProperties: false
+          required: [id, total, amountPaid, balanceDue, paymentStatus]
+          description: The invoice's payment state after the change.
+          properties:
+            id: { type: string, format: uuid }
+            total: { type: number }
+            amountPaid: { type: number }
+            balanceDue: { type: number }
+            paymentStatus:
+              oneOf:
+                - $ref: '#/components/schemas/PaymentStatus'
+                - type: 'null'
+        createdAt: { type: string, format: date-time }
+
+    RecordPaymentRequest:
+      type: object
+      required: [amount, method]
+      properties:
+        amount: { type: number, exclusiveMinimum: 0, description: In the currency's minor units; at most the balance due. }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
+        reference: { type: [string, 'null'], maxLength: 100, description: Never a card number (refused). }
+        paidAt: { type: [string, 'null'], format: date-time, description: 'With an explicit offset; defaults to now; not in the future nor before the issue.' }
+
+    RefundPaymentRequest:
+      type: object
+      required: [amount, method, reason]
+      properties:
+        amount: { type: number, exclusiveMinimum: 0, description: At most what remains of the payment. }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
         reason: { type: string, minLength: 1, maxLength: 500 }
 
     Health:
