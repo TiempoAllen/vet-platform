@@ -104,6 +104,25 @@ public sealed class Invoice : Entity, IClinicOwned
         : AmountPaid < Total ? Billing.PaymentStatus.PartiallyPaid
         : Billing.PaymentStatus.Paid;
 
+    // ---------- Bill-to block, frozen when the invoice is issued (B-18, ADR-018); null on drafts ----------
+
+    /// <summary>The client's name as printed ("First Last").</summary>
+    public string? BillToName { get; set; }
+
+    public string? BillToAddressLine1 { get; set; }
+
+    public string? BillToAddressLine2 { get; set; }
+
+    public string? BillToCity { get; set; }
+
+    public string? BillToRegion { get; set; }
+
+    public string? BillToPostalCode { get; set; }
+
+    public string? BillToCountry { get; set; }
+
+    public string? BillToPatientName { get; set; }
+
     public DateTimeOffset? IssuedAt { get; set; }
 
     /// <summary>The clinic-local day payment is due; set on issue (the issue day unless given).</summary>
@@ -236,10 +255,13 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
                 "ck_invoices_lifecycle",
                 "CASE status " +
                 "WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL " +
+                "AND bill_to_name IS NULL AND bill_to_patient_name IS NULL AND bill_to_address_line1 IS NULL " +
                 "AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL " +
                 "WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL " +
+                "AND bill_to_name IS NOT NULL " +
                 "AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL " +
                 "WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL " +
+                "AND bill_to_name IS NOT NULL " +
                 "AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL " +
                 "AND void_reason IS NOT NULL AND btrim(void_reason) <> '' " +
                 "ELSE false END");
@@ -262,6 +284,14 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
         builder.Property(i => i.TaxTotal).HasPrecision(19, 4);
         builder.Property(i => i.Total).HasPrecision(19, 4);
         builder.Property(i => i.AmountPaid).HasPrecision(19, 4);
+        builder.Property(i => i.BillToName).HasMaxLength(2 * Client.NameMaxLength + 1);
+        builder.Property(i => i.BillToAddressLine1).HasMaxLength(Client.AddressLineMaxLength);
+        builder.Property(i => i.BillToAddressLine2).HasMaxLength(Client.AddressLineMaxLength);
+        builder.Property(i => i.BillToCity).HasMaxLength(Client.LocalityMaxLength);
+        builder.Property(i => i.BillToRegion).HasMaxLength(Client.LocalityMaxLength);
+        builder.Property(i => i.BillToPostalCode).HasMaxLength(Client.PostalCodeMaxLength);
+        builder.Property(i => i.BillToCountry).HasMaxLength(Client.LocalityMaxLength);
+        builder.Property(i => i.BillToPatientName).HasMaxLength(Patient.NameMaxLength);
         builder.Ignore(i => i.BalanceDue);
         builder.Ignore(i => i.PaymentStatus);
 
