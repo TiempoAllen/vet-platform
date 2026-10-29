@@ -5,8 +5,8 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Features.Identity;
 
 /// <summary>
-/// The tenant: a veterinary practice (docs/DATABASE.md section 2). Holds what sign-in and scheduling need; contact
-/// details, currency, tax and other settings are added by the clinic settings milestone (B-26).
+/// The tenant: a veterinary practice (docs/DATABASE.md section 2). Holds what sign-in, scheduling and billing need;
+/// contact details and other settings are added by the clinic settings milestone (B-26).
 /// </summary>
 public sealed class Clinic : Entity
 {
@@ -22,6 +22,12 @@ public sealed class Clinic : Entity
     /// ADR-008). Validate with <see cref="ClinicTimeZone.TryFind"/>.
     /// </summary>
     public string TimeZone { get; set; } = ClinicTimeZone.Default;
+
+    /// <summary>
+    /// ISO 4217 code of the clinic's currency (B-16, ADR-016); null until an administrator sets it, and fixed once the
+    /// clinic has an invoice. Invoices copy it.
+    /// </summary>
+    public string? Currency { get; set; }
 }
 
 /// <summary>IANA time zone handling for clinics. Windows-style ids ("GMT Standard Time") are refused.</summary>
@@ -66,12 +72,16 @@ internal sealed class ClinicConfiguration : IEntityTypeConfiguration<Clinic>
     public void Configure(EntityTypeBuilder<Clinic> builder)
     {
         builder.ToTable("clinics", table =>
-            table.HasCheckConstraint("ck_clinics_status", "status IN ('Active', 'Suspended')"));
+        {
+            table.HasCheckConstraint("ck_clinics_status", "status IN ('Active', 'Suspended')");
+            table.HasCheckConstraint("ck_clinics_currency", "currency ~ '^[A-Z]{3}$'");
+        });
         builder.Property(clinic => clinic.Name).HasMaxLength(Clinic.NameMaxLength);
         builder.Property(clinic => clinic.Status).HasConversion<string>().HasMaxLength(32);
         // Existing clinics get UTC; an administrator sets the real zone with PATCH /api/clinic.
         builder.Property(clinic => clinic.TimeZone)
             .HasMaxLength(Clinic.TimeZoneMaxLength)
             .HasDefaultValue(ClinicTimeZone.Default);
+        builder.Property(clinic => clinic.Currency).HasMaxLength(3).IsFixedLength();
     }
 }

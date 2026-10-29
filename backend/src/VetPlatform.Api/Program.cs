@@ -4,6 +4,7 @@ using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Security;
 using VetPlatform.Api.Common.Storage;
 using VetPlatform.Api.Features.Attachments;
+using VetPlatform.Api.Features.Billing;
 using VetPlatform.Api.Features.Appointments;
 using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.ClinicalNotes;
@@ -45,6 +46,8 @@ builder.Services.AddScoped<ConsultationService>();
 builder.Services.AddScoped<VaccinationService>();
 builder.Services.AddScoped<ClinicalNoteService>();
 builder.Services.AddScoped<AttachmentService>();
+builder.Services.AddScoped<TaxRateService>();
+builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddFileStorage(builder.Configuration);
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection

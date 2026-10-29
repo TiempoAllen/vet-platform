@@ -158,6 +158,8 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `consultations.complete` | – | ✓ | – | – | – |
 | `prescriptions.issue` | – | ✓ | – | – | – |
 | `vaccinations.read_due` | ✓ | ✓ | ✓ | ✓ | – |
+| `billing.read` | ✓ | ✓ | – | ✓ | – |
+| `billing.manage` | ✓ | – | – | ✓ | – |
 
 **User object**
 
@@ -223,11 +225,15 @@ request is refused with `403 FORBIDDEN`.
 Every change made through these endpoints is written to the audit log.
 
 ### 4.1 Clinic
-Implemented in B-08 (the other clinic settings follow in B-26).
+Implemented in B-08; the currency in B-16 (the other clinic settings follow in B-26).
 
-`GET /api/clinic` (any signed-in user): `{ "id": "uuid", "name": "Happy Paws", "timeZone": "Europe/London" }`.
+`GET /api/clinic` (any signed-in user): `{ "id": "uuid", "name": "Happy Paws", "timeZone": "Europe/London",
+"currency": "EUR" | null }`.
 
-`PATCH /api/clinic` (`settings.manage`): `{ "timeZone": "Europe/London" }`.
+`PATCH /api/clinic` (`settings.manage`): `{ "timeZone": "Europe/London", "currency": "EUR" }` (either or both).
+- `currency` is an upper-case ISO 4217 code (`422` otherwise, field `currency`). It is `null` until an administrator
+  sets it, and invoices cannot be created before. It can change only while the clinic has **no invoice** (`409`),
+  because invoices copy it.
 - `timeZone` is an IANA id. Windows ids ("GMT Standard Time") and unknown ids are `422` (field `timeZone`).
 - New clinics get the zone from `create-admin --timezone` (default `UTC`); clinics created before B-08 start as `UTC`.
 - Weekly working hours are local wall-clock times, so changing the zone shifts every future working period with it.
@@ -416,6 +422,7 @@ Entry types so far:
 | `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ], prescriptions: [ { id, medicationName, status } ] }` (diagnoses primary first, prescriptions in the order recorded; statuses as they are now) |
 | `VaccinationGiven` | A vaccine dose was recorded (`occurredAt` = the start of `administeredOn` in the clinic's time zone when the dose was recorded; a later time-zone change does not move it). Voided doses stay, with their status. **Only for callers with `clinical.read`**. | `vaccination`: `{ id, vaccineName, administeredOn, nextDueOn, administeredElsewhere, veterinarian: { id, name } \| null, status }` (status as it is now) |
 | `ClinicalNoteAdded` | A clinical note was added (`occurredAt` = its time). **Only for callers with `clinical.read`**. | `note`: `{ id, text, consultationId }` |
+| `InvoiceIssued` | An invoice naming the patient was issued (`occurredAt` = `issuedAt`). Voided invoices stay, with their status; drafts never appear. **Only for callers with `billing.read`**; for others it is neither shown nor counted. | `invoice`: `{ id, number, total, currency, status }` (status `Issued` or `Void`, as it is now) |
 | `AttachmentAdded` | A file was attached to the patient or one of its consultations (`occurredAt` = upload time). Withdrawn files disappear; client files never appear. **Only for callers with `clinical.read`**. | `attachment`: `{ id, fileName, contentType, sizeBytes, description, consultationId }` |
 
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
@@ -943,13 +950,93 @@ patient (unknown, discarded, another patient's or another clinic's is one identi
 `PATCH` and no `DELETE`; the database refuses both.
 
 ## 10. Billing
-`GET /api/invoices`
-`GET /api/invoices/:id`
-`POST /api/invoices`
-`PATCH /api/invoices/:id`
-`POST /api/invoices/:id/payments`
+Invoices and tax rates are implemented in B-16 (ADR-016); payments and balances follow in B-17, receipts in B-18.
+Totals are **always computed by the server**; the contract has no way to send them (extra fields are ignored).
 
-Financial totals and balances are authoritative on the backend.
+Permissions: `billing.read` (Admin, Veterinarian, Receptionist) reads; `billing.manage` (Admin, Receptionist)
+creates, edits, issues, voids and deletes drafts. Tax rates are managed with `settings.manage` (Admin) and read with
+`billing.read` or `settings.manage`. Nurses and Inventory have no billing access. Other clinics' invoices and rates are
+`404`; another clinic's client, patient or rate in a body is `422`.
+
+### 10.1 Money, tax and rounding (SRS Q-4)
+- Every invoice is in the clinic currency (section 4.1), copied when the invoice is created. Amounts are JSON
+  decimals in that currency, returned in their shortest form (`45`, `10.81`); do not do arithmetic on them in binary
+  floating point.
+- Prices **exclude tax**. Each line has its own tax rate.
+- Each line is computed and rounded on its own, **half away from zero**, to the currency's minor units (2 for EUR or
+  USD, 0 for JPY, 3 for KWD):
+  `net = round(quantity × unitPrice)`; `discount = round(net × percent / 100)` or the discount amount;
+  `tax = round((net − discount) × taxRate / 100)`; `total = net − discount + tax`.
+- The invoice's `subtotal`, `discountTotal`, `taxTotal` and `total` are the sums of the lines' `net`, `discount`, `tax`
+  and `total`, so a printed invoice always adds up.
+
+### 10.2 Tax rates
+`{ "id": "uuid", "name": "Standard", "ratePercent": 20, "status": "Active" | "Archived", "createdAt", "updatedAt" }`
+
+- `GET /api/tax-rates` (`billing.read` or `settings.manage`): ordered by name, paginated; `status` filters.
+- `POST /api/tax-rates` (`settings.manage`): `{ "name": "Standard", "ratePercent": 20 }`. Name required (max 100);
+  `ratePercent` 0 to 100 with at most 4 decimals. One **active** rate per name, ignoring case (`409`). `201` with the
+  rate (no `Location`: there is no single-rate `GET`).
+- `PATCH /api/tax-rates/:id` (`settings.manage`): `{ "name": "...", "status": "Archived" | "Active" }`. The percentage
+  never changes: archive the rate and create a new one. Archived rates cannot be picked for new lines; lines that
+  already use a rate keep a **copy** of its name and percentage, so renaming or archiving changes no invoice.
+  Restoring a rate whose name is now taken by another active rate is `409`.
+- Rates are never deleted. Changes are audited (`tax_rate.created`, `tax_rate.updated`).
+
+### 10.3 Invoices
+
+    {
+      "id": "uuid", "number": 42 | null, "status": "Draft" | "Issued" | "Void",
+      "client": { "id", "firstName", "lastName" } | null, "patient": { "id", "name", "species" } | null,
+      "currency": "EUR", "notes": "..." | null,
+      "items": [ {
+        "id": "uuid", "position": 1, "description": "Consultation", "quantity": 1, "unitPrice": 45,
+        "discountType": "None" | "Percent" | "Amount", "discountValue": 0,
+        "taxRate": { "id": "uuid", "name": "Standard", "percent": 20 }, "consultationId": "uuid" | null,
+        "net": 45, "discount": 0, "tax": 9, "total": 54
+      } ],
+      "subtotal": 45, "discountTotal": 0, "taxTotal": 9, "total": 54,
+      "issuedAt": "..." | null, "dueOn": "2026-11-30" | null, "issuedBy": { "id", "name" } | null,
+      "voidedAt": "..." | null, "voidedBy": { "id", "name" } | null, "voidReason": "..." | null,
+      "createdBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
+    }
+
+`issuedAt` and `voidedAt` carry the clinic's offset; `createdAt` / `updatedAt` are UTC; `dueOn` is a clinic-local
+date. Lines are ordered by `position`. `client` or `patient` is `null` only if it can no longer be shown.
+
+**Lifecycle:** `Draft` → `Issued` → `Void`. A draft is freely editable, has no number and may be deleted. Issuing
+assigns the clinic's next **gapless** number (1, 2, 3, ... per clinic, never reused) and freezes the invoice; an issued
+invoice is never edited or deleted, only voided (its number stays taken). The database enforces the same rules.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /api/invoices` | `billing.read` | Newest first, paginated; filters `status`, `clientId`, `patientId`. |
+| `GET /api/invoices/:id` | `billing.read` | `200` or `404`. |
+| `POST /api/invoices` | `billing.manage` | `{ "clientId", "patientId"?, "notes"? }`: a draft. The clinic currency must be set (`409`). The client must be active; the patient (optional) must currently belong to the client, any patient status (`422`). `201` with `Location: /api/invoices/:id`. |
+| `PATCH /api/invoices/:id` | `billing.manage` | Drafts only. `clientId`, `patientId` (`null` removes it), `notes` (`""` clears; max 2000). Changing the patient while lines bill its consultations is `409`. |
+| `DELETE /api/invoices/:id` | `billing.manage` | Drafts only (`204`); an issued invoice is `409`. |
+| `POST /api/invoices/:id/items` | `billing.manage` | Adds a line (fields below); at most 200 lines (`409`). |
+| `PATCH /api/invoices/:id/items/:itemId` | `billing.manage` | Partial update; `consultationId: null` unlinks; a new `taxRateId` copies the new rate. |
+| `DELETE /api/invoices/:id/items/:itemId` | `billing.manage` | Removes a line. |
+| `POST /api/invoices/:id/issue` | `billing.manage` | Optional body `{ "dueOn": "YYYY-MM-DD" }` (default: the clinic-local issue day; earlier is `422`). Needs at least one line (`409`). |
+| `POST /api/invoices/:id/void` | `billing.manage` | `{ "reason": "..." }` (required, max 500, trimmed). Issued invoices only; a draft (delete it) or a void invoice is `409`. |
+
+Every change to a draft or its lines, or to a non-draft (`409`), returns the whole invoice with `200` and recomputes
+all amounts. Concurrent changes to one invoice are applied one after the other.
+
+**Line fields:** `description` (required, max 500), `quantity` (above 0, at most 1,000,000, at most 3 decimals),
+`unitPrice` (0 or more, at most 1,000,000,000, at most 4 decimals, before tax), `taxRateId` (required; an active rate
+of the clinic), `discountType` (`None` by default, `Percent` or `Amount`) with `discountValue` (omit or `0` for
+`None`; a percentage above 0 and at most 100; an amount above 0 in the currency's minor units and **not more than the
+line's net**), `consultationId` (optional; a non-discarded consultation of the invoice's patient, so the invoice needs
+a patient). Invalid fields are `422`, all reported together; field validation (`422`) comes before the invoice's state
+(`409`).
+
+**Audit:** `invoice.created`, `.updated`, `.deleted`, `.item_added`, `.item_updated`, `.item_removed`, `.issued`,
+`.voided`, with ids, field names, numbers, totals and currency; never descriptions, notes or the void reason.
+Invoice reads are not audited (they are not clinical records).
+
+The SRS `balance_due`, payments and receipts arrive with B-17 and B-18.
 
 ## 11. Inventory
 `GET /api/products`

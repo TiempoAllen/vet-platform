@@ -27,7 +27,10 @@ public sealed class PatientsController(PatientService patients, PatientHistorySe
         [FromQuery] PageQuery query,
         CancellationToken cancellationToken) =>
         history.ListAsync(
-            id, query, Permissions.Grant(Permissions.RolesOf(User), Permissions.ClinicalRead), cancellationToken);
+            id, query,
+            Permissions.Grant(Permissions.RolesOf(User), Permissions.ClinicalRead),
+            Permissions.Grant(Permissions.RolesOf(User), Permissions.BillingRead),
+            cancellationToken);
 
     [HttpPost]
     [RequirePermission(Permissions.PatientsManage)]

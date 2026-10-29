@@ -98,6 +98,11 @@ Use framework/library protections rather than custom cryptography or security pr
 ## 9. Financial operations
 Payment creation, refunds, invoice adjustments, and balance calculations require strong authorization and audit events.
 
+Since B-16 (ADR-016): invoices need `billing.read` / `billing.manage`; amounts are computed only by the server (no
+client-supplied totals exist in the contract); issued invoices are frozen and only voided, and the database refuses any
+other change, including issuing with totals that differ from the lines; every change is audited without descriptions,
+notes or reasons. Invoice numbers are gapless per clinic.
+
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 

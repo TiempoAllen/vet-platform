@@ -3,10 +3,12 @@ using Microsoft.EntityFrameworkCore;
 using VetPlatform.Api.Common.Auditing;
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Http;
+using VetPlatform.Api.Common.Money;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Appointments;
 using VetPlatform.Api.Features.Attachments;
+using VetPlatform.Api.Features.Billing;
 using VetPlatform.Api.Features.ClinicalNotes;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Vaccinations;
@@ -36,6 +38,9 @@ public enum PatientHistoryEntryType
 
     /// <summary>Clinical: a file attached to the patient or one of its consultations (withdrawn files disappear).</summary>
     AttachmentAdded,
+
+    /// <summary>Billing: an invoice for the patient was issued; only for callers with <c>billing.read</c>.</summary>
+    InvoiceIssued,
 }
 
 /// <summary>Who caused an entry; null when there was no signed-in user (the CLI) or the account cannot be shown.</summary>
@@ -117,6 +122,12 @@ public sealed record PatientHistoryAttachment(
 /// <summary>Details of <c>AttachmentAdded</c>.</summary>
 public sealed record PatientAttachmentDetails(PatientHistoryAttachment Attachment);
 
+/// <summary>The invoice an <c>InvoiceIssued</c> entry is about, with its current status (Issued or Void).</summary>
+public sealed record PatientHistoryInvoice(Guid Id, int Number, decimal Total, string Currency, InvoiceStatus Status);
+
+/// <summary>Details of <c>InvoiceIssued</c>.</summary>
+public sealed record PatientInvoiceDetails(PatientHistoryInvoice Invoice);
+
 /// <summary>Details of <c>VaccinationGiven</c>.</summary>
 public sealed record PatientVaccinationDetails(PatientHistoryVaccination Vaccination);
 
@@ -144,6 +155,9 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         public required DateTimeOffset OccurredAt { get; init; }
     }
 
+    /// <param name="includeBilling">
+    /// Whether the caller holds <c>billing.read</c>; without it issued invoices are neither shown nor counted.
+    /// </param>
     /// <param name="includeClinical">
     /// Whether the caller holds <c>clinical.read</c>. Without it clinical sources are left out of the union, so they
     /// are neither shown nor counted. With it, a page that contains clinical entries is an audited read.
@@ -152,6 +166,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         Guid patientId,
         PageQuery page,
         bool includeClinical,
+        bool includeBilling,
         CancellationToken cancellationToken)
     {
         // The patient query is clinic-filtered, so another clinic's patient is 404 like everywhere else.
@@ -168,6 +183,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         const string vaccinationGiven = nameof(PatientHistoryEntryType.VaccinationGiven);
         const string noteAdded = nameof(PatientHistoryEntryType.ClinicalNoteAdded);
         const string attachmentAdded = nameof(PatientHistoryEntryType.AttachmentAdded);
+        const string invoiceIssued = nameof(PatientHistoryEntryType.InvoiceIssued);
 
         var registrations = db.ForCurrentClinic(tenant)
             .Where(entry => entry.EntityType == nameof(Patient)
@@ -211,6 +227,14 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                 .Select(a => new HistoryKey { Type = attachmentAdded, Id = a.Id, OccurredAt = a.CreatedAt }));
         }
 
+        if (includeBilling)
+        {
+            // Issued invoices (voided ones stay, with their status); drafts are not part of any record.
+            sources = sources.Concat(db.Invoices
+                .Where(i => i.PatientId == patientId && i.Status != InvoiceStatus.Draft)
+                .Select(i => new HistoryKey { Type = invoiceIssued, Id = i.Id, OccurredAt = i.IssuedAt!.Value }));
+        }
+
         // Documented order: occurredAt, then id, then type, all descending.
         var keys = await sources
             .OrderByDescending(key => key.OccurredAt)
@@ -224,6 +248,7 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
         var vaccinationIds = keys.Data.Where(k => k.Type == vaccinationGiven).Select(k => k.Id).ToList();
         var noteIds = keys.Data.Where(k => k.Type == noteAdded).Select(k => k.Id).ToList();
         var attachmentIds = keys.Data.Where(k => k.Type == attachmentAdded).Select(k => k.Id).ToList();
+        var invoiceIds = keys.Data.Where(k => k.Type == invoiceIssued).Select(k => k.Id).ToList();
         var auditEntries = auditIds.Count == 0
             ? []
             : await db.ForCurrentClinic(tenant).AsNoTracking()
@@ -260,13 +285,18 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
             ? []
             : await db.Attachments.AsNoTracking().Where(a => attachmentIds.Contains(a.Id)).ToDictionaryAsync(a => a.Id, cancellationToken);
 
+        var invoiceRows = invoiceIds.Count == 0
+            ? []
+            : await db.Invoices.AsNoTracking().Where(i => invoiceIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, cancellationToken);
+
         var actors = await ActorsAsync(
             auditEntries.Values.Select(entry => entry.ActorUserId)
                 .Concat(appointmentRows.Values.Select(a => a.StatusChangedByUserId))
                 .Concat(consultationRows.Values.Select(c => c.CompletedByUserId))
                 .Concat(vaccinationRows.Values.Select(v => v.RecordedByUserId))
                 .Concat(noteRows.Values.Select(n => (Guid?)n.AuthorUserId))
-                .Concat(attachmentRows.Values.Select(a => a.UploadedByUserId)),
+                .Concat(attachmentRows.Values.Select(a => a.UploadedByUserId))
+                .Concat(invoiceRows.Values.Select(i => i.IssuedByUserId)),
             cancellationToken);
         var clients = await ClientsAsync(auditEntries.Values, cancellationToken);
 
@@ -312,6 +342,15 @@ public sealed class PatientHistoryService(AppDbContext db, ITenantContext tenant
                         vaccination.AdministeredElsewhere,
                         vaccination.Veterinarian is { } vet ? new AppointmentPersonSummary(vet.Id, vet.Name) : null,
                         vaccination.Status)));
+            }
+
+            if (type == PatientHistoryEntryType.InvoiceIssued)
+            {
+                var invoice = invoiceRows[key.Id];
+                return new PatientHistoryEntry(
+                    key.Id, type, key.OccurredAt, Actor(invoice.IssuedByUserId),
+                    new PatientInvoiceDetails(new PatientHistoryInvoice(
+                        invoice.Id, invoice.Number!.Value, Currencies.Shortest(invoice.Total), invoice.Currency, invoice.Status)));
             }
 
             if (type == PatientHistoryEntryType.ClinicalNoteAdded)
