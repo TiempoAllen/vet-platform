@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-16). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-17). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -137,7 +137,7 @@ erDiagram
   }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13), `AddVaccinations` (B-14), `AddClinicalNotesAndAttachments` (B-15), `AddInvoicesAndTaxRates` (B-16). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13), `AddVaccinations` (B-14), `AddClinicalNotesAndAttachments` (B-15), `AddInvoicesAndTaxRates` (B-16), `AddPayments` (B-17). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms
@@ -206,7 +206,8 @@ emails. Action names so far:
 `clinical_note.added`, `attachment.uploaded`, `attachment.withdrawn`, and the reads `clinical_note.viewed`,
 `clinical_note.listed`, `attachment.viewed`, `attachment.listed`, `attachment.downloaded`; since B-16
 `tax_rate.created`, `tax_rate.updated`, `invoice.created`, `invoice.updated`, `invoice.deleted`, `invoice.item_added`,
-`invoice.item_updated`, `invoice.item_removed`, `invoice.issued`, `invoice.voided`.
+`invoice.item_updated`, `invoice.item_removed`, `invoice.issued`, `invoice.voided`; since B-17 `payment.recorded`,
+`payment.refunded`.
 
 New actions use `<entity>.<past_tense_verb>` and are listed here when added.
 
@@ -261,7 +262,7 @@ The `clients.*` row was confirmed and implemented in B-05, the `patients.*` row 
 `schedules.manage` (Admin), `schedules.manage_own` (Veterinarian) and `settings.manage` (Admin). The `clinical.*` row
 was confirmed in B-11 (plus `consultations.complete`, Veterinarian) and `prescriptions.issue` (Veterinarian only) in
 B-13. B-14 added `vaccinations.read_due` (Admin, Veterinarian, Nurse, Receptionist) for the due list. The `billing.*` row was
-confirmed and implemented in B-16 as proposed. Endpoints whose
+confirmed and implemented in B-16 as proposed, the `payments.*` row in B-17. Endpoints whose
 finer rule lives in the service use `[RequireAnyPermission(...)]`, so a caller with none of the permissions is still
 refused before body validation.
 
@@ -276,7 +277,7 @@ Module-specific design notes:
 |---|---|
 | Scheduling (B-08–B-10) | Prevent overlaps in the database with a PostgreSQL exclusion constraint on (`veterinarian_id`, `tstzrange(start_at, end_at)`) for active statuses, plus availability checks in the service. Status transitions as an explicit state table in code. Times stored UTC, displayed in the clinic timezone. |
 | Clinical (B-11–B-15) | Completed consultations become read-only; corrections are addenda rows. Attachments stored in private storage (`IFileStore`, local disk until X-05) under random keys, served through an authorised, sandboxed download endpoint, never by public URL (ADR-015). |
-| Billing (B-16–B-18) | Totals recomputed server-side on every change (`InvoiceCalculator`, per-line rounding); invoice numbers from a per-clinic sequence row updated in the issuing transaction (gapless); drafts deletable, issued invoices only voided, enforced by triggers (ADR-016); payments and invoice balance updated in one transaction (B-17). |
+| Billing (B-16–B-18) | Totals recomputed server-side on every change (`InvoiceCalculator`, per-line rounding); invoice numbers from a per-clinic sequence row updated in the issuing transaction (gapless); drafts deletable, issued invoices only voided, enforced by triggers (ADR-016); payments and refunds are immutable rows; each one and the invoice's amount paid are saved in one transaction under the invoice lock, and a trigger checks the amount paid against them (B-17, ADR-017). |
 | Inventory (B-19–B-22) | `stock_lots.quantity` changed only by the service that writes the matching `stock_movements` row in the same transaction, with a row lock on the lot; CHECK `quantity >= 0` unless Q-5 decides otherwise. |
 | Reports (B-23–B-24) | Read-only queries through the tenant filter; heavy reports may later use a read replica (X-04). |
 | Audit query (B-27) | `audit_logs` is not `IClinicOwned`; use one shared, tested helper that filters `clinic_id` explicitly. |

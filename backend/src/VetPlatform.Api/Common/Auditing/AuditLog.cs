@@ -103,6 +103,8 @@ public static class AuditActions
     public const string InvoiceItemRemoved = "invoice.item_removed";
     public const string InvoiceIssued = "invoice.issued";
     public const string InvoiceVoided = "invoice.voided";
+    public const string PaymentRecorded = "payment.recorded";
+    public const string PaymentRefunded = "payment.refunded";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";

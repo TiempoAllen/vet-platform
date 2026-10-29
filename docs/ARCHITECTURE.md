@@ -672,3 +672,38 @@ Choose the simplest solution that satisfies documented requirements, security, m
   legal use may need a snapshot of the billing address, a B-18 receipts topic); the database checks that each line
   and invoice add up and that issuing matches the lines, but not that a line's net equals its quantity × unit price
   (the rounding scale depends on the currency), so only the service guarantees how a line was priced.
+
+### ADR-017: Payments, refunds and balances (decided in B-17)
+- **Confirmed with the user:** overpayment is refused (a payment is at most the balance due; cash change is the
+  frontend's arithmetic); payments are never edited, voided or deleted, and every correction is a **refund** against a
+  payment (money returned or a mistaken entry), one mechanism and a clean ledger; methods are a fixed list (Cash, Card,
+  BankTransfer, Cheque, Other) with an optional reference that may never hold a card number; issued invoices gain a
+  derived payment state (`amountPaid`, `balanceDue`, `paymentStatus`) instead of more lifecycle statuses, and an
+  invoice holding money cannot be voided until refunded; `payments.record` for Admin and Receptionist and
+  `payments.refund` for Admin only; payments may be backdated (not before the issue, never in the future) while refunds
+  are dated now; outstanding balances are found with `paymentStatus` and `overdue` filters on the invoice list (a client
+  statement can come with reports); the patient-history invoice entry shows the current payment state instead of
+  separate payment entries.
+- **Balance kept, not summed on read:** `invoices.amount_paid` is updated in the same transaction as each payment or
+  refund, under the invoice's row lock (after the clinic-filtered lookup), so concurrent payments are serialised and
+  the balance can never go negative (tested with six simultaneous payments). The row is saved first, then the invoice,
+  and `invoices_guard` refuses any amount_paid that differs from the payments minus refunds. Found in the B-17
+  review: that check alone ran only when the invoice row changed, so deferred constraint triggers on payments and
+  refunds now check the same equality at commit; together they keep the ledger and amount_paid in step for every
+  committed transaction, including raw SQL. Issuing requires amount_paid 0 and voiding requires the rows (not only
+  amount_paid) to net to 0. CHECKs keep amount_paid between 0 and the total, and 0 unless issued.
+- **Immutable ledger in the database:** `payments_guard` (INSERT only against an issued invoice) and `refunds_guard`
+  (INSERT only within the payment's amount, locking the payment `FOR NO KEY UPDATE` so concurrent refunds of one
+  payment queue instead of each missing the other), no UPDATE, DELETE or TRUNCATE. A refund's composite key
+  (clinic_id, invoice_id, payment_id) guarantees it names its payment's invoice.
+- **Card data:** a payment reference or refund reason containing 13 to 19 digits, in one group or consecutive groups
+  joined by single spaces, dashes, dots or slashes, that pass the Luhn check is refused, so a pasted card number is
+  never stored (SECURITY.md section 7; widened in the B-17 review from a whole-field check, which "Visa 4111..." or
+  dotted numbers slipped past). References and refund reasons never reach the audit log, and production connection
+  strings keep Npgsql's `Include Error Detail` off so a failing row is never logged with its values (ADR-015).
+- **Responses:** recording and refunding return the payment with its refunds and the invoice's new payment state, so
+  the screen updates without a reload; no single-payment `GET` exists (the list is short and part of the invoice).
+- **Accepted for now:** no client credit or deposits (overpayment refused); no payment allocation across invoices (a
+  payment belongs to one invoice); refund methods are free to differ from the payment's (e.g. a card payment refunded
+  in cash is recorded as such); no gateway integration (payments are recorded, not processed); other free-text fields
+  (invoice notes, line descriptions) are not scanned for card numbers; receipts and a printable statement are B-18.

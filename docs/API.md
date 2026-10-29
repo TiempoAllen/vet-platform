@@ -160,6 +160,8 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `vaccinations.read_due` | ✓ | ✓ | ✓ | ✓ | – |
 | `billing.read` | ✓ | ✓ | – | ✓ | – |
 | `billing.manage` | ✓ | – | – | ✓ | – |
+| `payments.record` | ✓ | – | – | ✓ | – |
+| `payments.refund` | ✓ | – | – | – | – |
 
 **User object**
 
@@ -422,7 +424,7 @@ Entry types so far:
 | `ConsultationCompleted` | A consultation was completed (`occurredAt` = `completedAt`). **Only for callers with `clinical.read`**; for others it is neither shown nor counted. | `consultation`: `{ id, startedAt, completedAt, appointmentId, veterinarian: { id, name }, assessment, diagnoses: [ { id, name, status, isPrimary } ], prescriptions: [ { id, medicationName, status } ] }` (diagnoses primary first, prescriptions in the order recorded; statuses as they are now) |
 | `VaccinationGiven` | A vaccine dose was recorded (`occurredAt` = the start of `administeredOn` in the clinic's time zone when the dose was recorded; a later time-zone change does not move it). Voided doses stay, with their status. **Only for callers with `clinical.read`**. | `vaccination`: `{ id, vaccineName, administeredOn, nextDueOn, administeredElsewhere, veterinarian: { id, name } \| null, status }` (status as it is now) |
 | `ClinicalNoteAdded` | A clinical note was added (`occurredAt` = its time). **Only for callers with `clinical.read`**. | `note`: `{ id, text, consultationId }` |
-| `InvoiceIssued` | An invoice naming the patient was issued (`occurredAt` = `issuedAt`). Voided invoices stay, with their status; drafts never appear. **Only for callers with `billing.read`**; for others it is neither shown nor counted. | `invoice`: `{ id, number, total, currency, status }` (status `Issued` or `Void`, as it is now) |
+| `InvoiceIssued` | An invoice naming the patient was issued (`occurredAt` = `issuedAt`). Voided invoices stay, with their status; drafts never appear. **Only for callers with `billing.read`**; for others it is neither shown nor counted. | `invoice`: `{ id, number, total, currency, status, paymentStatus, balanceDue }` (status `Issued` or `Void`; payment state as it is now, `paymentStatus` `null` for void invoices) |
 | `AttachmentAdded` | A file was attached to the patient or one of its consultations (`occurredAt` = upload time). Withdrawn files disappear; client files never appear. **Only for callers with `clinical.read`**. | `attachment`: `{ id, fileName, contentType, sizeBytes, description, consultationId }` |
 
 A history page that contains clinical entries is an audited clinical read (`patient.history_viewed`, with the
@@ -951,7 +953,8 @@ patient (unknown, discarded, another patient's or another clinic's is one identi
 `PATCH` and no `DELETE`; the database refuses both.
 
 ## 10. Billing
-Invoices and tax rates are implemented in B-16 (ADR-016); payments and balances follow in B-17, receipts in B-18.
+Invoices and tax rates are implemented in B-16 (ADR-016), payments, refunds and balances in B-17 (ADR-017); receipts
+follow in B-18.
 Totals are **always computed by the server**; the contract has no way to send them (extra fields are ignored).
 
 Permissions: `billing.read` (Admin, Veterinarian, Receptionist) reads; `billing.manage` (Admin, Receptionist)
@@ -998,6 +1001,7 @@ creates, edits, issues, voids and deletes drafts. Tax rates are managed with `se
         "net": 45, "discount": 0, "tax": 9, "total": 54
       } ],
       "subtotal": 45, "discountTotal": 0, "taxTotal": 9, "total": 54,
+      "amountPaid": 20, "balanceDue": 34, "paymentStatus": "Unpaid" | "PartiallyPaid" | "Paid" | null,
       "issuedAt": "..." | null, "dueOn": "2026-11-30" | null, "issuedBy": { "id", "name" } | null,
       "voidedAt": "..." | null, "voidedBy": { "id", "name" } | null, "voidReason": "..." | null,
       "createdBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
@@ -1012,7 +1016,7 @@ invoice is never edited or deleted, only voided (its number stays taken). The da
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `GET /api/invoices` | `billing.read` | Newest first, paginated; filters `status`, `clientId`, `patientId`. |
+| `GET /api/invoices` | `billing.read` | Newest first, paginated; filters `status`, `clientId`, `patientId`, `paymentStatus` (`Unpaid`, `PartiallyPaid`, `Paid`; issued invoices only) and `overdue=true` (issued, balance left, `dueOn` before the clinic-local today; `false` or omitted applies no filter). |
 | `GET /api/invoices/:id` | `billing.read` | `200` or `404`. |
 | `POST /api/invoices` | `billing.manage` | `{ "clientId", "patientId"?, "notes"? }`: a draft. The clinic currency must be set (`409`). The client must be active; the patient (optional) must currently belong to the client, any patient status (`422`). `201` with `Location: /api/invoices/:id`. |
 | `PATCH /api/invoices/:id` | `billing.manage` | Drafts only. `clientId`, `patientId` (`null` removes it), `notes` (`""` clears; max 2000). Changing the patient while lines bill its consultations is `409`. |
@@ -1021,7 +1025,7 @@ invoice is never edited or deleted, only voided (its number stays taken). The da
 | `PATCH /api/invoices/:id/items/:itemId` | `billing.manage` | Partial update; `consultationId: null` unlinks; a new `taxRateId` copies the new rate. |
 | `DELETE /api/invoices/:id/items/:itemId` | `billing.manage` | Removes a line. |
 | `POST /api/invoices/:id/issue` | `billing.manage` | Optional body `{ "dueOn": "YYYY-MM-DD" }` (default: the clinic-local issue day; earlier, or after 2100-12-31, is `422`). Needs at least one line (`409`). |
-| `POST /api/invoices/:id/void` | `billing.manage` | `{ "reason": "..." }` (required, max 500, trimmed). Issued invoices only; a draft (delete it) or a void invoice is `409`. |
+| `POST /api/invoices/:id/void` | `billing.manage` | `{ "reason": "..." }` (required, max 500, trimmed). Issued invoices only; a draft (delete it), a void invoice, or one that still holds payments (refund them first) is `409`. |
 
 Every successful change to a draft or its lines (and issue / void) returns the whole invoice with `200` and
 recomputes all amounts; changes to a non-draft are `409`. Concurrent changes to one invoice are applied one after the
@@ -1043,7 +1047,56 @@ recompute).
 `.voided`, with ids, field names, numbers, totals and currency; never descriptions, notes or the void reason.
 Invoice reads are not audited (they are not clinical records).
 
-The SRS `balance_due`, payments and receipts arrive with B-17 and B-18.
+**Payment state** (B-17): `amountPaid` is the payments minus refunds, `balanceDue` is `total − amountPaid`, and
+`paymentStatus` is `Unpaid` (nothing paid), `PartiallyPaid` or `Paid` (balance 0; also an invoice with a zero total).
+Drafts and void invoices have `amountPaid` 0 and `paymentStatus` `null`. Receipts arrive with B-18.
+
+### 10.4 Payments and refunds
+Implemented in B-17 (ADR-017). Payments are recorded against **issued** invoices. Nothing here is ever edited,
+voided or deleted: money given back, or a payment recorded by mistake, is a **refund** against that payment. The
+database enforces the same rules.
+
+    {
+      "id": "uuid", "amount": 20, "method": "Cash" | "Card" | "BankTransfer" | "Cheque" | "Other",
+      "reference": "Slip 0042" | null, "paidAt": "...", "receivedBy": { "id", "name" } | null,
+      "refundedAmount": 0,
+      "refunds": [ { "id": "uuid", "amount": 5, "method": "Cash", "reason": "...", "refundedAt": "...",
+                     "refundedBy": { "id", "name" } | null } ],
+      "invoice": { "id": "uuid", "total": 54, "amountPaid": 20, "balanceDue": 34, "paymentStatus": "PartiallyPaid" },
+      "createdAt": "..."
+    }
+
+`paidAt` and `refundedAt` carry the clinic's offset; `createdAt` is UTC. `invoice` is the invoice's payment state
+after the change (in `GET`, its current state), so the screen need not reload it. Refunds are oldest first.
+
+- `GET /api/invoices/:id/payments` (`billing.read`): the invoice's payments, oldest `paidAt` first, each with its
+  refunds (a plain array; at most 100 payments per invoice). Unknown or another clinic's invoice `404`.
+- `POST /api/invoices/:id/payments` (`payments.record`: Admin, Receptionist):
+  `{ "amount": 20, "method": "Cash", "reference": "...", "paidAt": "..." }`.
+  - `amount` (required): above 0, in the currency's minor units, and **at most the balance due**; an overpayment is
+    `422` (for cash, the frontend works out the change and records only the amount applied).
+  - `method` (required): an exact method name (anything else `400`).
+  - `reference` (optional, max 100 as sent, trimmed; blank is stored as `null`): a terminal slip, authorisation or
+    cheque number. **A card number anywhere in it is refused** (`422`): 13 to 19 digits, in one group or in
+    consecutive groups joined by single spaces, dashes, dots or slashes, passing the Luhn check.
+  - `paidAt` (optional, with an explicit offset): defaults to now; may be earlier, but not in the future and not
+    before the invoice was issued (`422`).
+  - A draft or void invoice is `409`; more than 100 payments on one invoice `409`.
+  - `201` with the payment (no `Location`: there is no single-payment `GET`).
+- `POST /api/invoices/:id/payments/:paymentId/refunds` (`payments.refund`: Admin only):
+  `{ "amount": 5, "method": "Cash", "reason": "..." }`. `amount` above 0 in minor units and at most what remains of the
+  payment (`422`); `method` as for payments (`400` for anything else); `reason` required (max 500, trimmed) and, like a
+  reference, never a card number (`422`); a fully refunded payment is `409`; at most 20 refunds per payment (`409`).
+  Dated now. A void invoice's payments are all refunded, so a refund there is `409`. `201` with the whole payment.
+  Another clinic's invoice, or a payment of another invoice, is `404`.
+- Concurrent payments and refunds on one invoice are applied one after the other under the invoice's row lock, so
+  the balance is always exact and never negative (tested: of six simultaneous payments that together exceed the
+  balance, only those that fit succeed).
+- Order of checks: permission (`403`), malformed body or enum (`400`), missing or too long fields (`422`), unknown
+  invoice or payment (`404`), the invoice's or payment's state and the caps (`409`), then the value rules (`422`,
+  reported together).
+- Audited (`payment.recorded`, `payment.refunded`) with ids, amount, method and currency; never the reference or
+  the reason.
 
 ## 11. Inventory
 `GET /api/products`

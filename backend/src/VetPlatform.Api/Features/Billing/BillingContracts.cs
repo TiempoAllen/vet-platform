@@ -82,6 +82,9 @@ public sealed record InvoiceResponse(
     decimal DiscountTotal,
     decimal TaxTotal,
     decimal Total,
+    decimal AmountPaid,
+    decimal BalanceDue,
+    PaymentStatus? PaymentStatus,
     DateTimeOffset? IssuedAt,
     DateOnly? DueOn,
     AppointmentPersonSummary? IssuedBy,
@@ -101,7 +104,7 @@ public sealed record InvoiceResponse(
             i.Currency, i.Notes,
             i.Items.OrderBy(item => item.Position).Select(InvoiceItemResponse.From).ToList(),
             Currencies.Shortest(i.Subtotal), Currencies.Shortest(i.DiscountTotal), Currencies.Shortest(i.TaxTotal),
-            Currencies.Shortest(i.Total),
+            Currencies.Shortest(i.Total), Currencies.Shortest(i.AmountPaid), Currencies.Shortest(i.BalanceDue), i.PaymentStatus,
             Local(i.IssuedAt, zone), i.DueOn, Person(i.IssuedBy), Local(i.VoidedAt, zone), Person(i.VoidedBy), i.VoidReason,
             Person(i.CreatedBy), i.CreatedAt, i.UpdatedAt);
 
@@ -160,13 +163,28 @@ public sealed class InvoiceListQuery : PageQuery, IValidatableObject
 
     public Guid? PatientId { get; init; }
 
+    /// <summary>Unpaid, PartiallyPaid or Paid; only issued invoices have one.</summary>
+    public string? PaymentStatus { get; init; }
+
+    /// <summary>true: issued invoices with a balance left whose due date (clinic-local) has passed.</summary>
+    public bool? Overdue { get; init; }
+
     public InvoiceStatus? ParsedStatus => StrictEnum.TryParse<InvoiceStatus>(Status, out var status) ? status : null;
+
+    public PaymentStatus? ParsedPaymentStatus =>
+        StrictEnum.TryParse<PaymentStatus>(PaymentStatus, out var status) ? status : null;
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         if (Status is not null && ParsedStatus is null)
         {
             yield return new ValidationResult($"Status must be one of {StrictEnum.Names<InvoiceStatus>()}.", [nameof(Status)]);
+        }
+
+        if (PaymentStatus is not null && ParsedPaymentStatus is null)
+        {
+            yield return new ValidationResult(
+                $"PaymentStatus must be one of {StrictEnum.Names<PaymentStatus>()}.", [nameof(PaymentStatus)]);
         }
     }
 }
