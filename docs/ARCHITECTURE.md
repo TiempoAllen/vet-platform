@@ -653,8 +653,14 @@ Choose the simplest solution that satisfies documented requirements, security, m
   invoice whose total disagrees with its lines. CHECKs keep each line and each invoice arithmetically consistent and
   the lifecycle fields tied to the status.
 - **Parties:** the client must be active when the invoice is created or changed; the patient (optional) must currently
-  belong to the client, in any status (final bills for deceased animals are normal). Changing the patient while lines
-  bill its consultations is refused.
+  belong to the client, in any status (final bills for deceased animals are normal), and still does when the invoice
+  is issued (a transfer in between is a `409`). Changing the patient while lines bill its consultations is refused.
+- **Found in the B-16 review:** amounts are capped at 1,000,000,000,000 per line total and per invoice total (`422`
+  in the service, CHECKs in the database), because the per-field limits multiplied by 200 lines and a 100% rate
+  could overflow `numeric(19,4)` into a `500`; a billed consultation is checked with the shared `ConsultationLinks`
+  rule (locked `FOR SHARE`) and by the line trigger (non-discarded, same patient); issuing compares the stored amounts
+  with a recomputation and refuses (`409`) instead of rewriting them inside the issue; `tax_rates_guard` makes a
+  rate's percentage immutable and rates undeletable in the database too.
 - **History:** `InvoiceIssued` is a separate permission-gated source (`billing.read`), like clinical sources
   (ADR-007); the history service takes a billing flag next to the clinical one.
 - **Audit:** every change, with ids, field names, numbers, totals and currency; never descriptions, notes or reasons.
@@ -663,4 +669,6 @@ Choose the simplest solution that satisfies documented requirements, security, m
   notes (a void plus a new invoice corrects an error); due dates are entered, not computed from payment terms; the
   clinic currency cannot be corrected once invoices exist (RUNBOOK 4.1 asks to confirm it); tax-rate names are unique
   only among active rates; the client and patient names shown are current, not historical (a printed invoice for
-  legal use may need a snapshot of the billing address, a B-18 receipts topic).
+  legal use may need a snapshot of the billing address, a B-18 receipts topic); the database checks that each line
+  and invoice add up and that issuing matches the lines, but not that a line's net equals its quantity × unit price
+  (the rounding scale depends on the currency), so only the service guarantees how a line was priced.

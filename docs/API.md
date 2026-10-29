@@ -233,7 +233,7 @@ Implemented in B-08; the currency in B-16 (the other clinic settings follow in B
 `PATCH /api/clinic` (`settings.manage`): `{ "timeZone": "Europe/London", "currency": "EUR" }` (either or both).
 - `currency` is an upper-case ISO 4217 code (`422` otherwise, field `currency`). It is `null` until an administrator
   sets it, and invoices cannot be created before. It can change only while the clinic has **no invoice** (`409`),
-  because invoices copy it.
+  because invoices copy it. `GET /api/auth/me` does not carry the currency; read it here.
 - `timeZone` is an IANA id. Windows ids ("GMT Standard Time") and unknown ids are `422` (field `timeZone`).
 - New clinics get the zone from `create-admin --timezone` (default `UTC`); clinics created before B-08 start as `UTC`.
 - Weekly working hours are local wall-clock times, so changing the zone shifts every future working period with it.
@@ -431,7 +431,8 @@ consultation, vaccination, note and attachment ids shown).
 For appointment entries `id` is the appointment's id and `actor` is the staff member who made the change. For
 `ConsultationCompleted`, `id` is the consultation's id and `actor` is the veterinarian who completed it. For
 `VaccinationGiven`, `id` is the vaccination's id and `actor` is the staff member who recorded it. For
-`ClinicalNoteAdded` and `AttachmentAdded`, `actor` is the author or uploader. All history
+`ClinicalNoteAdded` and `AttachmentAdded`, `actor` is the author or uploader. For `InvoiceIssued`, `id` is the invoice's
+id and `actor` is the staff member who issued it. All history
 instants (`occurredAt` and those in `details`) are UTC, unlike the consultation and appointment objects, which use the
 clinic's local offset. Scheduled and checked-in appointments are not history (use `GET /api/appointments?patientId=`).
 
@@ -980,7 +981,8 @@ creates, edits, issues, voids and deletes drafts. Tax rates are managed with `se
 - `PATCH /api/tax-rates/:id` (`settings.manage`): `{ "name": "...", "status": "Archived" | "Active" }`. The percentage
   never changes: archive the rate and create a new one. Archived rates cannot be picked for new lines; lines that
   already use a rate keep a **copy** of its name and percentage, so renaming or archiving changes no invoice.
-  Restoring a rate whose name is now taken by another active rate is `409`.
+  Renaming or restoring a rate onto a name used by another active rate (ignoring case) is `409`. A blank name is
+  `422` before the rate is looked up.
 - Rates are never deleted. Changes are audited (`tax_rate.created`, `tax_rate.updated`).
 
 ### 10.3 Invoices
@@ -1018,19 +1020,24 @@ invoice is never edited or deleted, only voided (its number stays taken). The da
 | `POST /api/invoices/:id/items` | `billing.manage` | Adds a line (fields below); at most 200 lines (`409`). |
 | `PATCH /api/invoices/:id/items/:itemId` | `billing.manage` | Partial update; `consultationId: null` unlinks; a new `taxRateId` copies the new rate. |
 | `DELETE /api/invoices/:id/items/:itemId` | `billing.manage` | Removes a line. |
-| `POST /api/invoices/:id/issue` | `billing.manage` | Optional body `{ "dueOn": "YYYY-MM-DD" }` (default: the clinic-local issue day; earlier is `422`). Needs at least one line (`409`). |
+| `POST /api/invoices/:id/issue` | `billing.manage` | Optional body `{ "dueOn": "YYYY-MM-DD" }` (default: the clinic-local issue day; earlier, or after 2100-12-31, is `422`). Needs at least one line (`409`). |
 | `POST /api/invoices/:id/void` | `billing.manage` | `{ "reason": "..." }` (required, max 500, trimmed). Issued invoices only; a draft (delete it) or a void invoice is `409`. |
 
-Every change to a draft or its lines, or to a non-draft (`409`), returns the whole invoice with `200` and recomputes
-all amounts. Concurrent changes to one invoice are applied one after the other.
+Every successful change to a draft or its lines (and issue / void) returns the whole invoice with `200` and
+recomputes all amounts; changes to a non-draft are `409`. Concurrent changes to one invoice are applied one after the
+other.
 
 **Line fields:** `description` (required, max 500), `quantity` (above 0, at most 1,000,000, at most 3 decimals),
 `unitPrice` (0 or more, at most 1,000,000,000, at most 4 decimals, before tax), `taxRateId` (required; an active rate
 of the clinic), `discountType` (`None` by default, `Percent` or `Amount`) with `discountValue` (omit or `0` for
-`None`; a percentage above 0 and at most 100; an amount above 0 in the currency's minor units and **not more than the
-line's net**), `consultationId` (optional; a non-discarded consultation of the invoice's patient, so the invoice needs
-a patient). Invalid fields are `422`, all reported together; field validation (`422`) comes before the invoice's state
-(`409`).
+`None`; a percentage above 0 and at most 100 with at most 4 decimals; an amount above 0 in the currency's minor units
+and **not more than the line's net**), `consultationId` (optional; a non-discarded consultation of the invoice's patient, so the invoice needs
+a patient). Order of checks: missing or too long fields are `422` before the invoice is looked up; then unknown
+invoice or line `404`; then the invoice's state (`409` for a non-draft) and the 200-line cap (`409`); then the value
+rules (ranges, decimals, tax rate, consultation, `dueOn`), reported together in one `422`. A line total or invoice total
+above 1,000,000,000,000 (in the invoice currency) is `422`. Issuing is also `409` when the patient no longer belongs to
+the invoice's client (change one of them first) or when the stored amounts differ from a recomputation (edit a line to
+recompute).
 
 **Audit:** `invoice.created`, `.updated`, `.deleted`, `.item_added`, `.item_updated`, `.item_removed`, `.issued`,
 `.voided`, with ids, field names, numbers, totals and currency; never descriptions, notes or the void reason.

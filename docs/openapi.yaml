@@ -2136,7 +2136,7 @@ paths:
       tags: [Billing]
       operationId: updateTaxRate
       summary: Rename, archive or restore a tax rate
-      description: Requires `settings.manage`. Lines that already use the rate keep their copy. Restoring a rate whose name is taken by another active rate is 409. Audited.
+      description: Requires `settings.manage`. Lines that already use the rate keep their copy. Renaming or restoring onto a name used by another active rate (ignoring case) is 409. A blank name is 422 before the lookup. Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2277,7 +2277,7 @@ paths:
       tags: [Billing]
       operationId: addInvoiceItem
       summary: Add a line to a draft
-      description: Requires `billing.manage`. Drafts only (409). At most 200 lines (409). The server computes every amount. Audited.
+      description: Requires `billing.manage`. Drafts only (409). At most 200 lines (409). The server computes every amount; a line or invoice total above 1,000,000,000,000 is 422. Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2360,7 +2360,8 @@ paths:
       description: >
         Requires `billing.manage`. Assigns the clinic's next gapless number and freezes the invoice. Needs at least one
         line (409). The body is optional; dueOn defaults to the clinic-local issue day and may not be earlier (422).
-        Audited.
+        Also 409 when the patient no longer belongs to the invoice's client or the stored amounts differ from a
+        recomputation. Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -4066,7 +4067,7 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DiscountType'
             - type: 'null'
-        discountValue: { type: [number, 'null'], description: 'Percent: above 0 and at most 100. Amount: above 0, at most the net, in currency minor units. None: omit or 0.' }
+        discountValue: { type: [number, 'null'], description: 'Percent: above 0 and at most 100, at most 4 decimals. Amount: above 0, at most the net, in currency minor units. None: omit or 0.' }
         taxRateId: { type: string, format: uuid, description: An active rate of the clinic. }
         consultationId: { type: [string, 'null'], format: uuid, description: A non-discarded consultation of the invoice's patient. }
 
@@ -4088,7 +4089,7 @@ components:
     IssueInvoiceRequest:
       type: object
       properties:
-        dueOn: { type: [string, 'null'], format: date }
+        dueOn: { type: [string, 'null'], format: date, description: 'On or after the clinic-local issue day and no later than 2100-12-31.' }
 
     VoidInvoiceRequest:
       type: object

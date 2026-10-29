@@ -47,16 +47,17 @@ public sealed class TaxRateService(AppDbContext db, ITenantContext tenant, Audit
 
     public async Task<TaxRateResponse> UpdateAsync(Guid id, UpdateTaxRateRequest request, CancellationToken cancellationToken)
     {
+        // Body rules first, then the lookup, as elsewhere (422 before 404).
+        if (request.Name is { } blank && string.IsNullOrWhiteSpace(blank))
+        {
+            throw Invalid("name", "The name must not be blank.");
+        }
+
         var rate = await db.TaxRates.SingleOrDefaultAsync(t => t.Id == id, cancellationToken)
             ?? throw new ApiException(StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The tax rate was not found.");
         var changed = new List<string>();
         if (request.Name is { } name)
         {
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                throw Invalid("name", "The name must not be blank.");
-            }
-
             if (name.Trim() != rate.Name)
             {
                 rate.Name = name.Trim();

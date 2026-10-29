@@ -284,7 +284,8 @@ CHECK upper-case ISO 4217 pattern; validated against the ISO 4217 list by the se
 ### TaxRate
 Table `tax_rates`: id, clinic_id (FK clinics), name (max 100, CHECK not blank), rate_percent `numeric(7,4)` (CHECK 0 to
 100; never changed), status (`Active`, `Archived`; CHECK), created_at, updated_at. Unique (clinic_id, id) for item
-references; partial unique index `ux_tax_rates_active_name` on (clinic_id, lower(name)) where active. Never deleted.
+references; partial unique index `ux_tax_rates_active_name` on (clinic_id, lower(name)) where active. Trigger
+`tax_rates_guard`: no DELETE, no change of rate_percent (renaming and archiving are allowed); TRUNCATE refused.
 
 ### InvoiceNumberSequence
 Table `invoice_number_sequences`: clinic_id (PK, FK clinics), next_number (CHECK > 0). Created on first issue and
@@ -299,8 +300,9 @@ Table `invoices`. `due_at` / `balance_due` in the original list became `due_on` 
   an issued invoice has number, issued_at, due_on and issued_by_user_id; a void one also voided_at (≥ issued_at),
   voided_by_user_id and a non-blank void_reason (max 500)
 - currency (`char(3)`, CHECK pattern), notes (max 2000)
-- subtotal, discount_total, tax_total, total (`numeric(19,4)`): CHECK non-negative, discount_total ≤ subtotal and
-  total = subtotal − discount_total + tax_total
+- subtotal, discount_total, tax_total, total (`numeric(19,4)`): CHECK non-negative, discount_total ≤ subtotal,
+  total = subtotal − discount_total + tax_total and total ≤ 1,000,000,000,000 (keeps sums far from the column's 15
+  integer digits)
 - issued_at, due_on, issued_by_user_id, voided_at, voided_by_user_id, void_reason, created_by_user_id (composite FKs to
   users), created_at, updated_at
 
@@ -319,11 +321,13 @@ discount type and value plus computed amounts; `product_id` / `service_id` arriv
   ≤ 100 for Percent, above 0 for Amount)
 - tax_rate_id: composite FK to tax_rates (clinic_id, id); tax_rate_name and tax_rate_percent: copies (CHECK 0 to 100)
 - consultation_id (nullable): composite FK to consultations (clinic_id, id); the service requires the invoice's patient
-- net, discount, tax, total `numeric(19,4)`: CHECK non-negative, discount ≤ net and total = net − discount + tax
+- net, discount, tax, total `numeric(19,4)`: CHECK non-negative, discount ≤ net, total = net − discount + tax and
+  total ≤ 1,000,000,000,000
 - created_at, updated_at
 
 Trigger `invoice_items_follow_invoice`: any change only while the invoice is a draft (status read `FOR SHARE`, then
-tested); a line never moves to another invoice; TRUNCATE refused. Rolling back the migration refuses while issued or
+tested); a line never moves to another invoice; a billed consultation must be a non-discarded consultation of the
+invoice's patient (read `FOR SHARE`, then tested); TRUNCATE refused. Rolling back the migration refuses while issued or
 void invoices exist. Indexes: (clinic_id, invoice_id, position) unique, one per foreign key.
 
 ### Payment

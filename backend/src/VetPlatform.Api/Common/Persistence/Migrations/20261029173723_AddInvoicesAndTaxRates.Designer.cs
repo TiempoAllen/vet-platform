@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261029171909_AddInvoicesAndTaxRates")]
+    [Migration("20261029173723_AddInvoicesAndTaxRates")]
     partial class AddInvoicesAndTaxRates
     {
         /// <inheritdoc />
@@ -512,7 +512,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_invoices_status", "status IN ('Draft', 'Issued', 'Void')");
 
-                            t.HasCheckConstraint("ck_invoices_totals", "subtotal >= 0 AND discount_total >= 0 AND discount_total <= subtotal AND tax_total >= 0 AND total = subtotal - discount_total + tax_total");
+                            t.HasCheckConstraint("ck_invoices_totals", "subtotal >= 0 AND discount_total >= 0 AND discount_total <= subtotal AND tax_total >= 0 AND total = subtotal - discount_total + tax_total AND total <= 1000000000000");
                         });
                 });
 
@@ -624,7 +624,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.ToTable("invoice_items", null, t =>
                         {
-                            t.HasCheckConstraint("ck_invoice_items_amounts", "net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax");
+                            t.HasCheckConstraint("ck_invoice_items_amounts", "net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax AND total <= 1000000000000");
 
                             t.HasCheckConstraint("ck_invoice_items_description", "btrim(description) <> ''");
 

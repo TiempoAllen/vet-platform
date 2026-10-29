@@ -193,6 +193,7 @@ public sealed class InvoiceService(
             invoice.Items.Add(item);
             db.Add(item); // a preset key would otherwise make EF treat it as an existing row
             InvoiceCalculator.Apply(invoice);
+            CheckAmounts(invoice);
             return (object?)new { itemId = item.Id, total = invoice.Total };
         }, cancellationToken);
 
@@ -258,6 +259,7 @@ public sealed class InvoiceService(
             CheckLine(item, invoice.Currency, problems);
             ThrowIfAny(problems);
             InvoiceCalculator.Apply(invoice);
+            CheckAmounts(invoice);
             return changed.Count == 0 ? null : (object)new { itemId, fields = changed, total = invoice.Total };
         }, cancellationToken);
 
@@ -305,7 +307,21 @@ public sealed class InvoiceService(
                     $"UPDATE invoice_number_sequences SET next_number = next_number + 1 WHERE clinic_id = {invoice.ClinicId} RETURNING next_number - 1 AS \"Value\"")
                 .ToListAsync(cancellationToken)).Single();
 
-            InvoiceCalculator.Apply(invoice);
+            // The stored amounts must already be what the calculator gives: issuing never rewrites them.
+            var minorUnits = Currencies.MinorUnits(invoice.Currency);
+            if (invoice.Items.Any(i => InvoiceCalculator.Line(i.Quantity, i.UnitPrice, i.DiscountType, i.DiscountValue, i.TaxRatePercent, minorUnits)
+                    != new InvoiceCalculator.LineAmounts(i.Net, i.Discount, i.Tax, i.Total))
+                || invoice.Subtotal != invoice.Items.Sum(i => i.Net) || invoice.Total != invoice.Items.Sum(i => i.Total))
+            {
+                throw Conflict("The invoice's stored amounts do not match its lines; edit a line to recompute it, then issue.");
+            }
+
+            if (invoice.PatientId is { } patientId
+                && !await db.Patients.AnyAsync(p => p.Id == patientId && p.ClientId == invoice.ClientId, cancellationToken))
+            {
+                throw Conflict("The patient no longer belongs to the invoice's client; change the client or the patient first.");
+            }
+
             invoice.Status = InvoiceStatus.Issued;
             invoice.Number = number;
             invoice.IssuedAt = now;
@@ -395,11 +411,11 @@ public sealed class InvoiceService(
         return rate;
     }
 
+    /// <summary>The shared link rule (locks the consultation <c>FOR SHARE</c>, so a concurrent discard cannot slip in).</summary>
     private async Task CheckConsultationAsync(Invoice invoice, Guid consultationId, List<ApiErrorDetail> problems, CancellationToken cancellationToken)
     {
         if (invoice.PatientId is not { } patientId
-            || !await db.Consultations.AnyAsync(
-                c => c.Id == consultationId && c.PatientId == patientId && c.Status != ConsultationStatus.Discarded, cancellationToken))
+            || !await ConsultationLinks.IsLinkableAsync(db, consultationId, patientId, cancellationToken))
         {
             problems.Add(new ApiErrorDetail(
                 "consultationId", "The consultation was not found, is discarded, or is not of the invoice's patient."));
@@ -437,6 +453,14 @@ public sealed class InvoiceService(
             && item.DiscountValue > Currencies.Round(item.Quantity * item.UnitPrice, minorUnits))
         {
             problems.Add(new ApiErrorDetail("discountValue", "The discount cannot exceed the line's net amount."));
+        }
+    }
+
+    private static void CheckAmounts(Invoice invoice)
+    {
+        if (invoice.Total > Invoice.MaxAmount || invoice.Items.Any(i => i.Total > Invoice.MaxAmount))
+        {
+            ThrowIfAny([new ApiErrorDetail(null, $"A line or invoice total cannot exceed {Invoice.MaxAmount:N0} {invoice.Currency}.")]);
         }
     }
 

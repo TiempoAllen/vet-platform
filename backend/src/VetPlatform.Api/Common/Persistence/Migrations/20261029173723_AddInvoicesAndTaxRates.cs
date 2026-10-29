@@ -72,7 +72,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     table.CheckConstraint("ck_invoices_lifecycle", "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
                     table.CheckConstraint("ck_invoices_number", "number > 0");
                     table.CheckConstraint("ck_invoices_status", "status IN ('Draft', 'Issued', 'Void')");
-                    table.CheckConstraint("ck_invoices_totals", "subtotal >= 0 AND discount_total >= 0 AND discount_total <= subtotal AND tax_total >= 0 AND total = subtotal - discount_total + tax_total");
+                    table.CheckConstraint("ck_invoices_totals", "subtotal >= 0 AND discount_total >= 0 AND discount_total <= subtotal AND tax_total >= 0 AND total = subtotal - discount_total + tax_total AND total <= 1000000000000");
                     table.ForeignKey(
                         name: "fk_invoices_clients_clinic_id_client_id",
                         columns: x => new { x.clinic_id, x.client_id },
@@ -165,7 +165,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_invoice_items", x => x.id);
-                    table.CheckConstraint("ck_invoice_items_amounts", "net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax");
+                    table.CheckConstraint("ck_invoice_items_amounts", "net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax AND total <= 1000000000000");
                     table.CheckConstraint("ck_invoice_items_description", "btrim(description) <> ''");
                     table.CheckConstraint("ck_invoice_items_discount_type", "discount_type IN ('None', 'Percent', 'Amount')");
                     table.CheckConstraint("ck_invoice_items_discount_value", "CASE discount_type WHEN 'None' THEN discount_value = 0 WHEN 'Percent' THEN discount_value > 0 AND discount_value <= 100 WHEN 'Amount' THEN discount_value > 0 ELSE false END");
@@ -319,23 +319,56 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 CREATE FUNCTION invoice_items_follow_invoice() RETURNS trigger LANGUAGE plpgsql AS $$
                 DECLARE
                     parent_status text;
+                    parent_patient uuid;
+                    linked_patient uuid;
+                    linked_status text;
                 BEGIN
                     IF TG_OP = 'UPDATE' AND (NEW.invoice_id, NEW.clinic_id) IS DISTINCT FROM (OLD.invoice_id, OLD.clinic_id) THEN
                         RAISE EXCEPTION 'an invoice line cannot move to another invoice' USING ERRCODE = 'insufficient_privilege';
                     END IF;
-                    SELECT status INTO parent_status FROM invoices
+                    SELECT status, patient_id INTO parent_status, parent_patient FROM invoices
                     WHERE id = COALESCE(NEW.invoice_id, OLD.invoice_id) AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
                     FOR SHARE;
-                    IF parent_status IS NULL OR parent_status = 'Draft' THEN
-                        RETURN COALESCE(NEW, OLD); -- a missing parent is left to the foreign key
+                    IF parent_status IS NOT NULL AND parent_status <> 'Draft' THEN
+                        RAISE EXCEPTION 'lines of a % invoice cannot be changed', parent_status USING ERRCODE = 'insufficient_privilege';
                     END IF;
-                    RAISE EXCEPTION 'lines of a % invoice cannot be changed', parent_status USING ERRCODE = 'insufficient_privilege';
+                    -- A billed consultation must be a non-discarded one of the invoice's patient (locked, then tested).
+                    IF TG_OP <> 'DELETE' AND NEW.consultation_id IS NOT NULL
+                        AND (TG_OP = 'INSERT' OR NEW.consultation_id IS DISTINCT FROM OLD.consultation_id) THEN
+                        SELECT patient_id, status INTO linked_patient, linked_status FROM consultations
+                        WHERE id = NEW.consultation_id AND clinic_id = NEW.clinic_id
+                        FOR SHARE;
+                        IF linked_status = 'Discarded' OR linked_patient IS DISTINCT FROM parent_patient THEN
+                            RAISE EXCEPTION 'an invoice line can only bill a non-discarded consultation of the invoice''s patient'
+                                USING ERRCODE = 'insufficient_privilege';
+                        END IF;
+                    END IF;
+                    RETURN COALESCE(NEW, OLD); -- a missing parent is left to the foreign key
                 END;
                 $$;
 
                 CREATE TRIGGER invoice_items_follow_invoice
                     BEFORE INSERT OR UPDATE OR DELETE ON invoice_items
                     FOR EACH ROW EXECUTE FUNCTION invoice_items_follow_invoice();
+
+                -- A rate's percentage never changes and rates are never deleted (lines keep their own copy anyway).
+                CREATE FUNCTION tax_rates_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF TG_OP = 'UPDATE' AND (NEW.id, NEW.clinic_id, NEW.rate_percent) IS NOT DISTINCT FROM (OLD.id, OLD.clinic_id, OLD.rate_percent) THEN
+                        RETURN NEW;
+                    END IF;
+                    RAISE EXCEPTION 'tax rates are never deleted and their percentage never changes; archive and create a new one'
+                        USING ERRCODE = 'insufficient_privilege';
+                END;
+                $$;
+
+                CREATE TRIGGER tax_rates_guard
+                    BEFORE UPDATE OR DELETE ON tax_rates
+                    FOR EACH ROW EXECUTE FUNCTION tax_rates_guard();
+
+                CREATE TRIGGER tax_rates_no_truncate
+                    BEFORE TRUNCATE ON tax_rates
+                    FOR EACH STATEMENT EXECUTE FUNCTION clinical_items_reject_truncate();
 
                 CREATE TRIGGER invoices_no_truncate
                     BEFORE TRUNCATE ON invoices
@@ -369,6 +402,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 DROP TRIGGER IF EXISTS invoices_no_truncate ON invoices;
                 DROP FUNCTION IF EXISTS invoice_items_follow_invoice();
                 DROP FUNCTION IF EXISTS invoices_guard();
+                DROP TRIGGER IF EXISTS tax_rates_guard ON tax_rates;
+                DROP TRIGGER IF EXISTS tax_rates_no_truncate ON tax_rates;
+                DROP FUNCTION IF EXISTS tax_rates_guard();
                 """);
 
             migrationBuilder.DropTable(
