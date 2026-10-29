@@ -278,31 +278,57 @@ unique storage_key, one per user key. Rolling back refuses while notes or attach
 never touched by migrations.
 
 ## 7. Billing
+Implemented in B-16 (ADR-016): tax rates, invoices and their items. The clinic gained `currency` (`char(3)`, nullable,
+CHECK upper-case ISO 4217 pattern; validated against the ISO 4217 list by the service), copied by each invoice.
+
+### TaxRate
+Table `tax_rates`: id, clinic_id (FK clinics), name (max 100, CHECK not blank), rate_percent `numeric(7,4)` (CHECK 0 to
+100; never changed), status (`Active`, `Archived`; CHECK), created_at, updated_at. Unique (clinic_id, id) for item
+references; partial unique index `ux_tax_rates_active_name` on (clinic_id, lower(name)) where active. Trigger
+`tax_rates_guard`: no DELETE, no change of rate_percent (renaming and archiving are allowed); TRUNCATE refused.
+
+### InvoiceNumberSequence
+Table `invoice_number_sequences`: clinic_id (PK, FK clinics), next_number (CHECK > 0). Created on first issue and
+updated in the issuing transaction, so numbers are gapless and unique per clinic.
+
 ### Invoice
-- id
-- clinic_id
-- client_id
-- patient_id nullable
-- invoice_number
-- status
-- issued_at
-- due_at
-- subtotal
-- discount_total
-- tax_total
-- total
-- balance_due
+Table `invoices`. `due_at` / `balance_due` in the original list became `due_on` (a date) / B-17.
+- id, clinic_id (FK clinics); client_id: composite FK to clients (clinic_id, id); patient_id (nullable): composite FK to
+  patients; all RESTRICT
+- number (nullable; CHECK > 0; partial unique index `ux_invoices_clinic_number` on (clinic_id, number) where set)
+- status (`Draft`, `Issued`, `Void`; CHECK); CHECK `ck_invoices_lifecycle`: a draft has no number, issue or void fields;
+  an issued invoice has number, issued_at, due_on and issued_by_user_id; a void one also voided_at (≥ issued_at),
+  voided_by_user_id and a non-blank void_reason (max 500)
+- currency (`char(3)`, CHECK pattern), notes (max 2000)
+- subtotal, discount_total, tax_total, total (`numeric(19,4)`): CHECK non-negative, discount_total ≤ subtotal,
+  total = subtotal − discount_total + tax_total and total ≤ 1,000,000,000,000 (keeps sums far from the column's 15
+  integer digits)
+- issued_at, due_on, issued_by_user_id, voided_at, voided_by_user_id, void_reason, created_by_user_id (composite FKs to
+  users), created_at, updated_at
+
+Indexes: (clinic_id, client_id, created_at), (clinic_id, patient_id, created_at), (clinic_id, created_at), the number
+index, one per user key. Trigger `invoices_guard`: new rows are drafts; drafts change freely and may be deleted;
+Draft → Issued only with at least one line whose sums equal the stored totals; Issued → Void changing nothing but the
+status, the void fields and `updated_at` (whole-row comparison); nothing else, no DELETE of a non-draft, no TRUNCATE.
 
 ### InvoiceItem
-- id
-- invoice_id
-- description
-- quantity
-- unit_price
-- discount
-- tax
-- total
-- product_id/service_id nullable
+Table `invoice_items` (no DbSet; reached through the invoice). `discount` / `tax` in the original list became the
+discount type and value plus computed amounts; `product_id` / `service_id` arrive with B-19.
+- id, clinic_id; invoice_id: composite FK (clinic_id, invoice_id) → invoices (clinic_id, id)
+- position (CHECK > 0; unique per invoice), description (max 500, CHECK not blank)
+- quantity `numeric(12,3)` (CHECK > 0 and ≤ 1,000,000), unit_price `numeric(19,4)` (CHECK 0 to 1,000,000,000)
+- discount_type (`None`, `Percent`, `Amount`; CHECK) with discount_value `numeric(19,4)` (CHECK: 0 for None, above 0 and
+  ≤ 100 for Percent, above 0 for Amount)
+- tax_rate_id: composite FK to tax_rates (clinic_id, id); tax_rate_name and tax_rate_percent: copies (CHECK 0 to 100)
+- consultation_id (nullable): composite FK to consultations (clinic_id, id); the service requires the invoice's patient
+- net, discount, tax, total `numeric(19,4)`: CHECK non-negative, discount ≤ net, total = net − discount + tax and
+  total ≤ 1,000,000,000,000
+- created_at, updated_at
+
+Trigger `invoice_items_follow_invoice`: any change only while the invoice is a draft (status read `FOR SHARE`, then
+tested); a line never moves to another invoice; a billed consultation must be a non-discarded consultation of the
+invoice's patient (read `FOR SHARE`, then tested); TRUNCATE refused. Rolling back the migration refuses while issued or
+void invoices exist. Indexes: (clinic_id, invoice_id, position) unique, one per foreign key.
 
 ### Payment
 - id

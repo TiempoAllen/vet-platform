@@ -67,6 +67,10 @@ Check: `curl https://localhost:7096/api/health` returns `{"status":"Healthy"}`.
    `2` invalid arguments or password (12–1024 characters, not the email).
 4. Send the administrator the password through a separate channel and ask them to change it at first sign-in
    (`POST /api/auth/password`; the UI will offer this from F-03).
+5. Before the clinic invoices, the administrator sets the currency (`PATCH /api/clinic` with an ISO 4217 code; it is
+   fixed once the first invoice exists) and creates the tax rates (`POST /api/tax-rates`, e.g. a standard and a zero
+   rate). Confirm the currency with the clinic: a wrong one can only be fixed by hand in the database before any
+   invoice exists.
 
 ### 4.2 Apply database migrations (deployment step)
 

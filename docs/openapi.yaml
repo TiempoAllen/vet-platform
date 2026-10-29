@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.15.0
-  summary: Implemented endpoints as of milestone B-15.
+  version: 0.16.0
+  summary: Implemented endpoints as of milestone B-16.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (clinical,
@@ -35,6 +35,7 @@ tags:
   - name: Vaccinations
   - name: Attachments
   - name: ClinicalNotes
+  - name: Billing
   - name: Operations
 security:
   - sessionCookie: []
@@ -576,8 +577,10 @@ paths:
     patch:
       tags: [Clinic]
       operationId: updateClinic
-      summary: Change the clinic's time zone
-      description: Requires `settings.manage`. `timeZone` must be an IANA id (Windows ids are 422). Audited.
+      summary: Change the clinic's time zone or currency
+      description: >
+        Requires `settings.manage`. `timeZone` must be an IANA id (Windows ids are 422). `currency` must be an
+        upper-case ISO 4217 code (422 otherwise) and can change only while the clinic has no invoice (409). Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -596,6 +599,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/veterinarians:
@@ -2078,6 +2082,338 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/tax-rates:
+    get:
+      tags: [Billing]
+      operationId: listTaxRates
+      summary: The clinic's tax rates
+      description: Requires `billing.read` or `settings.manage`. Ordered by name. `status` filters (Active or Archived).
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TaxRateStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of tax rates.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxRatePage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Billing]
+      operationId: createTaxRate
+      summary: Create a tax rate
+      description: Requires `settings.manage`. The percentage is fixed once created. One active rate per name, ignoring case (409). No Location header (there is no single-rate GET). Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaxRateRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxRate' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/tax-rates/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Billing]
+      operationId: updateTaxRate
+      summary: Rename, archive or restore a tax rate
+      description: Requires `settings.manage`. Lines that already use the rate keep their copy. Renaming or restoring onto a name used by another active rate (ignoring case) is 409. A blank name is 422 before the lookup. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaxRateRequest' }
+      responses:
+        '200':
+          description: The tax rate.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxRate' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/invoices:
+    get:
+      tags: [Billing]
+      operationId: listInvoices
+      summary: Invoices
+      description: Requires `billing.read`. Newest first. Filters by exact status, client and patient.
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/InvoiceStatus' } }
+        - { name: clientId, in: query, schema: { type: string, format: uuid } }
+        - { name: patientId, in: query, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of invoices.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoicePage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Billing]
+      operationId: createInvoice
+      summary: Create a draft invoice
+      description: Requires `billing.manage`. The clinic currency must be set (409). Active client; optional patient currently owned by the client (422). Totals are computed by the server; any totals in the body are ignored. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInvoiceRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            Location:
+              schema: { type: string, format: uri-reference }
+              description: /api/invoices/{id}
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/invoices/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Billing]
+      operationId: getInvoice
+      summary: One invoice with its lines
+      description: Requires `billing.read`. Other clinics' invoices are 404.
+      responses:
+        '200':
+          description: The invoice.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Billing]
+      operationId: updateInvoice
+      summary: Edit a draft
+      description: Requires `billing.manage`. Drafts only (409 otherwise). Changing the patient while lines bill its consultations is 409. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInvoiceRequest' }
+      responses:
+        '200':
+          description: The whole invoice after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Billing]
+      operationId: deleteDraftInvoice
+      summary: Delete a draft
+      description: Requires `billing.manage`. Drafts only; an issued invoice is 409 (void it instead). Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/invoices/{id}/items:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Billing]
+      operationId: addInvoiceItem
+      summary: Add a line to a draft
+      description: Requires `billing.manage`. Drafts only (409). At most 200 lines (409). The server computes every amount; a line or invoice total above 1,000,000,000,000 is 422. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInvoiceItemRequest' }
+      responses:
+        '200':
+          description: The whole invoice after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/invoices/{id}/items/{itemId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Billing]
+      operationId: updateInvoiceItem
+      summary: Edit a draft's line
+      description: Requires `billing.manage`. Drafts only (409). An explicit null consultationId unlinks. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInvoiceItemRequest' }
+      responses:
+        '200':
+          description: The whole invoice after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Billing]
+      operationId: removeInvoiceItem
+      summary: Remove a draft's line
+      description: Requires `billing.manage`. Drafts only (409). Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The whole invoice after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/invoices/{id}/issue:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Billing]
+      operationId: issueInvoice
+      summary: Issue a draft
+      description: >
+        Requires `billing.manage`. Assigns the clinic's next gapless number and freezes the invoice. Needs at least one
+        line (409). The body is optional; dueOn defaults to the clinic-local issue day and may not be earlier (422).
+        Also 409 when the patient no longer belongs to the invoice's client or the stored amounts differ from a
+        recomputation. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueInvoiceRequest' }
+      responses:
+        '200':
+          description: The whole invoice after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/invoices/{id}/void:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Billing]
+      operationId: voidInvoice
+      summary: Void an issued invoice
+      description: Requires `billing.manage`. Issued only (a draft or a void invoice is 409). The number stays taken. The reason is never audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoidInvoiceRequest' }
+      responses:
+        '200':
+          description: The whole invoice after the change.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -2176,7 +2512,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -2480,12 +2816,13 @@ components:
         schemas (also in `x-known-types`): PatientRegistered → PatientRegisteredEntry; AppointmentCompleted and
         AppointmentNoShow → PatientAppointmentEntry; AppointmentCancelled → PatientAppointmentCancelledEntry;
         ConsultationCompleted → PatientConsultationEntry; VaccinationGiven → PatientVaccinationEntry; ClinicalNoteAdded →
-        PatientClinicalNoteEntry; AttachmentAdded → PatientAttachmentEntry (all four only for callers with clinical.read).
+        PatientClinicalNoteEntry; AttachmentAdded → PatientAttachmentEntry (all four only for callers with clinical.read); InvoiceIssued → PatientInvoiceEntry (only for
+        callers with billing.read).
       properties:
         id: { type: string, format: uuid, description: Id of the source record; unique per type. }
         type:
           type: string
-          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted, VaccinationGiven, ClinicalNoteAdded, AttachmentAdded. More types are added by later milestones.'
+          description: 'Known so far: PatientRegistered, AppointmentCompleted, AppointmentCancelled, AppointmentNoShow, ConsultationCompleted, VaccinationGiven, ClinicalNoteAdded, AttachmentAdded, InvoiceIssued. More types are added by later milestones.'
           examples: [PatientRegistered]
         occurredAt: { type: string, format: date-time }
         actor:
@@ -2505,6 +2842,7 @@ components:
         VaccinationGiven: '#/components/schemas/PatientVaccinationEntry'
         ClinicalNoteAdded: '#/components/schemas/PatientClinicalNoteEntry'
         AttachmentAdded: '#/components/schemas/PatientAttachmentEntry'
+        InvoiceIssued: '#/components/schemas/PatientInvoiceEntry'
 
     PatientRegisteredEntry:
       allOf:
@@ -2688,6 +3026,29 @@ components:
                     description: { type: [string, 'null'] }
                     consultationId: { type: [string, 'null'], format: uuid }
 
+    PatientInvoiceEntry:
+      allOf:
+        - $ref: '#/components/schemas/PatientHistoryEntry'
+        - type: object
+          description: An issued invoice for the patient (voided ones stay, with their status); occurredAt is the issue time, actor the issuer.
+          properties:
+            type: { const: InvoiceIssued }
+            details:
+              type: object
+              additionalProperties: false
+              required: [invoice]
+              properties:
+                invoice:
+                  type: object
+                  additionalProperties: false
+                  required: [id, number, total, currency, status]
+                  properties:
+                    id: { type: string, format: uuid }
+                    number: { type: integer }
+                    total: { type: number }
+                    currency: { type: string, pattern: '^[A-Z]{3}$' }
+                    status: { type: string, enum: [Issued, Void], description: As it is now. }
+
     PatientRegisteredDetails:
       type: object
       additionalProperties: false
@@ -2711,16 +3072,18 @@ components:
     Clinic:
       type: object
       additionalProperties: false
-      required: [id, name, timeZone]
+      required: [id, name, timeZone, currency]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         timeZone: { type: string, description: IANA time zone id. }
+        currency: { type: [string, 'null'], pattern: '^[A-Z]{3}$', description: 'ISO 4217 code; null until an administrator sets it (invoices need it).' }
 
     UpdateClinicRequest:
       type: object
       properties:
         timeZone: { type: [string, 'null'], maxLength: 64, description: 'IANA id, e.g. Europe/London.' }
+        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice.' }
 
     DayOfWeek:
       type: string
@@ -3534,6 +3897,205 @@ components:
       properties:
         text: { type: string, minLength: 1, maxLength: 4000 }
         consultationId: { type: [string, 'null'], format: uuid }
+
+    TaxRateStatus:
+      type: string
+      enum: [Active, Archived]
+
+    TaxRate:
+      type: object
+      additionalProperties: false
+      required: [id, name, ratePercent, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 100 }
+        ratePercent: { type: number, minimum: 0, maximum: 100, description: At most 4 decimals; never changes. }
+        status: { $ref: '#/components/schemas/TaxRateStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    TaxRatePage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/TaxRate' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateTaxRateRequest:
+      type: object
+      required: [name, ratePercent]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        ratePercent: { type: number, minimum: 0, maximum: 100, description: At most 4 decimals. }
+
+    UpdateTaxRateRequest:
+      type: object
+      properties:
+        name: { type: [string, 'null'], minLength: 1, maxLength: 100 }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/TaxRateStatus'
+            - type: 'null'
+
+    InvoiceStatus:
+      type: string
+      enum: [Draft, Issued, Void]
+
+    DiscountType:
+      type: string
+      enum: [None, Percent, Amount]
+
+    InvoiceItem:
+      type: object
+      additionalProperties: false
+      required: [id, position, description, quantity, unitPrice, discountType, discountValue, taxRate, consultationId, net, discount, tax, total]
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer, minimum: 1 }
+        description: { type: string, maxLength: 500 }
+        quantity: { type: number, exclusiveMinimum: 0, maximum: 1000000, description: At most 3 decimals. }
+        unitPrice: { type: number, minimum: 0, maximum: 1000000000, description: Before tax and discount; at most 4 decimals. }
+        discountType: { $ref: '#/components/schemas/DiscountType' }
+        discountValue: { type: number, description: 'A percentage (Percent) or an amount in the invoice currency (Amount); 0 for None.' }
+        taxRate:
+          type: object
+          additionalProperties: false
+          required: [id, name, percent]
+          description: A copy of the rate when the line was written.
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            percent: { type: number }
+        consultationId: { type: [string, 'null'], format: uuid }
+        net: { type: number, description: 'quantity × unitPrice, rounded to the currency.' }
+        discount: { type: number }
+        tax: { type: number, description: '(net − discount) × percent / 100, rounded.' }
+        total: { type: number, description: net − discount + tax. }
+
+    Invoice:
+      type: object
+      additionalProperties: false
+      required: [id, number, status, client, patient, currency, notes, items, subtotal, discountTotal, taxTotal, total, issuedAt, dueOn, issuedBy, voidedAt, voidedBy, voidReason, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: [integer, 'null'], description: Gapless per clinic; null for drafts. }
+        status: { $ref: '#/components/schemas/InvoiceStatus' }
+        client:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, firstName, lastName]
+              properties:
+                id: { type: string, format: uuid }
+                firstName: { type: string }
+                lastName: { type: string }
+            - type: 'null'
+        patient:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, name, species]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                species: { $ref: '#/components/schemas/Species' }
+            - type: 'null'
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        items:
+          type: array
+          description: By position.
+          items: { $ref: '#/components/schemas/InvoiceItem' }
+        subtotal: { type: number, description: Sum of the lines' net. }
+        discountTotal: { type: number }
+        taxTotal: { type: number }
+        total: { type: number, description: subtotal − discountTotal + taxTotal. }
+        issuedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        dueOn: { type: [string, 'null'], format: date }
+        issuedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        voidedAt: { type: [string, 'null'], format: date-time, description: With the clinic's local offset. }
+        voidedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        voidReason: { type: [string, 'null'], maxLength: 500 }
+        createdBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    InvoicePage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Invoice' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateInvoiceRequest:
+      type: object
+      required: [clientId]
+      properties:
+        clientId: { type: string, format: uuid }
+        patientId: { type: [string, 'null'], format: uuid }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    UpdateInvoiceRequest:
+      type: object
+      description: Omitted fields are unchanged; patientId null removes the patient; an empty string clears notes.
+      properties:
+        clientId: { type: [string, 'null'], format: uuid }
+        patientId: { type: [string, 'null'], format: uuid }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    CreateInvoiceItemRequest:
+      type: object
+      required: [description, quantity, unitPrice, taxRateId]
+      properties:
+        description: { type: string, minLength: 1, maxLength: 500 }
+        quantity: { type: number, exclusiveMinimum: 0, maximum: 1000000 }
+        unitPrice: { type: number, minimum: 0, maximum: 1000000000 }
+        discountType:
+          oneOf:
+            - $ref: '#/components/schemas/DiscountType'
+            - type: 'null'
+        discountValue: { type: [number, 'null'], description: 'Percent: above 0 and at most 100, at most 4 decimals. Amount: above 0, at most the net, in currency minor units. None: omit or 0.' }
+        taxRateId: { type: string, format: uuid, description: An active rate of the clinic. }
+        consultationId: { type: [string, 'null'], format: uuid, description: A non-discarded consultation of the invoice's patient. }
+
+    UpdateInvoiceItemRequest:
+      type: object
+      description: Omitted or null fields are unchanged; an explicit null consultationId unlinks.
+      properties:
+        description: { type: [string, 'null'], minLength: 1, maxLength: 500 }
+        quantity: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 1000000 }
+        unitPrice: { type: [number, 'null'], minimum: 0, maximum: 1000000000 }
+        discountType:
+          oneOf:
+            - $ref: '#/components/schemas/DiscountType'
+            - type: 'null'
+        discountValue: { type: [number, 'null'] }
+        taxRateId: { type: [string, 'null'], format: uuid }
+        consultationId: { type: [string, 'null'], format: uuid }
+
+    IssueInvoiceRequest:
+      type: object
+      properties:
+        dueOn: { type: [string, 'null'], format: date, description: 'On or after the clinic-local issue day and no later than 2100-12-31.' }
+
+    VoidInvoiceRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
 
     Health:
       type: object

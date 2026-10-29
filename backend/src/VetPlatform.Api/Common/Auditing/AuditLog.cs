@@ -93,6 +93,16 @@ public static class AuditActions
     public const string ClinicalNoteAdded = "clinical_note.added";
     public const string AttachmentUploaded = "attachment.uploaded";
     public const string AttachmentWithdrawn = "attachment.withdrawn";
+    public const string TaxRateCreated = "tax_rate.created";
+    public const string TaxRateUpdated = "tax_rate.updated";
+    public const string InvoiceCreated = "invoice.created";
+    public const string InvoiceUpdated = "invoice.updated";
+    public const string InvoiceDeleted = "invoice.deleted";
+    public const string InvoiceItemAdded = "invoice.item_added";
+    public const string InvoiceItemUpdated = "invoice.item_updated";
+    public const string InvoiceItemRemoved = "invoice.item_removed";
+    public const string InvoiceIssued = "invoice.issued";
+    public const string InvoiceVoided = "invoice.voided";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";
