@@ -372,6 +372,344 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Invoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency")
+                        .IsFixedLength();
+
+                    b.Property<decimal>("DiscountTotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("discount_total");
+
+                    b.Property<DateOnly?>("DueOn")
+                        .HasColumnType("date")
+                        .HasColumnName("due_on");
+
+                    b.Property<DateTimeOffset?>("IssuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("issued_at");
+
+                    b.Property<Guid?>("IssuedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("issued_by_user_id");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("notes");
+
+                    b.Property<int?>("Number")
+                        .HasColumnType("integer")
+                        .HasColumnName("number");
+
+                    b.Property<Guid?>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("subtotal");
+
+                    b.Property<decimal>("TaxTotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tax_total");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("total");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("VoidReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("void_reason");
+
+                    b.Property<DateTimeOffset?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("voided_at");
+
+                    b.Property<Guid?>("VoidedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("voided_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_invoices");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_invoices_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "CreatedAt")
+                        .HasDatabaseName("ix_invoices_clinic_id_created_at");
+
+                    b.HasIndex("ClinicId", "CreatedByUserId")
+                        .HasDatabaseName("ix_invoices_clinic_id_created_by_user_id");
+
+                    b.HasIndex("ClinicId", "IssuedByUserId")
+                        .HasDatabaseName("ix_invoices_clinic_id_issued_by_user_id");
+
+                    b.HasIndex("ClinicId", "Number")
+                        .IsUnique()
+                        .HasDatabaseName("ux_invoices_clinic_number")
+                        .HasFilter("number IS NOT NULL");
+
+                    b.HasIndex("ClinicId", "VoidedByUserId")
+                        .HasDatabaseName("ix_invoices_clinic_id_voided_by_user_id");
+
+                    b.HasIndex("ClinicId", "ClientId", "CreatedAt")
+                        .HasDatabaseName("ix_invoices_clinic_id_client_id_created_at");
+
+                    b.HasIndex("ClinicId", "PatientId", "CreatedAt")
+                        .HasDatabaseName("ix_invoices_clinic_id_patient_id_created_at");
+
+                    b.ToTable("invoices", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_invoices_currency", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("ck_invoices_lifecycle", "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
+
+                            t.HasCheckConstraint("ck_invoices_number", "number > 0");
+
+                            t.HasCheckConstraint("ck_invoices_status", "status IN ('Draft', 'Issued', 'Void')");
+
+                            t.HasCheckConstraint("ck_invoices_totals", "subtotal >= 0 AND discount_total >= 0 AND discount_total <= subtotal AND tax_total >= 0 AND total = subtotal - discount_total + tax_total");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.InvoiceItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<Guid?>("ConsultationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("consultation_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("description");
+
+                    b.Property<decimal>("Discount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("discount");
+
+                    b.Property<string>("DiscountType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("discount_type");
+
+                    b.Property<decimal>("DiscountValue")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("discount_value");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invoice_id");
+
+                    b.Property<decimal>("Net")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("net");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(12, 3)
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("quantity");
+
+                    b.Property<decimal>("Tax")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("tax");
+
+                    b.Property<Guid>("TaxRateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tax_rate_id");
+
+                    b.Property<string>("TaxRateName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("tax_rate_name");
+
+                    b.Property<decimal>("TaxRatePercent")
+                        .HasPrecision(7, 4)
+                        .HasColumnType("numeric(7,4)")
+                        .HasColumnName("tax_rate_percent");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("total");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("unit_price");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_invoice_items");
+
+                    b.HasIndex("ClinicId", "ConsultationId")
+                        .HasDatabaseName("ix_invoice_items_clinic_id_consultation_id");
+
+                    b.HasIndex("ClinicId", "TaxRateId")
+                        .HasDatabaseName("ix_invoice_items_clinic_id_tax_rate_id");
+
+                    b.HasIndex("ClinicId", "InvoiceId", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("ix_invoice_items_clinic_id_invoice_id_position");
+
+                    b.ToTable("invoice_items", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_invoice_items_amounts", "net >= 0 AND discount >= 0 AND discount <= net AND tax >= 0 AND total = net - discount + tax");
+
+                            t.HasCheckConstraint("ck_invoice_items_description", "btrim(description) <> ''");
+
+                            t.HasCheckConstraint("ck_invoice_items_discount_type", "discount_type IN ('None', 'Percent', 'Amount')");
+
+                            t.HasCheckConstraint("ck_invoice_items_discount_value", "CASE discount_type WHEN 'None' THEN discount_value = 0 WHEN 'Percent' THEN discount_value > 0 AND discount_value <= 100 WHEN 'Amount' THEN discount_value > 0 ELSE false END");
+
+                            t.HasCheckConstraint("ck_invoice_items_position", "position > 0");
+
+                            t.HasCheckConstraint("ck_invoice_items_quantity", "quantity > 0 AND quantity <= 1000000");
+
+                            t.HasCheckConstraint("ck_invoice_items_tax_rate_percent", "tax_rate_percent BETWEEN 0 AND 100");
+
+                            t.HasCheckConstraint("ck_invoice_items_unit_price", "unit_price >= 0 AND unit_price <= 1000000000");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.InvoiceNumberSequence", b =>
+                {
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<int>("NextNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("next_number");
+
+                    b.HasKey("ClinicId")
+                        .HasName("pk_invoice_number_sequences");
+
+                    b.ToTable("invoice_number_sequences", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_invoice_number_sequences_next_number", "next_number > 0");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.TaxRate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("name");
+
+                    b.Property<decimal>("RatePercent")
+                        .HasPrecision(7, 4)
+                        .HasColumnType("numeric(7,4)")
+                        .HasColumnName("rate_percent");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_tax_rates");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_tax_rates_clinic_id_id");
+
+                    b.ToTable("tax_rates", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_tax_rates_name", "btrim(name) <> ''");
+
+                            t.HasCheckConstraint("ck_tax_rates_rate_percent", "rate_percent BETWEEN 0 AND 100");
+
+                            t.HasCheckConstraint("ck_tax_rates_status", "status IN ('Active', 'Archived')");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Clients.Client", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1069,6 +1407,12 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency")
+                        .IsFixedLength();
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1098,6 +1442,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.ToTable("clinics", null, t =>
                         {
+                            t.HasCheckConstraint("ck_clinics_currency", "currency ~ '^[A-Z]{3}$'");
+
                             t.HasCheckConstraint("ck_clinics_status", "status IN ('Active', 'Suspended')");
                         });
                 });
@@ -1760,6 +2106,115 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("WithdrawnBy");
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Invoice", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoices_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Clients.Client", "Client")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ClientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoices_clients_clinic_id_client_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "CreatedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invoices_users_clinic_id_created_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "IssuedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "IssuedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invoices_users_clinic_id_issued_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Patients.Patient", "Patient")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invoices_patients_clinic_id_patient_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "VoidedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "VoidedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invoices_users_clinic_id_voided_by_user_id");
+
+                    b.Navigation("Client");
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("IssuedBy");
+
+                    b.Navigation("Patient");
+
+                    b.Navigation("VoidedBy");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.InvoiceItem", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoice_items_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Consultation", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ConsultationId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invoice_items_consultations_clinic_id_consultation_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Billing.Invoice", null)
+                        .WithMany("Items")
+                        .HasForeignKey("ClinicId", "InvoiceId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoice_items_invoices_clinic_id_invoice_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Billing.TaxRate", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "TaxRateId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoice_items_tax_rates_clinic_id_tax_rate_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.InvoiceNumberSequence", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_invoice_number_sequences_clinics_clinic_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.TaxRate", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_tax_rates_clinics_clinic_id");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Clients.Client", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
@@ -2130,6 +2585,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("Veterinarian");
 
                     b.Navigation("VoidedBy");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Invoice", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Consultation", b =>

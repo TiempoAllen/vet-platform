@@ -625,3 +625,42 @@ Choose the simplest solution that satisfies documented requirements, security, m
   limiting on the upload routes, a quota, volume alerts); `Include Error Detail` must stay off in production
   connection strings so constraint errors never log row values (file names, descriptions); a frontend that shows
   content through blob URLs loses the API's CSP and must not render PDFs inline in its own origin.
+
+### ADR-016: Invoices, tax rates and money (decided in B-16)
+- **SRS Q-4 answered (confirmed with the user):** prices **exclude tax** and each line has its own rate; rates come from
+  a clinic **tax-rate table** managed by administrators (`settings.manage`), and a line copies the rate's name and
+  percentage, so later changes never alter an invoice; the clinic gets an **ISO 4217 currency** now (set with
+  `PATCH /api/clinic`, fixed once an invoice exists); each line's net, discount and tax are rounded **half away from
+  zero to the currency's minor units**, and the invoice totals are the sums of the lines.
+- **Confirmed with the user:** lifecycle Draft → Issued → Void (drafts editable, deletable and unnumbered; issuing
+  assigns a gapless number and freezes; an issued invoice is only voided, with a reason); permissions as proposed in the
+  SDD (`billing.read` Admin, Veterinarian, Receptionist; `billing.manage` Admin, Receptionist); per-line discounts as a
+  percentage or an amount (no invoice-level discount); free-text lines with an optional link to a consultation of the
+  invoice's patient until the product catalogue (B-19); an `InvoiceIssued` patient-history entry for `billing.read`
+  holders.
+- **Arithmetic** lives in one pure class, `InvoiceCalculator`, unit-tested apart from the database. An amount discount
+  above the line's net is refused (`422`), never clipped. `decimal` throughout; JSON amounts are decimals in their
+  shortest form. Minor units come from a built-in ISO 4217 table rather than the operating system's culture data,
+  which differs between platforms and is absent in invariant-globalization containers.
+- **Numbers:** a per-clinic `invoice_number_sequences` row is created on first issue and incremented with
+  `UPDATE ... RETURNING` inside the issuing transaction (lock order: invoice, then sequence), so numbers are unique and
+  gapless even under concurrent issues (tested), and deleted drafts never consume one. Numbers are plain integers; a
+  display prefix can be a B-26 setting.
+- **Currency lock:** changing the clinic currency locks the clinic row (`FOR NO KEY UPDATE`) and refuses when any
+  invoice exists; creating an invoice reads the clinic row `FOR SHARE`, so the two cannot interleave.
+- **Freeze in the database:** `invoices_guard` and `invoice_items_follow_invoice` (see DATABASE.md) mirror the service
+  rules; issuing is refused unless the stored totals equal the sums of the lines, so no code path can issue an
+  invoice whose total disagrees with its lines. CHECKs keep each line and each invoice arithmetically consistent and
+  the lifecycle fields tied to the status.
+- **Parties:** the client must be active when the invoice is created or changed; the patient (optional) must currently
+  belong to the client, in any status (final bills for deceased animals are normal). Changing the patient while lines
+  bill its consultations is refused.
+- **History:** `InvoiceIssued` is a separate permission-gated source (`billing.read`), like clinical sources
+  (ADR-007); the history service takes a billing flag next to the clinical one.
+- **Audit:** every change, with ids, field names, numbers, totals and currency; never descriptions, notes or reasons.
+  Invoice reads are not audited (billing is not a clinical record; SECURITY.md asks for audited changes).
+- **Accepted for now:** `balance_due` and payments wait for B-17 (an issued invoice shows its total only); no credit
+  notes (a void plus a new invoice corrects an error); due dates are entered, not computed from payment terms; the
+  clinic currency cannot be corrected once invoices exist (RUNBOOK 4.1 asks to confirm it); tax-rate names are unique
+  only among active rates; the client and patient names shown are current, not historical (a printed invoice for
+  legal use may need a snapshot of the billing address, a B-18 receipts topic).
