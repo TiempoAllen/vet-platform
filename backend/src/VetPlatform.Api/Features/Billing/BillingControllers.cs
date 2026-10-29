@@ -73,6 +73,35 @@ public sealed class InvoicesController(InvoiceService invoices) : ControllerBase
         invoices.VoidAsync(id, request, cancellationToken);
 }
 
+/// <summary>
+/// Payments and refunds (B-17, ADR-017): read with <c>billing.read</c>; recorded with <c>payments.record</c> (Admin,
+/// Receptionist); refunded with <c>payments.refund</c> (Admin). Nothing is edited or deleted.
+/// </summary>
+[ApiController]
+public sealed class PaymentsController(PaymentService payments) : ControllerBase
+{
+    [HttpGet("api/invoices/{id:guid}/payments")]
+    [RequirePermission(Permissions.BillingRead)]
+    public Task<IReadOnlyList<PaymentResponse>> List(Guid id, CancellationToken cancellationToken) =>
+        payments.ListAsync(id, cancellationToken);
+
+    /// <summary>No single-payment GET exists (the list is short and part of the invoice screen), so no Location header.</summary>
+    [HttpPost("api/invoices/{id:guid}/payments")]
+    [RequirePermission(Permissions.PaymentsRecord)]
+    public async Task<ActionResult<PaymentResponse>> Record(Guid id, RecordPaymentRequest request, CancellationToken cancellationToken) =>
+        StatusCode(StatusCodes.Status201Created, await payments.RecordAsync(id, request, cancellationToken));
+
+    /// <summary>Returns the payment with all its refunds (201: a refund was created).</summary>
+    [HttpPost("api/invoices/{id:guid}/payments/{paymentId:guid}/refunds")]
+    [RequirePermission(Permissions.PaymentsRefund)]
+    public async Task<ActionResult<PaymentResponse>> Refund(
+        Guid id,
+        Guid paymentId,
+        RefundPaymentRequest request,
+        CancellationToken cancellationToken) =>
+        StatusCode(StatusCodes.Status201Created, await payments.RefundAsync(id, paymentId, request, cancellationToken));
+}
+
 /// <summary>Tax rates: readable by billing staff and administrators; managed with <c>settings.manage</c> (Admin).</summary>
 [ApiController]
 public sealed class TaxRatesController(TaxRateService taxRates) : ControllerBase

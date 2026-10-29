@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.12, 2026-10-30, updated for B-16.
+Veterinary Management Platform. Version 1.13, 2026-10-30, updated for B-17.
 
 ## 1. Introduction
 
@@ -162,10 +162,10 @@ A user may hold several roles; their permissions are the union.
 | ID | Requirement | Status |
 |---|---|---|
 | FR-BIL-1 | Invoices with line items (services/products) can be created for a client and optionally a patient; invoice numbers are unique per clinic. | Done (B-16; gapless numbers assigned on issue; products linked from B-19) |
-| FR-BIL-2 | Subtotal, discounts, tax, total and balance due are calculated by the server, using clinic tax configuration; client-supplied totals are ignored. | Partly done (B-16: subtotal, discounts, tax and total from the clinic tax-rate table; balance due with payments in B-17) |
-| FR-BIL-3 | Payments (amount, method, reference) can be recorded against an invoice; the balance updates atomically; overpayment rules are defined in B-17. | Planned (B-17) |
+| FR-BIL-2 | Subtotal, discounts, tax, total and balance due are calculated by the server, using clinic tax configuration; client-supplied totals are ignored. | Done (B-16: subtotal, discounts, tax and total from the clinic tax-rate table; B-17: amount paid and balance due) |
+| FR-BIL-3 | Payments (amount, method, reference) can be recorded against an invoice; the balance updates atomically; overpayment rules are defined in B-17. | Done (B-17; overpayment refused, refunds against payments, card numbers refused as references) |
 | FR-BIL-4 | Receipts can be produced; every invoice and payment change is audited. | Planned (B-18) |
-| FR-BIL-5 | Issued invoices and payments are never physically deleted; corrections use adjustments or voids. | Partly done (B-16: issued invoices are only voided, enforced by the database; payments in B-17) |
+| FR-BIL-5 | Issued invoices and payments are never physically deleted; corrections use adjustments or voids. | Done (B-16: issued invoices are only voided; B-17: payments and refunds are never changed or deleted; all enforced by the database) |
 
 ### 3.8 Inventory (FR-INV) — B-19..B-22, F-16..F-18
 | ID | Requirement | Status |

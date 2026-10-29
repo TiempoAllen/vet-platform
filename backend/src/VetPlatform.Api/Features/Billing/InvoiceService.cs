@@ -47,6 +47,20 @@ public sealed class InvoiceService(
             invoices = invoices.Where(i => i.PatientId == patientId);
         }
 
+        // Payment state, translated to SQL (the PaymentStatus property itself is computed in memory).
+        invoices = query.ParsedPaymentStatus switch
+        {
+            PaymentStatus.Unpaid => invoices.Where(i => i.Status == InvoiceStatus.Issued && i.AmountPaid == 0 && i.Total > 0),
+            PaymentStatus.PartiallyPaid => invoices.Where(i => i.Status == InvoiceStatus.Issued && i.AmountPaid > 0 && i.AmountPaid < i.Total),
+            PaymentStatus.Paid => invoices.Where(i => i.Status == InvoiceStatus.Issued && i.AmountPaid == i.Total),
+            _ => invoices,
+        };
+        if (query.Overdue == true)
+        {
+            var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), zone).DateTime);
+            invoices = invoices.Where(i => i.Status == InvoiceStatus.Issued && i.AmountPaid < i.Total && i.DueOn < today);
+        }
+
         return await invoices.OrderByDescending(i => i.CreatedAt).ThenByDescending(i => i.Id)
             .AsSplitQuery()
             .ToPageAsync(query, i => InvoiceResponse.From(i, zone), cancellationToken);
@@ -340,6 +354,11 @@ public sealed class InvoiceService(
                     throw Conflict("A draft is not voided; delete it instead.");
                 case InvoiceStatus.Void:
                     throw Conflict("The invoice is already void.");
+            }
+
+            if (invoice.AmountPaid != 0)
+            {
+                throw Conflict("The invoice still holds payments; refund them before voiding it.");
             }
 
             invoice.Status = InvoiceStatus.Void;

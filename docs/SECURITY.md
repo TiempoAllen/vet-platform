@@ -103,6 +103,11 @@ client-supplied totals exist in the contract); issued invoices are frozen and on
 other change, including issuing with totals that differ from the lines; every change is audited without descriptions,
 notes or reasons. Invoice numbers are gapless per clinic.
 
+Since B-17 (ADR-017): payments need `payments.record` (Admin, Receptionist) and refunds `payments.refund` (Admin only,
+as money leaves the clinic). Payments and refunds are never edited or deleted; overpayment is refused; a payment
+reference that looks like a card number (13 to 19 digits passing the Luhn check) is refused, so card data is never
+stored; references and refund reasons never reach the audit log.
+
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 

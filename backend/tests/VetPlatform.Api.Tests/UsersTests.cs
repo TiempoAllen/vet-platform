@@ -81,7 +81,7 @@ public sealed class UsersTests(DatabaseApiFactory factory) : IClassFixture<Datab
                 Permissions.AppointmentsManage, Permissions.AppointmentsRead, Permissions.BillingManage, Permissions.BillingRead,
                 Permissions.ClientsManage, Permissions.ClientsRead, Permissions.ClinicalRead, Permissions.ClinicalWrite,
                 Permissions.ConsultationsComplete, Permissions.PatientsManage, Permissions.PatientsRead,
-                Permissions.PrescriptionsIssue, Permissions.SchedulesManage, Permissions.SchedulesManageOwn, Permissions.SchedulesRead, Permissions.SettingsManage,
+                Permissions.PaymentsRecord, Permissions.PaymentsRefund, Permissions.PrescriptionsIssue, Permissions.SchedulesManage, Permissions.SchedulesManageOwn, Permissions.SchedulesRead, Permissions.SettingsManage,
                 Permissions.UsersManage, Permissions.UsersRead, Permissions.VaccinationsReadDue,
             ],
             me.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()));
