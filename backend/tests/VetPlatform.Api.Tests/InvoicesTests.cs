@@ -90,7 +90,7 @@ public sealed class InvoicesTests(DatabaseApiFactory factory) : IClassFixture<Da
         Assert.EndsWith($"/api/invoices/{id}", response.Headers.Location!.ToString());
         Assert.Equal(
             ["id", "number", "status", "client", "patient", "currency", "notes", "items", "subtotal", "discountTotal", "taxTotal",
-             "total", "issuedAt", "dueOn", "issuedBy", "voidedAt", "voidedBy", "voidReason", "createdBy", "createdAt", "updatedAt"],
+             "total", "amountPaid", "balanceDue", "paymentStatus", "issuedAt", "dueOn", "issuedBy", "voidedAt", "voidedBy", "voidReason", "createdBy", "createdAt", "updatedAt"],
             draft.EnumerateObject().Select(p => p.Name));
         Assert.Equal("Draft", draft.GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, draft.GetProperty("number").ValueKind);
@@ -362,7 +362,7 @@ public sealed class InvoicesTests(DatabaseApiFactory factory) : IClassFixture<Da
 
         var entry = Assert.Single(forDesk.GetProperty("data").EnumerateArray(), e => e.GetProperty("type").GetString() == "InvoiceIssued");
         var details = entry.GetProperty("details").GetProperty("invoice");
-        Assert.Equal(["id", "number", "total", "currency", "status"], details.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["id", "number", "total", "currency", "status", "paymentStatus", "balanceDue"], details.EnumerateObject().Select(p => p.Name));
         Assert.Equal(("Void", 54m), (details.GetProperty("status").GetString(), details.GetProperty("total").GetDecimal()));
         Assert.DoesNotContain(forNurse.GetProperty("data").EnumerateArray(), e => e.GetProperty("type").GetString() == "InvoiceIssued");
     }

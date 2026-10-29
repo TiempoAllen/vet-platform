@@ -62,13 +62,19 @@ public static class Permissions
     /// <summary>Create, edit, issue and void invoices (ADR-016).</summary>
     public const string BillingManage = "billing.manage";
 
+    /// <summary>Record payments against issued invoices (ADR-017).</summary>
+    public const string PaymentsRecord = "payments.record";
+
+    /// <summary>Refund payments: money leaves the clinic, so administrators only (ADR-017).</summary>
+    public const string PaymentsRefund = "payments.refund";
+
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
         {
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
             SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead, VaccinationsReadDue,
-            BillingRead, BillingManage,
+            BillingRead, BillingManage, PaymentsRecord, PaymentsRefund,
         }.ToFrozenSet(),
         [Role.Veterinarian] = new[]
         {
@@ -83,7 +89,7 @@ public static class Permissions
         [Role.Receptionist] = new[]
         {
             ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage,
-            VaccinationsReadDue, BillingRead, BillingManage,
+            VaccinationsReadDue, BillingRead, BillingManage, PaymentsRecord,
         }.ToFrozenSet(),
         [Role.Inventory] = FrozenSet<string>.Empty,
     }.ToFrozenDictionary();

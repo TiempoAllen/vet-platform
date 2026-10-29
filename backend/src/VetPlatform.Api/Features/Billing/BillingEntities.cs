@@ -89,6 +89,21 @@ public sealed class Invoice : Entity, IClinicOwned
 
     public decimal Total { get; set; }
 
+    /// <summary>
+    /// Payments minus refunds (B-17, ADR-017), kept by the server in the same transaction as each payment or refund;
+    /// the database checks it against the payment and refund rows.
+    /// </summary>
+    public decimal AmountPaid { get; set; }
+
+    public decimal BalanceDue => Total - AmountPaid;
+
+    /// <summary>Only issued invoices have one: drafts are not owed yet and void invoices never are.</summary>
+    public PaymentStatus? PaymentStatus =>
+        Status != InvoiceStatus.Issued ? null
+        : AmountPaid == 0 && Total > 0 ? Billing.PaymentStatus.Unpaid
+        : AmountPaid < Total ? Billing.PaymentStatus.PartiallyPaid
+        : Billing.PaymentStatus.Paid;
+
     public DateTimeOffset? IssuedAt { get; set; }
 
     /// <summary>The clinic-local day payment is due; set on issue (the issue day unless given).</summary>
@@ -229,6 +244,9 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
                 "AND void_reason IS NOT NULL AND btrim(void_reason) <> '' " +
                 "ELSE false END");
             table.HasCheckConstraint("ck_invoices_number", "number > 0");
+            // Only an issued invoice holds money; it is voided only after every payment is refunded (ADR-017).
+            table.HasCheckConstraint(
+                "ck_invoices_amount_paid", "amount_paid >= 0 AND amount_paid <= total AND (status = 'Issued' OR amount_paid = 0)");
             table.HasCheckConstraint("ck_invoices_currency", "currency ~ '^[A-Z]{3}$'");
             table.HasCheckConstraint(
                 "ck_invoices_totals",
@@ -243,6 +261,9 @@ internal sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
         builder.Property(i => i.DiscountTotal).HasPrecision(19, 4);
         builder.Property(i => i.TaxTotal).HasPrecision(19, 4);
         builder.Property(i => i.Total).HasPrecision(19, 4);
+        builder.Property(i => i.AmountPaid).HasPrecision(19, 4);
+        builder.Ignore(i => i.BalanceDue);
+        builder.Ignore(i => i.PaymentStatus);
 
         builder.HasOne(i => i.Client).WithMany()
             .HasForeignKey(i => new { i.ClinicId, i.ClientId })

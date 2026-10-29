@@ -331,15 +331,41 @@ invoice's patient (read `FOR SHARE`, then tested); TRUNCATE refused. Rolling bac
 void invoices exist. Indexes: (clinic_id, invoice_id, position) unique, one per foreign key.
 
 ### Payment
-- id
-- clinic_id
-- invoice_id
-- amount
-- method
-- status
-- reference
-- paid_at
-- received_by
+Implemented in B-17 (table `payments`, ADR-017). `status` in the original list was dropped: payments are never voided;
+refunds are their own rows. `received_by` became `received_by_user_id`.
+- id, clinic_id; invoice_id: composite FK (clinic_id, invoice_id) → invoices (clinic_id, id) RESTRICT
+- amount `numeric(19,4)` (CHECK > 0 and ≤ 1,000,000,000,000), method (`Cash`, `Card`, `BankTransfer`, `Cheque`, `Other`;
+  CHECK), reference (max 100, CHECK not blank; never a card number, checked by the service)
+- paid_at, received_by_user_id (composite FK to users), created_at, updated_at
+- unique (clinic_id, invoice_id, id) for refunds; indexes (clinic_id, invoice_id, paid_at), (clinic_id,
+  received_by_user_id)
+
+Trigger `payments_guard`: INSERT only while the invoice is issued (status read `FOR SHARE`, then tested); no UPDATE
+or DELETE; TRUNCATE refused.
+
+### Refund
+Table `refunds` (no DbSet; reached through the payment).
+- id, clinic_id; invoice_id, payment_id: composite FK (clinic_id, invoice_id, payment_id) → payments (clinic_id,
+  invoice_id, id), so a refund always names its payment's invoice
+- amount (CHECK > 0 and ≤ 1,000,000,000,000), method (CHECK as above), reason (max 500, CHECK not blank; never a card
+  number, checked by the service), refunded_at, refunded_by_user_id (composite FK to users), created_at, updated_at
+- indexes (clinic_id, invoice_id, payment_id), (clinic_id, refunded_by_user_id)
+
+Trigger `refunds_guard`: INSERT only while the payment's refunds stay within its amount (the payment row is locked
+`FOR NO KEY UPDATE`, so concurrent refunds of one payment queue and see each other); no UPDATE or DELETE; TRUNCATE
+refused.
+
+Deferred constraint triggers `payments_match_invoice` and `refunds_match_invoice` (`ledger_matches_invoice`): at
+commit, the invoice of every new payment or refund must show exactly its payments minus refunds as `amount_paid`, so a
+row inserted without updating the invoice cannot be committed.
+
+### Invoice amount paid (B-17)
+`invoices.amount_paid` `numeric(19,4)` (default 0): CHECK `ck_invoices_amount_paid` (0 ≤ amount_paid ≤ total, and 0
+unless the invoice is issued, so an invoice holding money cannot be voided). `invoices_guard` now also allows an issued
+invoice to change **only** its amount_paid (and updated_at), and only to the sum of its payments minus refunds;
+issuing requires amount_paid 0, and voiding requires the payments minus refunds to be 0 (checked on the rows, not only
+on amount_paid). The service saves the payment or refund row before the invoice in the same transaction. Rolling back the migration refuses
+while payments exist and restores the B-16 guard.
 
 ## 8. Inventory
 ### Product

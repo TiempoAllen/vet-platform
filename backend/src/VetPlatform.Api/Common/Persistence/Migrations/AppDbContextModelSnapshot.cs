@@ -379,6 +379,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<decimal>("AmountPaid")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("amount_paid");
+
                     b.Property<Guid>("ClientId")
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
@@ -501,6 +506,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.ToTable("invoices", null, t =>
                         {
+                            t.HasCheckConstraint("ck_invoices_amount_paid", "amount_paid >= 0 AND amount_paid <= total AND (status = 'Issued' OR amount_paid = 0)");
+
                             t.HasCheckConstraint("ck_invoices_currency", "currency ~ '^[A-Z]{3}$'");
 
                             t.HasCheckConstraint("ck_invoices_lifecycle", "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
@@ -655,6 +662,146 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.ToTable("invoice_number_sequences", null, t =>
                         {
                             t.HasCheckConstraint("ck_invoice_number_sequences_next_number", "next_number > 0");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Payment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invoice_id");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("method");
+
+                    b.Property<DateTimeOffset>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<Guid>("ReceivedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("received_by_user_id");
+
+                    b.Property<string>("Reference")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reference");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payments");
+
+                    b.HasAlternateKey("ClinicId", "InvoiceId", "Id")
+                        .HasName("ak_payments_clinic_id_invoice_id_id");
+
+                    b.HasIndex("ClinicId", "ReceivedByUserId")
+                        .HasDatabaseName("ix_payments_clinic_id_received_by_user_id");
+
+                    b.HasIndex("ClinicId", "InvoiceId", "PaidAt")
+                        .HasDatabaseName("ix_payments_clinic_id_invoice_id_paid_at");
+
+                    b.ToTable("payments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_payments_amount", "amount > 0 AND amount <= 1000000000000");
+
+                            t.HasCheckConstraint("ck_payments_method", "method IN ('Cash', 'Card', 'BankTransfer', 'Cheque', 'Other')");
+
+                            t.HasCheckConstraint("ck_payments_reference", "reference IS NULL OR btrim(reference) <> ''");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Refund", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("amount");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invoice_id");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("method");
+
+                    b.Property<Guid>("PaymentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("payment_id");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("RefundedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("refunded_at");
+
+                    b.Property<Guid>("RefundedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("refunded_by_user_id");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_refunds");
+
+                    b.HasIndex("ClinicId", "RefundedByUserId")
+                        .HasDatabaseName("ix_refunds_clinic_id_refunded_by_user_id");
+
+                    b.HasIndex("ClinicId", "InvoiceId", "PaymentId")
+                        .HasDatabaseName("ix_refunds_clinic_id_invoice_id_payment_id");
+
+                    b.ToTable("refunds", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_refunds_amount", "amount > 0 AND amount <= 1000000000000");
+
+                            t.HasCheckConstraint("ck_refunds_method", "method IN ('Cash', 'Card', 'BankTransfer', 'Cheque', 'Other')");
+
+                            t.HasCheckConstraint("ck_refunds_reason", "btrim(reason) <> ''");
                         });
                 });
 
@@ -2205,6 +2352,62 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_invoice_number_sequences_clinics_clinic_id");
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Payment", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payments_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Billing.Invoice", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "InvoiceId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payments_invoices_clinic_id_invoice_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "ReceivedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ReceivedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_payments_users_clinic_id_received_by_user_id");
+
+                    b.Navigation("ReceivedBy");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Refund", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_refunds_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "RefundedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "RefundedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_refunds_users_clinic_id_refunded_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Billing.Payment", null)
+                        .WithMany("Refunds")
+                        .HasForeignKey("ClinicId", "InvoiceId", "PaymentId")
+                        .HasPrincipalKey("ClinicId", "InvoiceId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_refunds_payments_clinic_id_invoice_id_payment_id");
+
+                    b.Navigation("RefundedBy");
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Billing.TaxRate", b =>
                 {
                     b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
@@ -2590,6 +2793,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             modelBuilder.Entity("VetPlatform.Api.Features.Billing.Invoice", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Billing.Payment", b =>
+                {
+                    b.Navigation("Refunds");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Consultations.Consultation", b =>
