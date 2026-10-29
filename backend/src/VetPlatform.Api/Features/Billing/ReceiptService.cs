@@ -28,7 +28,7 @@ public sealed class ReceiptService(AppDbContext db, ITenantContext tenant, Audit
         return ReceiptResponse.From(receipt, InvoiceBillTo.From(invoice), zone);
     }
 
-    /// <summary>Newest number first; filters by invoice and exact number. Listing is not audited (opening one is).</summary>
+    /// <summary>Newest number first; filters by invoice and exact number. Audited once per call (receipt.listed).</summary>
     public async Task<PagedResponse<ReceiptResponse>> ListAsync(ReceiptListQuery query, CancellationToken cancellationToken)
     {
         var zone = await ZoneAsync(cancellationToken);
@@ -44,9 +44,17 @@ public sealed class ReceiptService(AppDbContext db, ITenantContext tenant, Audit
         }
 
         var rows = receipts
-            .OrderByDescending(r => r.Number)
-            .Join(db.Invoices.AsNoTracking(), r => new { r.ClinicId, r.InvoiceId }, i => new { i.ClinicId, InvoiceId = i.Id }, (r, i) => new { Receipt = r, Invoice = i });
-        return await rows.ToPageAsync(query, row => ReceiptResponse.From(row.Receipt, InvoiceBillTo.From(row.Invoice), zone), cancellationToken);
+            .Join(db.Invoices.AsNoTracking(), r => new { r.ClinicId, r.InvoiceId }, i => new { i.ClinicId, InvoiceId = i.Id }, (r, i) => new { Receipt = r, Invoice = i })
+            .OrderByDescending(row => row.Receipt.Number);
+        var page = await rows.ToPageAsync(query, row => ReceiptResponse.From(row.Receipt, InvoiceBillTo.From(row.Invoice), zone), cancellationToken);
+
+        // A list returns the same details as opening each receipt, so it is audited too (once per call).
+        var clinicId = tenant.ClinicId!.Value;
+        audit.Record(
+            AuditActions.ReceiptsListed, nameof(Clinic), clinicId,
+            new { invoiceId = query.InvoiceId, number = query.Number, receiptIds = page.Data.Select(r => r.Id).ToList() });
+        await db.SaveChangesAsync(cancellationToken);
+        return page;
     }
 
     /// <summary>

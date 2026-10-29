@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261029192551_AddReceiptsAndBillTo")]
+    [Migration("20261029193812_AddReceiptsAndBillTo")]
     partial class AddReceiptsAndBillTo
     {
         /// <inheritdoc />
@@ -553,7 +553,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_invoices_currency", "currency ~ '^[A-Z]{3}$'");
 
-                            t.HasCheckConstraint("ck_invoices_lifecycle", "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND bill_to_name IS NULL AND bill_to_patient_name IS NULL AND bill_to_address_line1 IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
+                            t.HasCheckConstraint("ck_invoices_lifecycle", "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND bill_to_name IS NULL AND bill_to_patient_name IS NULL AND bill_to_address_line1 IS NULL AND bill_to_address_line2 IS NULL AND bill_to_city IS NULL AND bill_to_region IS NULL AND bill_to_postal_code IS NULL AND bill_to_country IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND (patient_id IS NULL) = (bill_to_patient_name IS NULL) AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND (patient_id IS NULL) = (bill_to_patient_name IS NULL) AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
 
                             t.HasCheckConstraint("ck_invoices_number", "number > 0");
 
@@ -1002,7 +1002,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasName("pk_refunds");
 
                     b.HasAlternateKey("ClinicId", "PaymentId", "Id")
-                        .HasName("ak_refund_clinic_id_payment_id_id");
+                        .HasName("ak_refunds_clinic_id_payment_id_id");
 
                     b.HasIndex("ClinicId", "RefundedByUserId")
                         .HasDatabaseName("ix_refunds_clinic_id_refunded_by_user_id");

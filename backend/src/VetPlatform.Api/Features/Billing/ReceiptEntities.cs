@@ -15,7 +15,7 @@ public sealed class Receipt : Entity, IClinicOwned
 {
     public const int NameMaxLength = 200;
 
-    /// <summary>Partial unique index: one receipt per clinic and number.</summary>
+    /// <summary>Unique index: one receipt per clinic and number.</summary>
     public const string NumberIndex = "ux_receipts_clinic_number";
 
     public Guid ClinicId { get; set; }

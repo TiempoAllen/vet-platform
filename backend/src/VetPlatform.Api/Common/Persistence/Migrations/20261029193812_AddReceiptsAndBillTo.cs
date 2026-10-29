@@ -72,7 +72,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 nullable: true);
 
             migrationBuilder.AddUniqueConstraint(
-                name: "ak_refund_clinic_id_payment_id_id",
+                name: "ak_refunds_clinic_id_payment_id_id",
                 table: "refunds",
                 columns: new[] { "clinic_id", "payment_id", "id" });
 
@@ -174,7 +174,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             migrationBuilder.AddCheckConstraint(
                 name: "ck_invoices_lifecycle",
                 table: "invoices",
-                sql: "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND bill_to_name IS NULL AND bill_to_patient_name IS NULL AND bill_to_address_line1 IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
+                sql: "CASE status WHEN 'Draft' THEN number IS NULL AND issued_at IS NULL AND due_on IS NULL AND issued_by_user_id IS NULL AND bill_to_name IS NULL AND bill_to_patient_name IS NULL AND bill_to_address_line1 IS NULL AND bill_to_address_line2 IS NULL AND bill_to_city IS NULL AND bill_to_region IS NULL AND bill_to_postal_code IS NULL AND bill_to_country IS NULL AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Issued' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND (patient_id IS NULL) = (bill_to_patient_name IS NULL) AND voided_at IS NULL AND voided_by_user_id IS NULL AND void_reason IS NULL WHEN 'Void' THEN number IS NOT NULL AND issued_at IS NOT NULL AND due_on IS NOT NULL AND issued_by_user_id IS NOT NULL AND bill_to_name IS NOT NULL AND (patient_id IS NULL) = (bill_to_patient_name IS NULL) AND voided_at IS NOT NULL AND voided_at >= issued_at AND voided_by_user_id IS NOT NULL AND void_reason IS NOT NULL AND btrim(void_reason) <> '' ELSE false END");
 
             migrationBuilder.CreateIndex(
                 name: "ix_receipts_clinic_id_invoice_id_number",
@@ -223,20 +223,37 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 DECLARE
                     source_amount numeric;
                     source_method text;
+                    source_reference text;
+                    source_at timestamptz;
+                    inv_number integer;
+                    inv_currency text;
+                    inv_total numeric;
+                    next_receipt integer;
                 BEGIN
                     IF TG_OP = 'INSERT' THEN
                         IF NEW.refund_id IS NULL THEN
-                            SELECT amount, method INTO source_amount, source_method FROM payments
+                            SELECT amount, method, reference, paid_at INTO source_amount, source_method, source_reference, source_at
+                            FROM payments
                             WHERE id = NEW.payment_id AND invoice_id = NEW.invoice_id AND clinic_id = NEW.clinic_id FOR SHARE;
                         ELSE
-                            SELECT amount, method INTO source_amount, source_method FROM refunds
+                            SELECT amount, method, NULL, refunded_at INTO source_amount, source_method, source_reference, source_at
+                            FROM refunds
                             WHERE id = NEW.refund_id AND payment_id = NEW.payment_id AND clinic_id = NEW.clinic_id FOR SHARE;
                         END IF;
                         IF source_amount IS NULL THEN
                             RETURN NEW; -- left to the foreign keys
                         END IF;
-                        IF source_amount <> NEW.amount OR source_method <> NEW.method THEN
-                            RAISE EXCEPTION 'a receipt states its payment''s or refund''s own amount and method'
+                        SELECT number, currency, total INTO inv_number, inv_currency, inv_total FROM invoices
+                        WHERE id = NEW.invoice_id AND clinic_id = NEW.clinic_id;
+                        SELECT next_number INTO next_receipt FROM receipt_number_sequences WHERE clinic_id = NEW.clinic_id;
+                        -- Everything the receipt copies from its sources must match them, and its number must come from
+                        -- the clinic's sequence (already handed out), so a hand-made receipt cannot misstate or skip.
+                        IF source_amount <> NEW.amount OR source_method <> NEW.method
+                            OR source_reference IS DISTINCT FROM NEW.reference OR source_at <> NEW.occurred_at
+                            OR inv_number IS DISTINCT FROM NEW.invoice_number OR inv_currency IS DISTINCT FROM NEW.currency
+                            OR inv_total IS DISTINCT FROM NEW.invoice_total
+                            OR next_receipt IS NULL OR NEW.number >= next_receipt THEN
+                            RAISE EXCEPTION 'a receipt states exactly its payment''s or refund''s and invoice''s details and a number from the sequence'
                                 USING ERRCODE = 'insufficient_privilege';
                         END IF;
                         RETURN NEW;
@@ -280,7 +297,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 name: "receipts");
 
             migrationBuilder.DropUniqueConstraint(
-                name: "ak_refund_clinic_id_payment_id_id",
+                name: "ak_refunds_clinic_id_payment_id_id",
                 table: "refunds");
 
             migrationBuilder.DropCheckConstraint(

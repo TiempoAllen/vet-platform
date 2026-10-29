@@ -953,8 +953,8 @@ patient (unknown, discarded, another patient's or another clinic's is one identi
 `PATCH` and no `DELETE`; the database refuses both.
 
 ## 10. Billing
-Invoices and tax rates are implemented in B-16 (ADR-016), payments, refunds and balances in B-17 (ADR-017); receipts
-follow in B-18.
+Invoices and tax rates are implemented in B-16 (ADR-016), payments, refunds and balances in B-17 (ADR-017), receipts,
+frozen bill-to and invoice activity in B-18 (ADR-018).
 Totals are **always computed by the server**; the contract has no way to send them (extra fields are ignored).
 
 Permissions: `billing.read` (Admin, Veterinarian, Receptionist) reads; `billing.manage` (Admin, Receptionist)
@@ -1053,7 +1053,7 @@ Invoice reads are not audited (they are not clinical records).
 
 **Payment state** (B-17): `amountPaid` is the payments minus refunds, `balanceDue` is `total − amountPaid`, and
 `paymentStatus` is `Unpaid` (nothing paid), `PartiallyPaid` or `Paid` (balance 0; also an invoice with a zero total).
-Drafts and void invoices have `amountPaid` 0 and `paymentStatus` `null`. Receipts arrive with B-18.
+Drafts and void invoices have `amountPaid` 0 and `paymentStatus` `null`. Receipts: section 10.5.
 
 ### 10.4 Payments and refunds
 Implemented in B-17 (ADR-017). Payments are recorded against **issued** invoices. Nothing here is ever edited,
@@ -1113,22 +1113,24 @@ number sequence per clinic. Receipts are never changed or deleted (the database 
     {
       "id": "uuid", "number": 1, "kind": "Payment" | "Refund", "clinicName": "Happy Paws",
       "invoice": { "id": "uuid", "number": 42, "total": 54, "currency": "EUR" },
-      "billTo": { "name", "addressLine1", ... , "patientName" },
+      "billTo": { "name", "addressLine1", ... , "patientName" },   (never null: receipts exist only for issued invoices)
       "paymentId": "uuid", "refundId": "uuid" | null,
       "amount": 20, "method": "Card", "reference": "Slip 0042" | null, "occurredAt": "...",
       "amountPaidAfter": 20, "balanceDueAfter": 34,
       "issuedBy": { "id": "uuid", "name": "Pat Desk" }, "createdAt": "..."
     }
 
-- `amount` is always positive; `kind` says whether money came in (`Payment`) or went back (`Refund`). `reference` is
-  the payment's (refund receipts have none; refund reasons are not printed). `occurredAt` is the payment's `paidAt` or
+- `amount` is always positive; `kind` says whether money came in (`Payment`) or went back (`Refund`). `method` is the
+  payment's method, or the refund's own method on refund receipts. `reference` is the payment's (refund receipts have
+  none; refund reasons are not printed). `occurredAt` is the payment's `paidAt` or
   the refund's `refundedAt` (clinic offset); `createdAt` is UTC.
 - `clinicName`, the invoice number and total, the amounts after the change and the cashier's name (`issuedBy.name`) are
   copies made at the time; `billTo` is the invoice's frozen block (section 10.3).
 - `GET /api/receipts/:id` (`billing.read`): `200` or `404`. Opening a receipt (a view or a reprint) is audited
   (`receipt.viewed`).
 - `GET /api/receipts` (`billing.read`): newest number first, paginated; filters `invoiceId` and `number` (an exact
-  positive number; `422` otherwise). Listing is not audited.
+  positive number; `422` otherwise). Each list call is audited once (`receipt.listed`, with the filters and the receipt
+  ids shown), since it returns the same details as opening each receipt.
 - Creating a receipt is audited (`receipt.issued`) with its number, kind, ids and amount.
 
 ### 10.6 Invoice activity
@@ -1139,6 +1141,7 @@ clinic's invoice `404`.
     { "id": "uuid", "occurredAt": "...", "action": "payment.recorded", "entityType": "Payment", "entityId": "uuid",
       "actor": { "id", "name" } | null, "details": { ... } | null }
 
+Entries include reads of its receipts (`receipt.viewed`, one per view or reprint) as well as changes.
 `occurredAt` carries the clinic's offset. `details` is the entry's metadata as recorded (ids, field names, numbers,
 amounts, methods, statuses), which never holds descriptions, notes, references or reasons. `actor` is `null` when the
 entry had no signed-in user or the account cannot be shown (only this clinic's staff are named). The clinic-wide audit
