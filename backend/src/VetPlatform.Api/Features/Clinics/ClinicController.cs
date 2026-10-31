@@ -56,10 +56,14 @@ public sealed class ClinicController(AppDbContext db, ITenantContext tenant, Aud
                     [new ApiErrorDetail("currency", "The currency must be an upper-case ISO 4217 code such as EUR.")]);
             }
 
-            if (await db.Invoices.AnyAsync(cancellationToken))
+            // Amounts already recorded in the clinic currency: invoices, and since B-19 stock costs and product prices.
+            if (await db.Invoices.AnyAsync(cancellationToken)
+                || await db.StockMovements.AnyAsync(m => m.UnitCost != null, cancellationToken)
+                || await db.Products.AnyAsync(p => p.DefaultUnitPrice != null, cancellationToken))
             {
                 throw new ApiException(
-                    StatusCodes.Status409Conflict, ErrorCodes.Conflict, "The currency cannot change once the clinic has invoices.");
+                    StatusCodes.Status409Conflict, ErrorCodes.Conflict,
+                    "The currency cannot change once the clinic has invoices, costed stock receipts or product prices.");
             }
 
             var before = clinic.Currency;

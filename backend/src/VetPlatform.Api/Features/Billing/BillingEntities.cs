@@ -197,6 +197,12 @@ public sealed class InvoiceItem : Entity, IClinicOwned
     /// <summary>Optional: a consultation of the invoice's patient that this line bills.</summary>
     public Guid? ConsultationId { get; set; }
 
+    /// <summary>
+    /// Optional: the catalogue product this line bills (B-19, ADR-019); active when linked. The description and price
+    /// are still the line's own, and billing does not change stock.
+    /// </summary>
+    public Guid? ProductId { get; set; }
+
     /// <summary>quantity × unit price, rounded.</summary>
     public decimal Net { get; set; }
 
@@ -373,6 +379,10 @@ internal sealed class InvoiceItemConfiguration : IEntityTypeConfiguration<Invoic
         builder.HasOne<Consultation>().WithMany()
             .HasForeignKey(i => new { i.ClinicId, i.ConsultationId })
             .HasPrincipalKey(c => new { c.ClinicId, c.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Inventory.Product>().WithMany()
+            .HasForeignKey(i => new { i.ClinicId, i.ProductId })
+            .HasPrincipalKey(p => new { p.ClinicId, p.Id })
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Clinic>().WithMany().HasForeignKey(i => i.ClinicId).OnDelete(DeleteBehavior.Restrict);
 

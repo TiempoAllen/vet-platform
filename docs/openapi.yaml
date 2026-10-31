@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.18.0
-  summary: Implemented endpoints as of milestone B-18.
+  version: 0.19.0
+  summary: Implemented endpoints as of milestone B-19.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (clinical,
-    billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (the rest of
+    inventory, reports) are listed in `API.md` sections 11-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -36,6 +36,7 @@ tags:
   - name: Attachments
   - name: ClinicalNotes
   - name: Billing
+  - name: Inventory
   - name: Operations
 security:
   - sessionCookie: []
@@ -2567,6 +2568,198 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/products:
+    get:
+      tags: [Inventory]
+      operationId: listProducts
+      summary: The clinic's product catalogue
+      description: Requires `inventory.read`. Ordered by name. `q` matches part of the name or SKU ignoring case; `category` is exact, ignoring case.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/ProductType' } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/ProductStatus' } }
+        - { name: category, in: query, schema: { type: string, maxLength: 100 } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of products.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Inventory]
+      operationId: createProduct
+      summary: Create a product
+      description: Requires `inventory.manage`. The SKU is unique per clinic ignoring case, inactive products included (409). Services take no reorder level. Audited without names, SKUs or categories.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProductRequest' }
+      responses:
+        '201':
+          description: Created.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Location: { schema: { type: string }, description: '/api/products/{id}' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/products/categories:
+    get:
+      tags: [Inventory]
+      operationId: listProductCategories
+      summary: The product categories in use
+      description: Requires `inventory.read`. Sorted; one spelling per category ignoring case.
+      responses:
+        '200':
+          description: The categories.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/products/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Inventory]
+      operationId: getProduct
+      summary: One product
+      description: Requires `inventory.read`. Other clinics' products are 404.
+      responses:
+        '200':
+          description: The product.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Inventory]
+      operationId: updateProduct
+      summary: Edit, deactivate or restore a product
+      description: Requires `inventory.manage`. Omitted fields are unchanged. The type and unit cannot change once the product has a stock lot (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProductRequest' }
+      responses:
+        '200':
+          description: The product.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/inventory/stock:
+    get:
+      tags: [Inventory]
+      operationId: listStock
+      summary: Stock lots of the clinic
+      description: Requires `inventory.read`. Ordered by product name, then the lot expiring first (lots without expiry last). Only lots holding stock unless `includeEmpty=true`.
+      parameters:
+        - { name: productId, in: query, schema: { type: string, format: uuid } }
+        - { name: includeEmpty, in: query, schema: { type: boolean } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of lots.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockLotPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/inventory/movements:
+    get:
+      tags: [Inventory]
+      operationId: listStockMovements
+      summary: Recorded stock movements
+      description: Requires `inventory.read`. Newest first (occurredAt).
+      parameters:
+        - { name: productId, in: query, schema: { type: string, format: uuid } }
+        - { name: stockLotId, in: query, schema: { type: string, format: uuid } }
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/StockMovementType' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of movements.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovementPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Inventory]
+      operationId: recordStockMovement
+      summary: Receive stock
+      description: >-
+        Requires `inventory.manage`. Only `Receive` exists until B-20. The stock goes into the product's lot with the same
+        lot number, expiry date and location (topped up), or a new lot. The product must be active and not a Service
+        (422); medications and vaccines need `expiresOn`; a lot holds at most 1,000,000,000 (409). No Location header
+        (there is no single-movement GET). Audited without lot numbers, locations, references or notes.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordStockMovementRequest' }
+      responses:
+        '201':
+          description: The movement.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovement' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -2665,7 +2858,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -3242,7 +3435,7 @@ components:
       type: object
       properties:
         timeZone: { type: [string, 'null'], maxLength: 64, description: 'IANA id, e.g. Europe/London.' }
-        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice.' }
+        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice, a costed stock receipt or a product default price.' }
 
     DayOfWeek:
       type: string
@@ -4109,7 +4302,7 @@ components:
     InvoiceItem:
       type: object
       additionalProperties: false
-      required: [id, position, description, quantity, unitPrice, discountType, discountValue, taxRate, consultationId, net, discount, tax, total]
+      required: [id, position, description, quantity, unitPrice, discountType, discountValue, taxRate, consultationId, productId, net, discount, tax, total]
       properties:
         id: { type: string, format: uuid }
         position: { type: integer, minimum: 1 }
@@ -4128,6 +4321,7 @@ components:
             name: { type: string }
             percent: { type: number }
         consultationId: { type: [string, 'null'], format: uuid }
+        productId: { type: [string, 'null'], format: uuid, description: 'The catalogue product billed (B-19); does not change stock.' }
         net: { type: number, description: 'quantity × unitPrice, rounded to the currency.' }
         discount: { type: number }
         tax: { type: number, description: '(net − discount) × percent / 100, rounded.' }
@@ -4241,10 +4435,11 @@ components:
         discountValue: { type: [number, 'null'], description: 'Percent: above 0 and at most 100, at most 4 decimals. Amount: above 0, at most the net, in currency minor units. None: omit or 0.' }
         taxRateId: { type: string, format: uuid, description: An active rate of the clinic. }
         consultationId: { type: [string, 'null'], format: uuid, description: A non-discarded consultation of the invoice's patient. }
+        productId: { type: [string, 'null'], format: uuid, description: 'An active product of the clinic (services included); the description and price are still sent.' }
 
     UpdateInvoiceItemRequest:
       type: object
-      description: Omitted or null fields are unchanged; an explicit null consultationId unlinks.
+      description: Omitted or null fields are unchanged; an explicit null consultationId or productId unlinks.
       properties:
         description: { type: [string, 'null'], minLength: 1, maxLength: 500 }
         quantity: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 1000000 }
@@ -4256,6 +4451,7 @@ components:
         discountValue: { type: [number, 'null'] }
         taxRateId: { type: [string, 'null'], format: uuid }
         consultationId: { type: [string, 'null'], format: uuid }
+        productId: { type: [string, 'null'], format: uuid }
 
     IssueInvoiceRequest:
       type: object
@@ -4477,6 +4673,184 @@ components:
                   field: { type: string, description: camelCase field or query parameter name }
                   message: { type: string }
         requestId: { type: string }
+
+    ProductType:
+      type: string
+      enum: [Medication, Vaccine, Supply, Retail, Service]
+
+    ProductUnit:
+      type: string
+      enum: [Each, Tablet, Capsule, Millilitre, Litre, Gram, Kilogram, Dose, Vial, Ampoule, Bottle, Box, Pack]
+
+    ProductStatus:
+      type: string
+      enum: [Active, Inactive]
+
+    StockMovementType:
+      type: string
+      enum: [Receive]
+      description: B-20 adds the outgoing types.
+
+    Product:
+      type: object
+      additionalProperties: false
+      required: [id, sku, name, category, type, unit, reorderLevel, defaultUnitPrice, defaultTaxRate, status, quantityOnHand, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        sku: { type: string, maxLength: 50 }
+        name: { type: string, maxLength: 200 }
+        category: { type: [string, 'null'], maxLength: 100 }
+        type: { $ref: '#/components/schemas/ProductType' }
+        unit: { $ref: '#/components/schemas/ProductUnit' }
+        reorderLevel: { type: [number, 'null'], description: Always null for services. }
+        defaultUnitPrice: { type: [number, 'null'], description: 'Suggested unit price in the clinic currency, before tax.' }
+        defaultTaxRate:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, name, percent, status]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                percent: { type: number }
+                status: { $ref: '#/components/schemas/TaxRateStatus' }
+            - type: 'null'
+        status: { $ref: '#/components/schemas/ProductStatus' }
+        quantityOnHand: { type: [number, 'null'], description: 'Sum of the lots, in the unit; null for services.' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ProductPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Product' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateProductRequest:
+      type: object
+      required: [sku, name, type, unit]
+      properties:
+        sku: { type: string, minLength: 1, maxLength: 50, description: 'Letters, digits and - . _ /, starting with a letter or digit; trimmed.' }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        category: { type: [string, 'null'], maxLength: 100 }
+        type: { $ref: '#/components/schemas/ProductType' }
+        unit: { $ref: '#/components/schemas/ProductUnit' }
+        reorderLevel: { type: [number, 'null'], minimum: 0, maximum: 1000000, description: At most 3 decimals; not on services. }
+        defaultUnitPrice: { type: [number, 'null'], minimum: 0, maximum: 1000000000, description: At most 4 decimals. }
+        defaultTaxRateId: { type: [string, 'null'], format: uuid, description: An active rate of the clinic. }
+
+    UpdateProductRequest:
+      type: object
+      description: 'Omitted fields are unchanged. category "" clears it; null clears reorderLevel, defaultUnitPrice or defaultTaxRateId.'
+      properties:
+        sku: { type: [string, 'null'], minLength: 1, maxLength: 50 }
+        name: { type: [string, 'null'], minLength: 1, maxLength: 200 }
+        category: { type: [string, 'null'], maxLength: 100 }
+        type:
+          oneOf:
+            - $ref: '#/components/schemas/ProductType'
+            - type: 'null'
+        unit:
+          oneOf:
+            - $ref: '#/components/schemas/ProductUnit'
+            - type: 'null'
+        reorderLevel: { type: [number, 'null'], minimum: 0, maximum: 1000000 }
+        defaultUnitPrice: { type: [number, 'null'], minimum: 0, maximum: 1000000000 }
+        defaultTaxRateId: { type: [string, 'null'], format: uuid }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/ProductStatus'
+            - type: 'null'
+
+    StockProductSummary:
+      type: object
+      additionalProperties: false
+      required: [id, sku, name, unit]
+      properties:
+        id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        unit: { $ref: '#/components/schemas/ProductUnit' }
+
+    StockLot:
+      type: object
+      additionalProperties: false
+      required: [id, product, lotNumber, expiresOn, location, quantity, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        product: { $ref: '#/components/schemas/StockProductSummary' }
+        lotNumber: { type: [string, 'null'], maxLength: 50 }
+        expiresOn: { type: [string, 'null'], format: date }
+        location: { type: [string, 'null'], maxLength: 100 }
+        quantity: { type: number, minimum: 0, description: On hand now, in the product's unit. }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    StockLotPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/StockLot' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    StockMovement:
+      type: object
+      additionalProperties: false
+      required: [id, type, product, lot, quantity, unitCost, currency, reference, notes, occurredAt, performedBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/StockMovementType' }
+        product: { $ref: '#/components/schemas/StockProductSummary' }
+        lot:
+          type: object
+          additionalProperties: false
+          required: [id, lotNumber, expiresOn, location, quantity]
+          properties:
+            id: { type: string, format: uuid }
+            lotNumber: { type: [string, 'null'] }
+            expiresOn: { type: [string, 'null'], format: date }
+            location: { type: [string, 'null'] }
+            quantity: { type: number, description: "The lot's quantity now." }
+        quantity: { type: number, description: Signed change of the lot (positive for stock coming in). }
+        unitCost: { type: [number, 'null'] }
+        currency: { type: [string, 'null'], description: 'ISO 4217; set exactly when unitCost is.' }
+        reference: { type: [string, 'null'] }
+        notes: { type: [string, 'null'] }
+        occurredAt: { type: string, format: date-time, description: "Carries the clinic's offset." }
+        performedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+
+    StockMovementPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/StockMovement' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    RecordStockMovementRequest:
+      type: object
+      required: [type, productId, quantity]
+      properties:
+        type: { $ref: '#/components/schemas/StockMovementType' }
+        productId: { type: string, format: uuid, description: 'An active, non-Service product of the clinic.' }
+        quantity: { type: number, exclusiveMinimum: 0, maximum: 1000000, description: "At most 3 decimals, in the product's unit." }
+        lotNumber: { type: [string, 'null'], maxLength: 50 }
+        expiresOn: { type: [string, 'null'], format: date, description: 'Required for Medication and Vaccine; not before the clinic-local today, not after 2100-12-31.' }
+        location: { type: [string, 'null'], maxLength: 100 }
+        unitCost: { type: [number, 'null'], minimum: 0, maximum: 1000000000, description: 'In the clinic currency (must be set); at most 4 decimals.' }
+        reference: { type: [string, 'null'], maxLength: 100 }
+        notes: { type: [string, 'null'], maxLength: 500 }
+        occurredAt: { type: [string, 'null'], format: date-time, description: 'Default now; not in the future or before 2000.' }
 
   responses:
     BadRequest:

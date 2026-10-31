@@ -9,6 +9,7 @@ using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Identity;
+using VetPlatform.Api.Features.Inventory;
 using VetPlatform.Api.Features.Scheduling;
 
 namespace VetPlatform.Api.Features.Billing;
@@ -186,6 +187,11 @@ public sealed class InvoiceService(
                 await CheckConsultationAsync(invoice, consultationId, problems, cancellationToken);
             }
 
+            if (request.ProductId is { } productId)
+            {
+                await CheckProductAsync(productId, problems, cancellationToken);
+            }
+
             var item = new InvoiceItem
             {
                 ClinicId = invoice.ClinicId,
@@ -200,6 +206,7 @@ public sealed class InvoiceService(
                 TaxRateName = rate?.Name ?? "",
                 TaxRatePercent = rate?.RatePercent ?? 0m,
                 ConsultationId = request.ConsultationId,
+                ProductId = request.ProductId,
             };
             CheckLine(item, invoice.Currency, problems);
             ThrowIfAny(problems);
@@ -208,7 +215,7 @@ public sealed class InvoiceService(
             db.Add(item); // a preset key would otherwise make EF treat it as an existing row
             InvoiceCalculator.Apply(invoice);
             CheckAmounts(invoice);
-            return (object?)new { itemId = item.Id, total = invoice.Total };
+            return (object?)new { itemId = item.Id, productId = item.ProductId, total = invoice.Total };
         }, cancellationToken);
 
     public Task<InvoiceResponse> UpdateItemAsync(Guid id, Guid itemId, UpdateInvoiceItemRequest request, CancellationToken cancellationToken) =>
@@ -268,6 +275,17 @@ public sealed class InvoiceService(
 
                 item.ConsultationId = request.ConsultationId.Value;
                 changed.Add("consultationId");
+            }
+
+            if (request.ProductId.IsSet && request.ProductId.Value != item.ProductId)
+            {
+                if (request.ProductId.Value is { } productId)
+                {
+                    await CheckProductAsync(productId, problems, cancellationToken);
+                }
+
+                item.ProductId = request.ProductId.Value;
+                changed.Add("productId");
             }
 
             CheckLine(item, invoice.Currency, problems);
@@ -451,6 +469,18 @@ public sealed class InvoiceService(
         {
             problems.Add(new ApiErrorDetail(
                 "consultationId", "The consultation was not found, is discarded, or is not of the invoice's patient."));
+        }
+    }
+
+    /// <summary>
+    /// A linked product must be active when linked (B-19); deactivating it later leaves the link. Services may be
+    /// linked too. Linking never changes stock.
+    /// </summary>
+    private async Task CheckProductAsync(Guid productId, List<ApiErrorDetail> problems, CancellationToken cancellationToken)
+    {
+        if (!await db.Products.AnyAsync(p => p.Id == productId && p.Status == ProductStatus.Active, cancellationToken))
+        {
+            problems.Add(new ApiErrorDetail("productId", "The product was not found or is not active."));
         }
     }
 

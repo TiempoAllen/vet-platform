@@ -614,6 +614,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("position");
 
+                    b.Property<Guid?>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(12, 3)
                         .HasColumnType("numeric(12,3)")
@@ -658,6 +662,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasIndex("ClinicId", "ConsultationId")
                         .HasDatabaseName("ix_invoice_items_clinic_id_consultation_id");
+
+                    b.HasIndex("ClinicId", "ProductId")
+                        .HasDatabaseName("ix_invoice_items_clinic_id_product_id");
 
                     b.HasIndex("ClinicId", "TaxRateId")
                         .HasDatabaseName("ix_invoice_items_clinic_id_tax_rate_id");
@@ -1953,6 +1960,278 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.ToTable("user_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("VetPlatform.Api.Features.Inventory.Product", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Category")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("category")
+                        .UseCollation("case_insensitive");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("DefaultTaxRateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("default_tax_rate_id");
+
+                    b.Property<decimal?>("DefaultUnitPrice")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("default_unit_price");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.Property<decimal?>("ReorderLevel")
+                        .HasPrecision(12, 3)
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("reorder_level");
+
+                    b.Property<string>("Sku")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("sku")
+                        .UseCollation("case_insensitive");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("type");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("unit");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_products");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_products_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "DefaultTaxRateId")
+                        .HasDatabaseName("ix_products_clinic_id_default_tax_rate_id");
+
+                    b.HasIndex("ClinicId", "Name")
+                        .HasDatabaseName("ix_products_clinic_id_name");
+
+                    b.HasIndex("ClinicId", "Sku")
+                        .IsUnique()
+                        .HasDatabaseName("ux_products_clinic_id_sku");
+
+                    b.ToTable("products", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_products_category", "category IS NULL OR btrim(category) <> ''");
+
+                            t.HasCheckConstraint("ck_products_default_unit_price", "default_unit_price IS NULL OR (default_unit_price >= 0 AND default_unit_price <= 1000000000)");
+
+                            t.HasCheckConstraint("ck_products_name", "btrim(name) <> ''");
+
+                            t.HasCheckConstraint("ck_products_reorder_level", "reorder_level IS NULL OR (type <> 'Service' AND reorder_level >= 0 AND reorder_level <= 1000000)");
+
+                            t.HasCheckConstraint("ck_products_sku", "sku COLLATE \"C\" ~ '^[A-Za-z0-9][A-Za-z0-9._/-]*$'");
+
+                            t.HasCheckConstraint("ck_products_status", "status IN ('Active', 'Inactive')");
+
+                            t.HasCheckConstraint("ck_products_type", "type IN ('Medication', 'Vaccine', 'Supply', 'Retail', 'Service')");
+
+                            t.HasCheckConstraint("ck_products_unit", "unit IN ('Each', 'Tablet', 'Capsule', 'Millilitre', 'Litre', 'Gram', 'Kilogram', 'Dose', 'Vial', 'Ampoule', 'Bottle', 'Box', 'Pack')");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Inventory.StockLot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly?>("ExpiresOn")
+                        .HasColumnType("date")
+                        .HasColumnName("expires_on");
+
+                    b.Property<string>("Location")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("location")
+                        .UseCollation("case_insensitive");
+
+                    b.Property<string>("LotNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("lot_number")
+                        .UseCollation("case_insensitive");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(15, 3)
+                        .HasColumnType("numeric(15,3)")
+                        .HasColumnName("quantity");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_stock_lots");
+
+                    b.HasAlternateKey("ClinicId", "ProductId", "Id")
+                        .HasName("ak_stock_lots_clinic_id_product_id_id");
+
+                    b.HasIndex("ClinicId", "ProductId", "LotNumber", "ExpiresOn", "Location")
+                        .IsUnique()
+                        .HasDatabaseName("ux_stock_lots_identity");
+
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("ClinicId", "ProductId", "LotNumber", "ExpiresOn", "Location"), false);
+
+                    b.ToTable("stock_lots", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_stock_lots_expires_on", "expires_on IS NULL OR expires_on BETWEEN '2000-01-01' AND '2100-12-31'");
+
+                            t.HasCheckConstraint("ck_stock_lots_location", "location IS NULL OR btrim(location) <> ''");
+
+                            t.HasCheckConstraint("ck_stock_lots_lot_number", "lot_number IS NULL OR btrim(lot_number) <> ''");
+
+                            t.HasCheckConstraint("ck_stock_lots_quantity", "quantity >= 0 AND quantity <= 1000000000");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Inventory.StockMovement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency")
+                        .IsFixedLength();
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("notes");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<Guid>("PerformedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("performed_by_user_id");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(12, 3)
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("quantity");
+
+                    b.Property<string>("Reference")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reference");
+
+                    b.Property<Guid>("StockLotId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("stock_lot_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("type");
+
+                    b.Property<decimal?>("UnitCost")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("unit_cost");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_stock_movements");
+
+                    b.HasIndex("ClinicId", "PerformedByUserId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_performed_by_user_id");
+
+                    b.HasIndex("ClinicId", "OccurredAt", "Id")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_occurred_at_id");
+
+                    b.HasIndex("ClinicId", "ProductId", "OccurredAt")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_product_id_occurred_at");
+
+                    b.HasIndex("ClinicId", "ProductId", "StockLotId", "OccurredAt")
+                        .HasDatabaseName("ix_stock_movements_lot_occurred_at");
+
+                    b.ToTable("stock_movements", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_stock_movements_currency", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("ck_stock_movements_notes", "notes IS NULL OR btrim(notes) <> ''");
+
+                            t.HasCheckConstraint("ck_stock_movements_quantity", "quantity <> 0 AND abs(quantity) <= 1000000 AND (type <> 'Receive' OR quantity > 0)");
+
+                            t.HasCheckConstraint("ck_stock_movements_reference", "reference IS NULL OR btrim(reference) <> ''");
+
+                            t.HasCheckConstraint("ck_stock_movements_type", "type IN ('Receive')");
+
+                            t.HasCheckConstraint("ck_stock_movements_unit_cost", "(unit_cost IS NULL) = (currency IS NULL) AND (unit_cost IS NULL OR (unit_cost >= 0 AND unit_cost <= 1000000000))");
+                        });
+                });
+
             modelBuilder.Entity("VetPlatform.Api.Features.Patients.Patient", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2545,6 +2824,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_invoice_items_invoices_clinic_id_invoice_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Inventory.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_invoice_items_products_clinic_id_product_id");
+
                     b.HasOne("VetPlatform.Api.Features.Billing.TaxRate", null)
                         .WithMany()
                         .HasForeignKey("ClinicId", "TaxRateId")
@@ -2934,6 +3220,85 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_user_sessions_users_user_id");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Inventory.Product", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_products_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Billing.TaxRate", "DefaultTaxRate")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "DefaultTaxRateId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_products_tax_rates_clinic_id_default_tax_rate_id");
+
+                    b.Navigation("DefaultTaxRate");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Inventory.StockLot", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_lots_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Inventory.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_lots_products_clinic_id_product_id");
+
+                    b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Inventory.StockMovement", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "PerformedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PerformedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_users_clinic_id_performed_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Inventory.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_products_clinic_id_product_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Inventory.StockLot", "StockLot")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId", "StockLotId")
+                        .HasPrincipalKey("ClinicId", "ProductId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_stock_lots_clinic_id_product_id_stock_lot_id");
+
+                    b.Navigation("PerformedBy");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("StockLot");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Patients.Patient", b =>
