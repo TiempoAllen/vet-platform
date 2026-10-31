@@ -71,7 +71,7 @@ public sealed class InventoryTests(DatabaseApiFactory factory) : IClassFixture<D
 
         Assert.Equal($"/api/products/{id}", response.Headers.Location!.AbsolutePath);
         Assert.Equal(
-            ["id", "sku", "name", "category", "type", "unit", "reorderLevel", "defaultUnitPrice", "defaultTaxRate", "status", "quantityOnHand", "createdAt", "updatedAt"],
+            ["id", "sku", "name", "category", "type", "unit", "controlled", "reorderLevel", "defaultUnitPrice", "defaultTaxRate", "status", "quantityOnHand", "createdAt", "updatedAt"],
             created.EnumerateObject().Select(p => p.Name));
         Assert.Equal(("AMX-250", "Amoxicillin 250 mg", "Active", 0m), (created.GetProperty("sku").GetString(), created.GetProperty("name").GetString(), created.GetProperty("status").GetString(), Number(created, "quantityOnHand")));
         Assert.Equal(("Standard", 20m, "Active"), (created.GetProperty("defaultTaxRate").GetProperty("name").GetString(), Number(created.GetProperty("defaultTaxRate"), "percent"), created.GetProperty("defaultTaxRate").GetProperty("status").GetString()));
@@ -239,7 +239,7 @@ public sealed class InventoryTests(DatabaseApiFactory factory) : IClassFixture<D
             unitCost = 0.1234m, reference = "DN-5531", notes = "Box slightly damaged",
         }), HttpStatusCode.Created);
         Assert.Equal(
-            ["id", "type", "product", "lot", "quantity", "unitCost", "currency", "reference", "notes", "occurredAt", "performedBy", "createdAt"],
+            ["id", "type", "product", "lot", "quantity", "balanceAfter", "unitCost", "currency", "reference", "reason", "notes", "patientId", "consultationId", "invoiceItemId", "reversesMovementId", "reversedByMovementId", "occurredAt", "performedBy", "witnessedBy", "createdAt"],
             first.EnumerateObject().Select(p => p.Name));
         Assert.Equal(("L-1", 100m, "EUR", 0.1234m), (first.GetProperty("lot").GetProperty("lotNumber").GetString(), Number(first.GetProperty("lot"), "quantity"), first.GetProperty("currency").GetString(), Number(first, "unitCost")));
         var lotId = first.GetProperty("lot").GetProperty("id").GetGuid();
@@ -309,9 +309,9 @@ public sealed class InventoryTests(DatabaseApiFactory factory) : IClassFixture<D
             Assert.Equal(field, Assert.Single((await ErrorOf(response)).Details).Field, ignoreCase: true);
         }
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await ReceiveAsync(clinic, new { type = "Dispense", productId = supply, quantity = 1 })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await ReceiveAsync(clinic, new { type = "Steal", productId = supply, quantity = 1 })).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await ReceiveAsync(clinic, new { productId = supply, quantity = 1 })).StatusCode);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Stock.GetAsync("/api/inventory/movements?type=Sell")).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Stock.GetAsync("/api/inventory/movements?type=Steal")).StatusCode);
 
         var noCurrency = await ClinicAsync(currency: null);
         var product = await ProductAsync(noCurrency, "SUP");

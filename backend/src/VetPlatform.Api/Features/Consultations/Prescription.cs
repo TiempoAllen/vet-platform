@@ -34,6 +34,9 @@ public sealed class Prescription : Entity, IClinicOwned
     /// <summary>Optional: the diagnosis of the same consultation this treats. Removing that diagnosis unlinks it.</summary>
     public Guid? DiagnosisId { get; set; }
 
+    /// <summary>Optional catalogue medication (a Medication product, active when linked; B-20). Linking never changes stock.</summary>
+    public Guid? ProductId { get; set; }
+
     /// <summary>Free text until the inventory product catalogue exists (B-19).</summary>
     public required string MedicationName { get; set; }
 
@@ -132,6 +135,10 @@ internal sealed class PrescriptionConfiguration : IEntityTypeConfiguration<Presc
         builder.HasOne(p => p.CancelledBy).WithMany()
             .HasForeignKey(p => new { p.ClinicId, p.CancelledByUserId })
             .HasPrincipalKey(u => new { u.ClinicId, u.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Inventory.Product>().WithMany()
+            .HasForeignKey(p => new { p.ClinicId, p.ProductId })
+            .HasPrincipalKey(product => new { product.ClinicId, product.Id })
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Clinic>().WithMany().HasForeignKey(p => p.ClinicId).OnDelete(DeleteBehavior.Restrict);
 

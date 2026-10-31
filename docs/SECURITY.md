@@ -117,6 +117,12 @@ movements; `inventory.manage` (Admin, Inventory) edits products and receives sto
 clinical, client or billing access. Stock movements are append-only and lots change only with them
 (database-enforced); audit metadata never holds names, SKUs, lot numbers, locations, references or notes.
 
+Since B-20 (ADR-020): `inventory.dispense` (Veterinarian, Nurse) records dispensing only; controlled drugs are
+dispensed only with `inventory.dispense_controlled` (Veterinarians), need a reason on outgoing movements and a second
+staff member as witness on every other movement that can take them out (the witness does not authenticate: an accepted
+risk). Movement responses carry patient and consultation ids only, never names; the reason and notes of dispensing
+movements are returned only to `clinical.read` holders; reasons never reach the audit log.
+
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 

@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using VetPlatform.Api.Common.Persistence;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Billing;
+using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Identity;
+using VetPlatform.Api.Features.Patients;
 
 namespace VetPlatform.Api.Features.Inventory;
 
@@ -48,6 +50,12 @@ public sealed class Product : Entity, IClinicOwned
     public TaxRate? DefaultTaxRate { get; set; }
 
     public ProductStatus Status { get; set; } = ProductStatus.Active;
+
+    /// <summary>
+    /// A controlled drug (medications only, B-20, ADR-020): its outgoing movements need a reason, adjustments,
+    /// write-offs and reversals a witness, and only veterinarians dispense it. Fixed once the product has a lot.
+    /// </summary>
+    public bool Controlled { get; set; }
 
     public bool HoldsStock => Type != ProductType.Service;
 
@@ -127,15 +135,20 @@ public sealed class StockLot : Entity, IClinicOwned
 }
 
 /// <summary>
-/// A recorded change of a lot's quantity (docs/DATABASE.md section 8). Append-only: never edited or deleted. B-19 records
-/// only <see cref="StockMovementType.Receive"/>; B-20 adds the outgoing types and the negative-stock rule (SRS Q-5).
+/// A recorded change of a lot's quantity (docs/DATABASE.md section 8, ADR-019, ADR-020). Append-only: never edited or
+/// deleted; a mistake is undone by a <see cref="StockMovementType.Reversal"/>. Stock never goes negative (SRS Q-5):
+/// <see cref="BalanceAfter"/> is the lot's quantity after this movement, checked by the database.
 /// </summary>
 public sealed class StockMovement : Entity, IClinicOwned
 {
     public const int ReferenceMaxLength = 100;
     public const int NotesMaxLength = 500;
+    public const int ReasonMaxLength = 500;
     public const decimal MaxQuantity = 1_000_000m;
     public const decimal MaxUnitCost = 1_000_000_000m;
+
+    /// <summary>Partial unique index: a movement is reversed at most once.</summary>
+    public const string ReversalIndex = "ux_stock_movements_reverses_movement_id";
 
     public Guid ClinicId { get; set; }
 
@@ -153,7 +166,10 @@ public sealed class StockMovement : Entity, IClinicOwned
     /// <summary>Signed change of the lot's quantity (positive for stock coming in), at most 3 decimals.</summary>
     public decimal Quantity { get; set; }
 
-    /// <summary>Optional purchase cost per unit, in <see cref="Currency"/>.</summary>
+    /// <summary>The lot's quantity after this movement (0 or more): the running register.</summary>
+    public decimal BalanceAfter { get; set; }
+
+    /// <summary>Optional purchase cost per unit of a receipt, in <see cref="Currency"/>.</summary>
     public decimal? UnitCost { get; set; }
 
     /// <summary>The clinic currency when the cost was recorded; set exactly when <see cref="UnitCost"/> is.</summary>
@@ -164,18 +180,75 @@ public sealed class StockMovement : Entity, IClinicOwned
 
     public string? Notes { get; set; }
 
-    /// <summary>When the stock arrived: now or earlier.</summary>
+    /// <summary>Why the stock changed; required for adjustments, returns, expiry write-offs, reversals and any outgoing controlled movement.</summary>
+    public string? Reason { get; set; }
+
+    /// <summary>The patient a <see cref="StockMovementType.Dispense"/> was for (required there, absent elsewhere).</summary>
+    public Guid? PatientId { get; set; }
+
+    /// <summary>Optional consultation of that patient.</summary>
+    public Guid? ConsultationId { get; set; }
+
+    /// <summary>Optional line of an issued invoice that a <see cref="StockMovementType.Sell"/> was billed on (same product).</summary>
+    public Guid? InvoiceItemId { get; set; }
+
+    /// <summary>The movement a <see cref="StockMovementType.Reversal"/> undoes (same lot, opposite quantity).</summary>
+    public Guid? ReversesMovementId { get; set; }
+
+    /// <summary>A second staff member who witnessed a controlled-drug adjustment, write-off or reversal.</summary>
+    public Guid? WitnessUserId { get; set; }
+
+    public User? Witness { get; set; }
+
+    /// <summary>When it happened: now or earlier.</summary>
     public DateTimeOffset OccurredAt { get; set; }
 
     public Guid PerformedByUserId { get; set; }
 
     public User? PerformedBy { get; set; }
+
+    public static bool IsIncoming(StockMovementType type) =>
+        type is StockMovementType.Receive or StockMovementType.ReturnFromClient;
+
+    /// <summary>Types that need a reason whatever the product.</summary>
+    public static bool NeedsReason(StockMovementType type) =>
+        type is StockMovementType.Adjust or StockMovementType.ReturnToSupplier or StockMovementType.ReturnFromClient
+            or StockMovementType.Expire or StockMovementType.Reversal;
+
+    /// <summary>
+    /// Types that need a witness when the product is a controlled drug: everything that can take stock out except a
+    /// veterinarian's dispense (B-20 review).
+    /// </summary>
+    public static bool NeedsWitnessWhenControlled(StockMovementType type) =>
+        type is StockMovementType.Sell or StockMovementType.Adjust or StockMovementType.ReturnToSupplier
+            or StockMovementType.Expire or StockMovementType.Reversal;
 }
 
-/// <summary>Stored by name, so never rename a member without a data migration. B-20 adds the outgoing types.</summary>
+/// <summary>Stored by name, so never rename a member without a data migration.</summary>
 public enum StockMovementType
 {
+    /// <summary>Stock arriving into the lot it identifies (created when missing).</summary>
     Receive,
+
+    /// <summary>Given or used for a patient.</summary>
+    Dispense,
+
+    /// <summary>Sold over the counter, optionally billed on an issued invoice line.</summary>
+    Sell,
+
+    /// <summary>A count correction either way.</summary>
+    Adjust,
+
+    ReturnToSupplier,
+
+    /// <summary>An item coming back from a client (e.g. unopened retail stock).</summary>
+    ReturnFromClient,
+
+    /// <summary>Expired stock written off.</summary>
+    Expire,
+
+    /// <summary>Undoes one earlier movement recorded by mistake.</summary>
+    Reversal,
 }
 
 internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
@@ -192,6 +265,7 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
                 "ck_products_unit",
                 "unit IN ('Each', 'Tablet', 'Capsule', 'Millilitre', 'Litre', 'Gram', 'Kilogram', 'Dose', 'Vial', 'Ampoule', 'Bottle', 'Box', 'Pack')");
             table.HasCheckConstraint("ck_products_status", "status IN ('Active', 'Inactive')");
+            table.HasCheckConstraint("ck_products_controlled", "NOT controlled OR type = 'Medication'");
             table.HasCheckConstraint(
                 "ck_products_reorder_level",
                 $"reorder_level IS NULL OR (type <> 'Service' AND reorder_level >= 0 AND reorder_level <= {Product.MaxReorderLevel})");
@@ -259,23 +333,41 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
     {
         builder.ToTable("stock_movements", table =>
         {
-            table.HasCheckConstraint("ck_stock_movements_type", "type IN ('Receive')");
+            table.HasCheckConstraint(
+                "ck_stock_movements_type",
+                "type IN ('Receive', 'Dispense', 'Sell', 'Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal')");
+            // Incoming types add, outgoing types take; adjustments and reversals go either way.
             table.HasCheckConstraint(
                 "ck_stock_movements_quantity",
-                $"quantity <> 0 AND abs(quantity) <= {StockMovement.MaxQuantity} AND (type <> 'Receive' OR quantity > 0)");
+                $"quantity <> 0 AND abs(quantity) <= {StockMovement.MaxQuantity} " +
+                "AND (type NOT IN ('Receive', 'ReturnFromClient') OR quantity > 0) " +
+                "AND (type NOT IN ('Dispense', 'Sell', 'ReturnToSupplier', 'Expire') OR quantity < 0)");
+            table.HasCheckConstraint("ck_stock_movements_balance_after", $"balance_after >= 0 AND balance_after <= {StockLot.MaxQuantity}");
             table.HasCheckConstraint(
                 "ck_stock_movements_unit_cost",
-                $"(unit_cost IS NULL) = (currency IS NULL) AND (unit_cost IS NULL OR (unit_cost >= 0 AND unit_cost <= {StockMovement.MaxUnitCost}))");
+                $"(unit_cost IS NULL) = (currency IS NULL) AND (unit_cost IS NULL OR (type = 'Receive' AND unit_cost >= 0 AND unit_cost <= {StockMovement.MaxUnitCost}))");
             table.HasCheckConstraint("ck_stock_movements_currency", "currency ~ '^[A-Z]{3}$'");
             table.HasCheckConstraint("ck_stock_movements_reference", "reference IS NULL OR btrim(reference) <> ''");
             table.HasCheckConstraint("ck_stock_movements_notes", "notes IS NULL OR btrim(notes) <> ''");
+            table.HasCheckConstraint(
+                "ck_stock_movements_reason",
+                "(reason IS NULL OR btrim(reason) <> '') " +
+                "AND (type NOT IN ('Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal') OR reason IS NOT NULL)");
+            table.HasCheckConstraint("ck_stock_movements_patient", "(patient_id IS NOT NULL) = (type = 'Dispense')");
+            // The consultation key is checked only with a patient, so a consultation on another type would never be.
+            table.HasCheckConstraint("ck_stock_movements_consultation", "consultation_id IS NULL OR type = 'Dispense'");
+            table.HasCheckConstraint("ck_stock_movements_invoice_item", "invoice_item_id IS NULL OR type = 'Sell'");
+            table.HasCheckConstraint("ck_stock_movements_reversal", "(reverses_movement_id IS NOT NULL) = (type = 'Reversal')");
+            table.HasCheckConstraint("ck_stock_movements_witness", "witness_user_id IS NULL OR witness_user_id <> performed_by_user_id");
         });
-        builder.Property(m => m.Type).HasConversion<string>().HasMaxLength(16);
+        builder.Property(m => m.Type).HasConversion<string>().HasMaxLength(20);
         builder.Property(m => m.Quantity).HasPrecision(12, 3);
+        builder.Property(m => m.BalanceAfter).HasPrecision(15, 3);
         builder.Property(m => m.UnitCost).HasPrecision(19, 4);
         builder.Property(m => m.Currency).HasMaxLength(3).IsFixedLength();
         builder.Property(m => m.Reference).HasMaxLength(StockMovement.ReferenceMaxLength);
         builder.Property(m => m.Notes).HasMaxLength(StockMovement.NotesMaxLength);
+        builder.Property(m => m.Reason).HasMaxLength(StockMovement.ReasonMaxLength);
 
         builder.HasOne(m => m.Product).WithMany()
             .HasForeignKey(m => new { m.ClinicId, m.ProductId })
@@ -289,11 +381,37 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
             .HasForeignKey(m => new { m.ClinicId, m.PerformedByUserId })
             .HasPrincipalKey(u => new { u.ClinicId, u.Id })
             .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(m => m.Witness).WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.WitnessUserId })
+            .HasPrincipalKey(u => new { u.ClinicId, u.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Patient>().WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.PatientId })
+            .HasPrincipalKey(p => new { p.ClinicId, p.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        // The consultation must be the patient's (a composite key with a null part is not checked: no consultation).
+        builder.HasOne<Consultation>().WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.PatientId, m.ConsultationId })
+            .HasPrincipalKey(c => new { c.ClinicId, c.PatientId, c.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<InvoiceItem>().WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.InvoiceItemId })
+            .HasPrincipalKey(i => new { i.ClinicId, i.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        // A reversal undoes a movement of the same lot.
+        builder.HasAlternateKey(m => new { m.ClinicId, m.StockLotId, m.Id });
+        builder.HasOne<StockMovement>().WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.StockLotId, m.ReversesMovementId })
+            .HasPrincipalKey(m => new { m.ClinicId, m.StockLotId, m.Id })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Clinic>().WithMany().HasForeignKey(m => m.ClinicId).OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(m => m.ReversesMovementId).HasDatabaseName(StockMovement.ReversalIndex).IsUnique().HasFilter("reverses_movement_id IS NOT NULL");
 
         // A product's or a lot's movements, newest first; the lot key also serves the guard's sums.
         builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.OccurredAt });
         builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.StockLotId, m.OccurredAt }).HasDatabaseName("ix_stock_movements_lot_occurred_at");
         builder.HasIndex(m => new { m.ClinicId, m.OccurredAt, m.Id }); // the unfiltered list, newest first
+        builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.CreatedAt, m.Id }).HasDatabaseName("ix_stock_movements_register");
     }
 }
