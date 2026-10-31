@@ -109,6 +109,13 @@ public static class AuditActions
     public const string ProductCreated = "product.created";
     public const string ProductUpdated = "product.updated";
     public const string StockReceived = "stock.received";
+    public const string StockDispensed = "stock.dispensed";
+    public const string StockSold = "stock.sold";
+    public const string StockAdjusted = "stock.adjusted";
+    public const string StockReturnedToSupplier = "stock.returned_to_supplier";
+    public const string StockReturnedFromClient = "stock.returned_from_client";
+    public const string StockExpired = "stock.expired";
+    public const string StockReversed = "stock.reversed";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";

@@ -9,6 +9,7 @@ using VetPlatform.Api.Features.Appointments;
 using VetPlatform.Api.Features.Auth;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Identity;
+using VetPlatform.Api.Features.Inventory;
 using VetPlatform.Api.Features.Patients;
 using VetPlatform.Api.Features.Scheduling;
 
@@ -198,12 +199,17 @@ public sealed class VaccinationService(
         }
 
         ThrowIfAny(problems);
+        if (request.ProductId is { } productId)
+        {
+            await ProductLinks.CheckAsync(db, productId, ProductType.Vaccine, cancellationToken);
+        }
 
         var vaccination = new Vaccination
         {
             ClinicId = CurrentClinicId,
             PatientId = patient.Id,
             ConsultationId = request.ConsultationId,
+            ProductId = request.ProductId,
             VaccineName = request.VaccineName!.Trim(),
             Manufacturer = NullIfBlank(request.Manufacturer),
             LotNumber = NullIfBlank(request.LotNumber),
@@ -225,6 +231,7 @@ public sealed class VaccinationService(
             {
                 patientId = vaccination.PatientId,
                 consultationId = vaccination.ConsultationId,
+                productId = vaccination.ProductId,
                 veterinarianId = vaccination.VeterinarianId,
                 administeredElsewhere = elsewhere is not null,
             });

@@ -89,7 +89,7 @@ public sealed class VaccinationsTests(DatabaseApiFactory factory) : IClassFixtur
 
         var created = await OkAsync(response, HttpStatusCode.Created);
         Assert.Equal(
-            ["id", "patientId", "consultationId", "vaccineName", "manufacturer", "lotNumber", "lotExpiresOn", "administeredOn",
+            ["id", "patientId", "consultationId", "productId", "vaccineName", "manufacturer", "lotNumber", "lotExpiresOn", "administeredOn",
              "nextDueOn", "administeredElsewhere", "veterinarian", "notes", "status", "voidedAt", "voidedBy", "voidReason",
              "recordedBy", "createdAt", "updatedAt"],
             created.EnumerateObject().Select(p => p.Name));

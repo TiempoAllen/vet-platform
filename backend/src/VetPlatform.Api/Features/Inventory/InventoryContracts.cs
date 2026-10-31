@@ -21,6 +21,7 @@ public sealed record ProductResponse(
     string? Category,
     ProductType Type,
     ProductUnit Unit,
+    bool Controlled,
     decimal? ReorderLevel,
     decimal? DefaultUnitPrice,
     ProductTaxRateSummary? DefaultTaxRate,
@@ -31,7 +32,7 @@ public sealed record ProductResponse(
 {
     public static ProductResponse From(Product p, TaxRate? rate, decimal onHand) =>
         new(
-            p.Id, p.Sku, p.Name, p.Category, p.Type, p.Unit, Shortest(p.ReorderLevel), Shortest(p.DefaultUnitPrice),
+            p.Id, p.Sku, p.Name, p.Category, p.Type, p.Unit, p.Controlled, Shortest(p.ReorderLevel), Shortest(p.DefaultUnitPrice),
             rate is null ? null : new ProductTaxRateSummary(rate.Id, rate.Name, Currencies.Shortest(rate.RatePercent), rate.Status),
             p.Status, p.HoldsStock ? Currencies.Shortest(onHand) : null, p.CreatedAt, p.UpdatedAt);
 
@@ -40,7 +41,7 @@ public sealed record ProductResponse(
 
 /// <summary>
 /// A new product. <c>reorderLevel</c> is not allowed on services; <c>defaultTaxRateId</c> must be an active rate of
-/// the clinic; <c>defaultUnitPrice</c> is in the clinic currency.
+/// the clinic; <c>defaultUnitPrice</c> is in the clinic currency; <c>controlled</c> (default false) only on medications.
 /// </summary>
 public sealed record CreateProductRequest(
     [Required, MaxLength(Product.SkuMaxLength)] string? Sku,
@@ -50,11 +51,13 @@ public sealed record CreateProductRequest(
     [Required] ProductUnit? Unit,
     decimal? ReorderLevel,
     decimal? DefaultUnitPrice,
-    Guid? DefaultTaxRateId);
+    Guid? DefaultTaxRateId,
+    bool? Controlled);
 
 /// <summary>
 /// Partial update. Omitted fields are unchanged; <c>category: ""</c> clears the category; <c>null</c> clears the reorder
-/// level, the default price or the default tax rate. The type and unit cannot change once the product has stock lots.
+/// level, the default price or the default tax rate. The type, unit and controlled flag cannot change once the product
+/// has stock lots.
 /// </summary>
 public sealed record UpdateProductRequest(
     [MaxLength(Product.SkuMaxLength)] string? Sku,
@@ -65,7 +68,8 @@ public sealed record UpdateProductRequest(
     Optional<decimal?> ReorderLevel,
     Optional<decimal?> DefaultUnitPrice,
     Optional<Guid?> DefaultTaxRateId,
-    ProductStatus? Status);
+    ProductStatus? Status,
+    bool? Controlled);
 
 public sealed class ProductListQuery : PageQuery, IValidatableObject
 {
@@ -81,6 +85,9 @@ public sealed class ProductListQuery : PageQuery, IValidatableObject
     /// <summary>Exact category, ignoring case.</summary>
     [MaxLength(Product.CategoryMaxLength)]
     public string? Category { get; init; }
+
+    /// <summary>true: controlled drugs only; false: all others.</summary>
+    public bool? Controlled { get; init; }
 
     public ProductType? ParsedType => StrictEnum.TryParse<ProductType>(Type, out var type) ? type : null;
 
@@ -132,48 +139,73 @@ public sealed class StockListQuery : PageQuery
 
 public sealed record StockMovementLotSummary(Guid Id, string? LotNumber, DateOnly? ExpiresOn, string? Location, decimal Quantity);
 
-/// <summary>A recorded stock movement. <c>lot.quantity</c> is the lot's quantity now, not at the time of the movement.</summary>
+/// <summary>
+/// A recorded stock movement. <c>lot.quantity</c> is the lot's quantity now; <c>balanceAfter</c> is what it held right
+/// after this movement (the running register). <c>reversedByMovementId</c> names the reversal that undid it, if any.
+/// </summary>
 public sealed record StockMovementResponse(
     Guid Id,
     StockMovementType Type,
     StockProductSummary Product,
     StockMovementLotSummary Lot,
     decimal Quantity,
+    decimal BalanceAfter,
     decimal? UnitCost,
     string? Currency,
     string? Reference,
+    string? Reason,
     string? Notes,
+    Guid? PatientId,
+    Guid? ConsultationId,
+    Guid? InvoiceItemId,
+    Guid? ReversesMovementId,
+    Guid? ReversedByMovementId,
     DateTimeOffset OccurredAt,
     AppointmentPersonSummary? PerformedBy,
+    AppointmentPersonSummary? WitnessedBy,
     DateTimeOffset CreatedAt)
 {
-    /// <summary>The product, lot and person must be loaded (a missing person shows null).</summary>
-    public static StockMovementResponse From(StockMovement m, TimeZoneInfo zone) =>
+    /// <summary>The product, lot, performer and witness must be loaded (a missing person shows null).</summary>
+    public static StockMovementResponse From(StockMovement m, Guid? reversedBy, TimeZoneInfo zone) =>
         new(
             m.Id, m.Type, StockLotResponse.Summary(m.Product!),
             new StockMovementLotSummary(m.StockLot!.Id, m.StockLot.LotNumber, m.StockLot.ExpiresOn, m.StockLot.Location, Currencies.Shortest(m.StockLot.Quantity)),
-            Currencies.Shortest(m.Quantity), ProductResponse.Shortest(m.UnitCost), m.Currency, m.Reference, m.Notes,
-            TimeZoneInfo.ConvertTime(m.OccurredAt, zone),
-            m.PerformedBy is { } user ? new AppointmentPersonSummary(user.Id, user.Name) : null,
-            m.CreatedAt);
+            Currencies.Shortest(m.Quantity), Currencies.Shortest(m.BalanceAfter), ProductResponse.Shortest(m.UnitCost), m.Currency,
+            m.Reference, m.Reason, m.Notes, m.PatientId, m.ConsultationId, m.InvoiceItemId, m.ReversesMovementId, reversedBy,
+            TimeZoneInfo.ConvertTime(m.OccurredAt, zone), Person(m.PerformedBy), Person(m.Witness), m.CreatedAt);
+
+    private static AppointmentPersonSummary? Person(Identity.User? user) =>
+        user is null ? null : new AppointmentPersonSummary(user.Id, user.Name);
 }
 
 /// <summary>
-/// Records a stock movement. B-19 accepts only <c>Receive</c>: stock arriving into the lot identified by
-/// <c>lotNumber</c>, <c>expiresOn</c> and <c>location</c> (an existing matching lot is topped up, otherwise a lot is
-/// created). Medications and vaccines need <c>expiresOn</c>. <c>unitCost</c> is in the clinic currency.
+/// Records a stock movement (docs/API.md section 11.3). <c>Receive</c> names the product and the lot's identity
+/// (<c>lotNumber</c>, <c>expiresOn</c>, <c>location</c>; an existing matching lot is topped up). Every other type names
+/// an existing <c>stockLotId</c>. <c>quantity</c> is a positive amount for every type except <c>Adjust</c>, where its
+/// sign gives the direction. Reversals have their own endpoint.
 /// </summary>
 public sealed record RecordStockMovementRequest(
     [Required] StockMovementType? Type,
-    [Required] Guid? ProductId,
+    Guid? ProductId,
+    Guid? StockLotId,
     [Required] decimal? Quantity,
     [MaxLength(StockLot.LotNumberMaxLength)] string? LotNumber,
     DateOnly? ExpiresOn,
     [MaxLength(StockLot.LocationMaxLength)] string? Location,
     decimal? UnitCost,
     [MaxLength(StockMovement.ReferenceMaxLength)] string? Reference,
+    [MaxLength(StockMovement.ReasonMaxLength)] string? Reason,
     [MaxLength(StockMovement.NotesMaxLength)] string? Notes,
+    Guid? PatientId,
+    Guid? ConsultationId,
+    Guid? InvoiceItemId,
+    Guid? WitnessUserId,
     DateTimeOffset? OccurredAt);
+
+/// <summary>Undoes a movement recorded by mistake: the reason is required, and a witness when the product is controlled.</summary>
+public sealed record ReverseStockMovementRequest(
+    [Required, MaxLength(StockMovement.ReasonMaxLength)] string? Reason,
+    Guid? WitnessUserId);
 
 public sealed class StockMovementListQuery : PageQuery, IValidatableObject
 {

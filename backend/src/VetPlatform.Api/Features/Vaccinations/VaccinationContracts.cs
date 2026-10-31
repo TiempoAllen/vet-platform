@@ -11,6 +11,7 @@ public sealed record VaccinationResponse(
     Guid Id,
     Guid PatientId,
     Guid? ConsultationId,
+    Guid? ProductId,
     string VaccineName,
     string? Manufacturer,
     string? LotNumber,
@@ -31,7 +32,7 @@ public sealed record VaccinationResponse(
     /// <summary>Veterinarian, voider and recorder must be loaded (a missing one shows null).</summary>
     public static VaccinationResponse From(Vaccination v, TimeZoneInfo zone) =>
         new(
-            v.Id, v.PatientId, v.ConsultationId, v.VaccineName, v.Manufacturer, v.LotNumber, v.LotExpiresOn,
+            v.Id, v.PatientId, v.ConsultationId, v.ProductId, v.VaccineName, v.Manufacturer, v.LotNumber, v.LotExpiresOn,
             v.AdministeredOn, v.NextDueOn, v.AdministeredElsewhere, Person(v.Veterinarian), v.Notes, v.Status,
             v.VoidedAt is { } at ? TimeZoneInfo.ConvertTime(at, zone) : null,
             Person(v.VoidedBy), v.VoidReason, Person(v.RecordedBy), v.CreatedAt, v.UpdatedAt);
@@ -54,7 +55,8 @@ public sealed record RecordVaccinationRequest(
     [MaxLength(Vaccination.AdministeredElsewhereMaxLength)] string? AdministeredElsewhere,
     Guid? VeterinarianId,
     Guid? ConsultationId,
-    [MaxLength(Vaccination.NotesMaxLength)] string? Notes);
+    [MaxLength(Vaccination.NotesMaxLength)] string? Notes,
+    Guid? ProductId);
 
 public sealed record VoidVaccinationRequest([Required, MaxLength(Vaccination.ReasonMaxLength)] string? Reason);
 

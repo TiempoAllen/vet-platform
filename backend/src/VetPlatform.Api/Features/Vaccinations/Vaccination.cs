@@ -31,6 +31,9 @@ public sealed class Vaccination : Entity, IClinicOwned
     /// <summary>Optional: an in-progress or completed consultation of the same patient.</summary>
     public Guid? ConsultationId { get; set; }
 
+    /// <summary>Optional catalogue vaccine (a Vaccine product, active when linked; B-20). Linking never changes stock.</summary>
+    public Guid? ProductId { get; set; }
+
     /// <summary>Free text until the inventory product catalogue exists (B-19).</summary>
     public required string VaccineName { get; set; }
 
@@ -141,6 +144,10 @@ internal sealed class VaccinationConfiguration : IEntityTypeConfiguration<Vaccin
         builder.HasOne(v => v.RecordedBy).WithMany()
             .HasForeignKey(v => new { v.ClinicId, v.RecordedByUserId })
             .HasPrincipalKey(u => new { u.ClinicId, u.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Inventory.Product>().WithMany()
+            .HasForeignKey(v => new { v.ClinicId, v.ProductId })
+            .HasPrincipalKey(p => new { p.ClinicId, p.Id })
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Clinic>().WithMany().HasForeignKey(v => v.ClinicId).OnDelete(DeleteBehavior.Restrict);
 

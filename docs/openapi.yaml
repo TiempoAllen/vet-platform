@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.19.0
-  summary: Implemented endpoints as of milestone B-19.
+  version: 0.20.0
+  summary: Implemented endpoints as of milestone B-20.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (the rest of
@@ -2579,6 +2579,7 @@ paths:
         - { name: type, in: query, schema: { $ref: '#/components/schemas/ProductType' } }
         - { name: status, in: query, schema: { $ref: '#/components/schemas/ProductStatus' } }
         - { name: category, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: controlled, in: query, schema: { type: boolean } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
       responses:
@@ -2661,7 +2662,7 @@ paths:
       tags: [Inventory]
       operationId: updateProduct
       summary: Edit, deactivate or restore a product
-      description: Requires `inventory.manage`. Omitted fields are unchanged. The type and unit cannot change once the product has a stock lot (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
+      description: Requires `inventory.manage`. Omitted fields are unchanged. The type, unit and controlled flag cannot change once the product has a stock lot (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2733,12 +2734,13 @@ paths:
     post:
       tags: [Inventory]
       operationId: recordStockMovement
-      summary: Receive stock
+      summary: Record a stock movement
       description: >-
-        Requires `inventory.manage`. Only `Receive` exists until B-20. The stock goes into the product's lot with the same
-        lot number, expiry date and location (topped up), or a new lot. The product must be active and not a Service
-        (422); medications and vaccines need `expiresOn`; a lot holds at most 1,000,000,000 (409). No Location header
-        (there is no single-movement GET). Audited without lot numbers, locations, references or notes.
+        Requires `inventory.manage`, or `inventory.dispense` for Dispense only; dispensing a controlled drug also needs
+        `inventory.dispense_controlled` (veterinarians). Receive tops up the product's lot with the same lot number,
+        expiry date and location, or creates one. Stock never goes below 0 and a lot holds at most 1,000,000,000 (409).
+        Controlled drugs need a reason on Dispense and Sell and a witness on Adjust and Expire (422). No Location header
+        (there is no single-movement GET). Audited without lot numbers, locations, references, reasons or notes.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2758,6 +2760,63 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/inventory/movements/{id}/reverse:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Inventory]
+      operationId: reverseStockMovement
+      summary: Reverse a movement recorded by mistake
+      description: >-
+        Requires `inventory.manage`. Records the exact opposite movement on the same lot (type Reversal). A movement is
+        reversed at most once and a reversal is never reversed (409); a reversal that would take the lot below 0 is 409.
+        Controlled drugs need a witness (422). Audited without the reason.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReverseStockMovementRequest' }
+      responses:
+        '201':
+          description: The reversal.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovement' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/products/{id}/register:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Inventory]
+      operationId: getProductRegister
+      summary: A product's stock register
+      description: Requires `inventory.read`. Every movement of the product oldest first in the order recorded, each with its lot's balance after it (the controlled-drug register for controlled drugs).
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of movements.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovementPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/health:
@@ -2858,7 +2917,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage, inventory.dispense, inventory.dispense_controlled]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -3968,7 +4027,7 @@ components:
     Prescription:
       type: object
       additionalProperties: false
-      required: [id, medicationName, dose, route, frequency, duration, quantity, quantityUnit, refills, instructions, diagnosisId, status, prescribedBy, cancelledAt, cancelledBy, cancelReason, createdAt, updatedAt]
+      required: [id, medicationName, dose, route, frequency, duration, quantity, quantityUnit, refills, instructions, diagnosisId, productId, status, prescribedBy, cancelledAt, cancelledBy, cancelReason, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         medicationName: { type: string, maxLength: 200, description: Free text until the product catalogue exists (B-19). }
@@ -3981,6 +4040,7 @@ components:
         refills: { type: integer, minimum: 0, maximum: 12, description: Recorded only; repeat supplies are not tracked yet. }
         instructions: { type: [string, 'null'], maxLength: 2000 }
         diagnosisId: { type: [string, 'null'], format: uuid, description: A diagnosis of the same consultation; unlinked when it is removed. }
+        productId: { type: [string, 'null'], format: uuid, description: 'A Medication product (B-20); linking never changes stock.' }
         status: { $ref: '#/components/schemas/PrescriptionStatus' }
         prescribedBy:
           description: The veterinarian who added it.
@@ -4011,10 +4071,11 @@ components:
         refills: { type: [integer, 'null'], minimum: 0, maximum: 12 }
         instructions: { type: [string, 'null'], maxLength: 2000 }
         diagnosisId: { type: [string, 'null'], format: uuid }
+        productId: { type: [string, 'null'], format: uuid, description: An active Medication product of the clinic. }
 
     UpdatePrescriptionRequest:
       type: object
-      description: Omitted or null fields are unchanged; an empty string clears optional text (required text cannot be blank); an explicit null diagnosisId unlinks.
+      description: Omitted or null fields are unchanged; an empty string clears optional text (required text cannot be blank); an explicit null diagnosisId or productId unlinks.
       properties:
         medicationName: { type: [string, 'null'], minLength: 1, maxLength: 200 }
         dose: { type: [string, 'null'], minLength: 1, maxLength: 100 }
@@ -4026,6 +4087,7 @@ components:
         refills: { type: [integer, 'null'], minimum: 0, maximum: 12 }
         instructions: { type: [string, 'null'], maxLength: 2000 }
         diagnosisId: { type: [string, 'null'], format: uuid }
+        productId: { type: [string, 'null'], format: uuid, description: An active Medication product; an explicit null unlinks. }
 
     CancelPrescriptionRequest:
       type: object
@@ -4058,11 +4120,12 @@ components:
     Vaccination:
       type: object
       additionalProperties: false
-      required: [id, patientId, consultationId, vaccineName, manufacturer, lotNumber, lotExpiresOn, administeredOn, nextDueOn, administeredElsewhere, veterinarian, notes, status, voidedAt, voidedBy, voidReason, recordedBy, createdAt, updatedAt]
+      required: [id, patientId, consultationId, productId, vaccineName, manufacturer, lotNumber, lotExpiresOn, administeredOn, nextDueOn, administeredElsewhere, veterinarian, notes, status, voidedAt, voidedBy, voidReason, recordedBy, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         patientId: { type: string, format: uuid }
         consultationId: { type: [string, 'null'], format: uuid }
+        productId: { type: [string, 'null'], format: uuid, description: 'A Vaccine product (B-20); linking never changes stock.' }
         vaccineName: { type: string, maxLength: 200, description: Free text until the product catalogue exists (B-19). }
         manufacturer: { type: [string, 'null'], maxLength: 100 }
         lotNumber: { type: [string, 'null'], maxLength: 50 }
@@ -4114,6 +4177,7 @@ components:
         veterinarianId: { type: [string, 'null'], format: uuid }
         consultationId: { type: [string, 'null'], format: uuid, description: An in-progress or completed consultation of the same patient. }
         notes: { type: [string, 'null'], maxLength: 2000 }
+        productId: { type: [string, 'null'], format: uuid, description: An active Vaccine product of the clinic. }
 
     VoidVaccinationRequest:
       type: object
@@ -4688,13 +4752,12 @@ components:
 
     StockMovementType:
       type: string
-      enum: [Receive]
-      description: B-20 adds the outgoing types.
+      enum: [Receive, Dispense, Sell, Adjust, ReturnToSupplier, ReturnFromClient, Expire, Reversal]
 
     Product:
       type: object
       additionalProperties: false
-      required: [id, sku, name, category, type, unit, reorderLevel, defaultUnitPrice, defaultTaxRate, status, quantityOnHand, createdAt, updatedAt]
+      required: [id, sku, name, category, type, unit, controlled, reorderLevel, defaultUnitPrice, defaultTaxRate, status, quantityOnHand, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         sku: { type: string, maxLength: 50 }
@@ -4702,6 +4765,7 @@ components:
         category: { type: [string, 'null'], maxLength: 100 }
         type: { $ref: '#/components/schemas/ProductType' }
         unit: { $ref: '#/components/schemas/ProductUnit' }
+        controlled: { type: boolean, description: 'A controlled drug (medications only, B-20).' }
         reorderLevel: { type: [number, 'null'], description: Always null for services. }
         defaultUnitPrice: { type: [number, 'null'], description: 'Suggested unit price in the clinic currency, before tax.' }
         defaultTaxRate:
@@ -4741,6 +4805,7 @@ components:
         reorderLevel: { type: [number, 'null'], minimum: 0, maximum: 1000000, description: At most 3 decimals; not on services. }
         defaultUnitPrice: { type: [number, 'null'], minimum: 0, maximum: 1000000000, description: At most 4 decimals. }
         defaultTaxRateId: { type: [string, 'null'], format: uuid, description: An active rate of the clinic. }
+        controlled: { type: [boolean, 'null'], description: 'Default false; medications only; fixed once the product has a lot.' }
 
     UpdateProductRequest:
       type: object
@@ -4760,6 +4825,7 @@ components:
         reorderLevel: { type: [number, 'null'], minimum: 0, maximum: 1000000 }
         defaultUnitPrice: { type: [number, 'null'], minimum: 0, maximum: 1000000000 }
         defaultTaxRateId: { type: [string, 'null'], format: uuid }
+        controlled: { type: [boolean, 'null'], description: 'Medications only; fixed once the product has a lot (409).' }
         status:
           oneOf:
             - $ref: '#/components/schemas/ProductStatus'
@@ -4801,7 +4867,7 @@ components:
     StockMovement:
       type: object
       additionalProperties: false
-      required: [id, type, product, lot, quantity, unitCost, currency, reference, notes, occurredAt, performedBy, createdAt]
+      required: [id, type, product, lot, quantity, balanceAfter, unitCost, currency, reference, reason, notes, patientId, consultationId, invoiceItemId, reversesMovementId, reversedByMovementId, occurredAt, performedBy, witnessedBy, createdAt]
       properties:
         id: { type: string, format: uuid }
         type: { $ref: '#/components/schemas/StockMovementType' }
@@ -4817,12 +4883,23 @@ components:
             location: { type: [string, 'null'] }
             quantity: { type: number, description: "The lot's quantity now." }
         quantity: { type: number, description: Signed change of the lot (positive for stock coming in). }
+        balanceAfter: { type: number, minimum: 0, description: 'What the lot held right after this movement, in the order recorded.' }
         unitCost: { type: [number, 'null'] }
         currency: { type: [string, 'null'], description: 'ISO 4217; set exactly when unitCost is.' }
         reference: { type: [string, 'null'] }
+        reason: { type: [string, 'null'] }
         notes: { type: [string, 'null'] }
+        patientId: { type: [string, 'null'], format: uuid, description: Dispense only. }
+        consultationId: { type: [string, 'null'], format: uuid }
+        invoiceItemId: { type: [string, 'null'], format: uuid, description: Sell only. }
+        reversesMovementId: { type: [string, 'null'], format: uuid, description: Reversal only. }
+        reversedByMovementId: { type: [string, 'null'], format: uuid, description: The reversal that undid this movement. }
         occurredAt: { type: string, format: date-time, description: "Carries the clinic's offset." }
         performedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        witnessedBy:
           oneOf:
             - $ref: '#/components/schemas/PersonSummary'
             - type: 'null'
@@ -4839,18 +4916,34 @@ components:
 
     RecordStockMovementRequest:
       type: object
-      required: [type, productId, quantity]
+      required: [type, quantity]
+      description: >-
+        Receive names productId and the lot identity; every other type names stockLotId. Fields a type does not use are
+        422 (see API.md 11.3). Reversal is only possible through the reverse endpoint.
       properties:
         type: { $ref: '#/components/schemas/StockMovementType' }
-        productId: { type: string, format: uuid, description: 'An active, non-Service product of the clinic.' }
-        quantity: { type: number, exclusiveMinimum: 0, maximum: 1000000, description: "At most 3 decimals, in the product's unit." }
-        lotNumber: { type: [string, 'null'], maxLength: 50 }
-        expiresOn: { type: [string, 'null'], format: date, description: 'Required for Medication and Vaccine; not before the clinic-local today, not after 2100-12-31.' }
-        location: { type: [string, 'null'], maxLength: 100 }
-        unitCost: { type: [number, 'null'], minimum: 0, maximum: 1000000000, description: 'In the clinic currency (must be set); at most 4 decimals.' }
+        productId: { type: [string, 'null'], format: uuid, description: 'Receive: an active, non-Service product. Otherwise optional and must be the lot''s product.' }
+        stockLotId: { type: [string, 'null'], format: uuid, description: Required for every type but Receive. }
+        quantity: { type: number, minimum: -1000000, maximum: 1000000, description: "Above 0 (Adjust: not 0, negative takes stock out); at most 3 decimals, in the product's unit." }
+        lotNumber: { type: [string, 'null'], maxLength: 50, description: Receive only. }
+        expiresOn: { type: [string, 'null'], format: date, description: 'Receive only; required for Medication and Vaccine; not before the clinic-local today, not after 2100-12-31.' }
+        location: { type: [string, 'null'], maxLength: 100, description: Receive only. }
+        unitCost: { type: [number, 'null'], minimum: 0, maximum: 1000000000, description: 'Receive only; in the clinic currency (must be set); at most 4 decimals.' }
         reference: { type: [string, 'null'], maxLength: 100 }
+        reason: { type: [string, 'null'], maxLength: 500, description: 'Required for Adjust, ReturnToSupplier, ReturnFromClient and Expire, and for Dispense and Sell of controlled drugs.' }
         notes: { type: [string, 'null'], maxLength: 500 }
+        patientId: { type: [string, 'null'], format: uuid, description: Required for Dispense (an active patient); not used otherwise. }
+        consultationId: { type: [string, 'null'], format: uuid, description: 'Dispense only: an in-progress or completed consultation of the patient.' }
+        invoiceItemId: { type: [string, 'null'], format: uuid, description: 'Sell only: a line of an issued invoice that links the same product.' }
+        witnessUserId: { type: [string, 'null'], format: uuid, description: 'Another active staff member; required for Adjust and Expire of controlled drugs; not on Receive.' }
         occurredAt: { type: [string, 'null'], format: date-time, description: 'Default now; not in the future or before 2000.' }
+
+    ReverseStockMovementRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+        witnessUserId: { type: [string, 'null'], format: uuid, description: 'Another active staff member; required when the product is a controlled drug.' }
 
   responses:
     BadRequest:

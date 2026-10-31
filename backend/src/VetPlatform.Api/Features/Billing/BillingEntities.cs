@@ -387,6 +387,9 @@ internal sealed class InvoiceItemConfiguration : IEntityTypeConfiguration<Invoic
         builder.HasOne<Clinic>().WithMany().HasForeignKey(i => i.ClinicId).OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(i => new { i.ClinicId, i.InvoiceId, i.Position }).IsUnique();
+
+        // Stock sales reference a line of their own clinic through this key (B-20).
+        builder.HasAlternateKey(i => new { i.ClinicId, i.Id });
     }
 }
 

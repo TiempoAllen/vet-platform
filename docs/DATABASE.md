@@ -199,6 +199,8 @@ Implemented in B-13 (table `prescriptions`, ADR-013). `veterinarian_id` in the o
 - diagnosis_id (nullable): composite FK `(clinic_id, consultation_id, diagnosis_id) → diagnoses (clinic_id,
   consultation_id, id)` RESTRICT; the service unlinks it before removing the diagnosis (a raw delete of a linked
   diagnosis fails)
+- product_id (nullable, B-20): composite FK (clinic_id, product_id) → products; the service requires an active
+  `Medication` product; frozen after sign-off with the rest of the row
 - medication_name (max 200), dose, frequency (max 100 each), quantity_unit (max 50): required, CHECK not blank; route,
   duration (max 100 each), instructions (max 2000) optional
 - quantity `numeric(10,3)` (CHECK > 0 and ≤ 100000), refills (CHECK 0 to 12)
@@ -224,6 +226,8 @@ dates `administered_on` / `next_due_on`.
 - consultation_id (nullable): composite FK `(clinic_id, patient_id, consultation_id) → consultations (clinic_id,
   patient_id, id)` RESTRICT, so a linked consultation is always the same patient's (the patient keeps its own key
   because a composite key with a null part is not checked)
+- product_id (nullable, B-20): composite FK (clinic_id, product_id) → products; the service requires an active
+  `Vaccine` product
 - vaccine_name (max 200, CHECK not blank), manufacturer (max 100), lot_number (max 50), lot_expires_on (date), notes
   (max 2000)
 - administered_on (date), next_due_on (date): CHECK `ck_vaccinations_dates` (2000-01-01 to 2100-12-31; next due after
@@ -323,7 +327,8 @@ discount type and value plus computed amounts; `product_id` arrived with B-19 (s
 - tax_rate_id: composite FK to tax_rates (clinic_id, id); tax_rate_name and tax_rate_percent: copies (CHECK 0 to 100)
 - consultation_id (nullable): composite FK to consultations (clinic_id, id); the service requires the invoice's patient
 - product_id (nullable, B-19): composite FK (clinic_id, product_id) → products (clinic_id, id), index
-  (clinic_id, product_id); the service requires an active product when linking
+  (clinic_id, product_id); the service requires an active product when linking. Alternate key (clinic_id, id) for
+  stock sales (B-20)
 - net, discount, tax, total `numeric(19,4)`: CHECK non-negative, discount ≤ net, total = net − discount + tax and
   total ≤ 1,000,000,000,000
 - created_at, updated_at
@@ -399,8 +404,9 @@ clients' and patients' details **at migration time**, not at issue (the best ava
 shows the newer address on those old invoices). Rolling back refuses while receipts or non-draft invoices exist.
 
 ## 8. Inventory
-Products, stock lots and stock movements are implemented in B-19 (ADR-019); B-19 records only `Receive` movements.
-Stock is derived from movements: a lot's stored quantity must equal the sum of its movements at commit.
+Products, stock lots and stock movements are implemented in B-19 (ADR-019); outgoing movements, controlled drugs
+and reversals in B-20 (ADR-020). Stock is derived from movements: a lot's stored quantity must equal the sum of its
+movements at commit, and never goes below 0.
 
 ### Product
 Table `products`.
@@ -414,10 +420,11 @@ Table `products`.
 - default_unit_price `numeric(19,4)` (nullable; CHECK 0 to 1,000,000,000)
 - default_tax_rate_id (nullable): composite FK (clinic_id, default_tax_rate_id) → tax_rates (clinic_id, id)
 - status (`Active`, `Inactive`; CHECK), created_at, updated_at
+- controlled (boolean, default false, B-20; CHECK only for `Medication`)
 
 Alternate key (clinic_id, id) for lots, movements and invoice lines. Indexes (clinic_id, name) and
-(clinic_id, default_tax_rate_id). Trigger `products_guard`: no DELETE; id and clinic never change; type and unit
-change only while the product has no lot (the UPDATE holds the row lock, so a lot being inserted has committed and is
+(clinic_id, default_tax_rate_id). Trigger `products_guard`: no DELETE; id and clinic never change; type, unit and
+controlled change only while the product has no lot (the UPDATE holds the row lock, so a lot being inserted has committed and is
 seen). `products_no_truncate` refuses TRUNCATE.
 
 ### StockLot
@@ -435,15 +442,29 @@ expiry; an UPDATE may change nothing but quantity and `updated_at`; no DELETE; T
 trigger `stock_lots_match_movements`: at commit, the quantity equals the sum of the lot's movements.
 
 ### StockMovement
-Table `stock_movements`. Append-only: `stock_movements_guard` refuses UPDATE and DELETE, and on INSERT locks the
-product `FOR SHARE` and refuses a `Receive` into a product that is not active; `stock_movements_no_truncate` refuses
-TRUNCATE.
+Table `stock_movements`. Append-only: `stock_movements_guard` refuses UPDATE and DELETE; on INSERT it locks the
+product `FOR SHARE` (refusing a `Receive` into a product that is not active), then the lot `FOR NO KEY UPDATE` (so a
+lot's movements queue), and checks that `balance_after` is the sum of the lot's earlier movements plus this one, the
+controlled-drug reason (Dispense, Sell) and witness (Adjust, Expire, Reversal) rules, that a reversal exactly undoes a
+non-reversal of the same lot, and that a sale's invoice line is on an issued invoice for the same product.
+`stock_movements_no_truncate` refuses TRUNCATE.
 - id, clinic_id; product_id and stock_lot_id: composite FK (clinic_id, product_id, stock_lot_id) → stock_lots
   (clinic_id, product_id, id), so the lot is always the product's; also (clinic_id, product_id) → products
-- type (`Receive` only in B-19; CHECK; B-20 widens it)
-- quantity `numeric(12,3)`: signed change of the lot (CHECK not 0, at most 1,000,000 either way, above 0 for `Receive`)
-- unit_cost `numeric(19,4)` and currency `char(3)`: both null or both set (CHECK; cost 0 to 1,000,000,000; ISO
-  pattern)
+- type (`Receive`, `Dispense`, `Sell`, `Adjust`, `ReturnToSupplier`, `ReturnFromClient`, `Expire`, `Reversal`; CHECK;
+  max 20)
+- quantity `numeric(12,3)`: signed change of the lot (CHECK not 0, at most 1,000,000 either way, above 0 for
+  `Receive` and `ReturnFromClient`, below 0 for `Dispense`, `Sell`, `ReturnToSupplier` and `Expire`)
+- balance_after `numeric(15,3)` (B-20; CHECK 0 to 1,000,000,000): the lot after this movement; B-19 rows backfilled
+- unit_cost `numeric(19,4)` and currency `char(3)`: both null or both set, receipts only (CHECK; cost 0 to
+  1,000,000,000; ISO pattern)
+- reason (max 500; CHECK not blank; required for `Adjust`, both returns, `Expire` and `Reversal`)
+- patient_id (CHECK set exactly for `Dispense`): composite FK (clinic_id, patient_id) → patients; consultation_id:
+  composite FK (clinic_id, patient_id, consultation_id) → consultations (clinic_id, patient_id, id)
+- invoice_item_id (CHECK `Sell` only): composite FK (clinic_id, invoice_item_id) → invoice_items (clinic_id, id)
+- reverses_movement_id (CHECK set exactly for `Reversal`): composite FK (clinic_id, stock_lot_id, reverses_movement_id)
+  → stock_movements (clinic_id, stock_lot_id, id), so it is a movement of the same lot; partial unique index
+  `ux_stock_movements_reverses_movement_id` (one reversal per movement)
+- witness_user_id: composite FK to users (CHECK not the performer)
 - reference (max 100), notes (max 500): nullable, CHECK not blank
 - occurred_at, performed_by_user_id (composite FK to users), created_at, updated_at
 
