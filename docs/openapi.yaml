@@ -5,8 +5,8 @@ info:
   summary: Implemented endpoints as of milestone B-19.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (clinical,
-    billing, inventory, reports) are listed in `API.md` sections 7-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (the rest of
+    inventory, reports) are listed in `API.md` sections 11-12 and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -3435,7 +3435,7 @@ components:
       type: object
       properties:
         timeZone: { type: [string, 'null'], maxLength: 64, description: 'IANA id, e.g. Europe/London.' }
-        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice.' }
+        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice, a costed stock receipt or a product default price.' }
 
     DayOfWeek:
       type: string

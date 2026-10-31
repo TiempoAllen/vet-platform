@@ -122,7 +122,7 @@ public sealed class StockService(
             throw Invalid("productId", ProductNotFound);
         }
 
-        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM products WHERE id = {productId} FOR NO KEY UPDATE", cancellationToken);
+        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM products WHERE id = {productId} AND clinic_id = {clinic.Id} FOR NO KEY UPDATE", cancellationToken);
         var product = await db.Products.SingleAsync(p => p.Id == productId, cancellationToken);
         if (product.Status != ProductStatus.Active)
         {
@@ -186,7 +186,16 @@ public sealed class StockService(
             new { productId, stockLotId = lot.Id, newLot, quantity, unitCost = movement.UnitCost, currency = movement.Currency });
 
         // The lot and the movement in one save: the database checks at commit that the lot equals its movements.
-        await db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation, ConstraintName: StockLot.IdentityIndex })
+        {
+            // Not expected under the product lock; kept so a collision is a retryable 409, not a 500.
+            throw new ApiException(StatusCodes.Status409Conflict, ErrorCodes.Conflict, "The lot was created at the same time; try again.");
+        }
         await transaction.CommitAsync(cancellationToken);
 
         var saved = await WithDetails(db.StockMovements.AsNoTracking()).SingleAsync(m => m.Id == movement.Id, cancellationToken);
