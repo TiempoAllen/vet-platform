@@ -81,7 +81,7 @@ public sealed class PrescriptionsTests(DatabaseApiFactory factory) : IClassFixtu
         var prescription = consultation.GetProperty("prescriptions")[0];
         Assert.Equal(
             ["id", "medicationName", "dose", "route", "frequency", "duration", "quantity", "quantityUnit", "refills", "instructions",
-             "diagnosisId", "status", "prescribedBy", "cancelledAt", "cancelledBy", "cancelReason", "createdAt", "updatedAt"],
+             "diagnosisId", "productId", "status", "prescribedBy", "cancelledAt", "cancelledBy", "cancelReason", "createdAt", "updatedAt"],
             prescription.EnumerateObject().Select(p => p.Name));
         Assert.Equal("Meloxicam 1.5 mg/ml", prescription.GetProperty("medicationName").GetString());
         Assert.Equal(JsonValueKind.Null, prescription.GetProperty("route").ValueKind);

@@ -164,6 +164,8 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `payments.refund` | ✓ | – | – | – | – |
 | `inventory.read` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `inventory.manage` | ✓ | – | – | – | ✓ |
+| `inventory.dispense` | – | ✓ | ✓ | – | – |
+| `inventory.dispense_controlled` | – | ✓ | – | – | – |
 
 **User object**
 
@@ -770,15 +772,17 @@ clinical reader sees them.
     {
       "id": "uuid", "medicationName": "Amoxicillin 250 mg", "dose": "1 tablet", "route": "Oral" | null,
       "frequency": "Twice daily", "duration": "7 days" | null, "quantity": 14, "quantityUnit": "tablets",
-      "refills": 0, "instructions": "Give with food" | null, "diagnosisId": "uuid" | null,
+      "refills": 0, "instructions": "Give with food" | null, "diagnosisId": "uuid" | null, "productId": "uuid" | null,
       "status": "Active" | "Cancelled", "prescribedBy": { "id", "name" } | null,
       "cancelledAt": "..." | null, "cancelledBy": { "id", "name" } | null, "cancelReason": "..." | null,
       "createdAt": "...", "updatedAt": "..."
     }
 
 `medicationName` (max 200), `dose` and `frequency` (max 100 each), `quantity` and `quantityUnit` (max 50) are required;
-`route`, `duration` (max 100 each) and `instructions` (max 2000) are optional. `medicationName` is free text; linking it
-to a catalogue product comes with dispensing (B-20, ADR-019). `quantity` is a number above 0 and at most 100000 with at most 3
+`route`, `duration` (max 100 each) and `instructions` (max 2000) are optional. `medicationName` is free text;
+`productId` (optional, B-20) links an **active `Medication` product** of the clinic (`422` otherwise; `null` in a
+PATCH unlinks; frozen with the prescription after sign-off). Linking never changes stock: dispensing is a stock
+movement (section 11.3). `quantity` is a number above 0 and at most 100000 with at most 3
 decimals (e.g. 14 tablets, 10.5 ml); it is returned in its shortest form. `refills` (0 to 12, default 0) is recorded
 only; repeat supplies are not tracked yet. `diagnosisId` links one diagnosis of the **same** consultation (`422`
 otherwise); removing that diagnosis unlinks the prescription. `prescribedBy` is the veterinarian who added it.
@@ -819,7 +823,7 @@ link to a consultation. Records are never edited or deleted: one entered in erro
 kept, shown as voided and left out of due dates) and the right one is recorded again.
 
     {
-      "id": "uuid", "patientId": "uuid", "consultationId": "uuid" | null,
+      "id": "uuid", "patientId": "uuid", "consultationId": "uuid" | null, "productId": "uuid" | null,
       "vaccineName": "Rabies", "manufacturer": "VetPharma" | null, "lotNumber": "R-77" | null,
       "lotExpiresOn": "2027-10-01" | null, "administeredOn": "2026-10-25", "nextDueOn": "2029-10-25" | null,
       "administeredElsewhere": "Previous clinic" | null, "veterinarian": { "id", "name" } | null,
@@ -833,7 +837,9 @@ Dates are calendar days (`YYYY-MM-DD`) in the clinic's time zone; `voidedAt` car
 
 `POST /api/patients/:id/vaccinations` (`clinical.write`: Veterinarian, Nurse) records a dose: `201` with the
 vaccination and `Location: /api/vaccinations/:id`.
-- `vaccineName` (required, max 200; free text; a catalogue link comes with dispensing, B-20), `manufacturer` (max 100),
+- `productId` (optional, B-20): an **active `Vaccine` product** of the clinic (`422` otherwise). It does not change
+  stock; record a `Dispense` movement for the dose given (section 11.3).
+- `vaccineName` (required, max 200; free text even with a product), `manufacturer` (max 100),
   `lotNumber` (max 50), `lotExpiresOn` (2000-01-01 to 2100-12-31), `notes` (max 2000). Optional text may be omitted,
   `null` or blank.
 - `administeredOn` (required): from 2000-01-01 up to **today** in the clinic's time zone; past dates record earlier
@@ -1151,20 +1157,21 @@ entry had no signed-in user or the account cannot be shown (only this clinic's s
 search is B-27.
 
 ## 11. Inventory
-Products and stock are implemented in B-19 (ADR-019). Stock is held **per lot** and changes **only through recorded
-stock movements**; B-19 records one movement type, `Receive`. Outgoing movements (dispense, sell, adjust, return,
-expire), the negative-stock rule and controlled-drug logging come with B-20 (SRS Q-5); suppliers and purchase orders
-with B-21; low-stock and expiring-soon queries with B-22.
+Products and stock are implemented in B-19 (ADR-019), outgoing movements, reversals, controlled drugs and the
+register in B-20 (ADR-020). Stock is held **per lot**, changes **only through recorded stock movements** and **never
+goes negative**. Suppliers and purchase orders come with B-21; low-stock and expiring-soon queries with B-22.
 
-Permissions: `inventory.read` (Admin, Veterinarian, Nurse, Receptionist, Inventory) reads products, stock and
-movements; `inventory.manage` (Admin, Inventory) creates and edits products and receives stock. Other clinics' products
+Permissions: `inventory.read` (Admin, Veterinarian, Nurse, Receptionist, Inventory) reads products, stock, movements
+and registers; `inventory.manage` (Admin, Inventory) creates and edits products and records every movement type;
+`inventory.dispense` (Veterinarian, Nurse) records `Dispense` movements; `inventory.dispense_controlled`
+(Veterinarian only) is also needed to dispense a controlled drug. Other clinics' products
 are `404`; another clinic's product in a body is `422` with the same message as an unknown one.
 
 ### 11.1 Products
 
     {
       "id": "uuid", "sku": "AMX-250", "name": "Amoxicillin 250 mg", "category": "Antibiotics" | null,
-      "type": "Medication" | "Vaccine" | "Supply" | "Retail" | "Service",
+      "type": "Medication" | "Vaccine" | "Supply" | "Retail" | "Service", "controlled": false,
       "unit": "Each" | "Tablet" | "Capsule" | "Millilitre" | "Litre" | "Gram" | "Kilogram" | "Dose" | "Vial" | "Ampoule" | "Bottle" | "Box" | "Pack",
       "reorderLevel": 100 | null, "defaultUnitPrice": 0.45 | null,
       "defaultTaxRate": { "id": "uuid", "name": "Standard", "percent": 20, "status": "Active" | "Archived" } | null,
@@ -1179,7 +1186,7 @@ are `404`; another clinic's product in a body is `422` with the same message as 
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `GET /api/products` | `inventory.read` | Ordered by name, paginated. `q` (part of the name or SKU, ignoring case), `type`, `status`, `category` (exact, ignoring case). |
+| `GET /api/products` | `inventory.read` | Ordered by name, paginated. `q` (part of the name or SKU, ignoring case), `type`, `status`, `category` (exact, ignoring case), `controlled` (`true` or `false`). |
 | `GET /api/products/categories` | `inventory.read` | The categories in use, as a sorted JSON array of strings (one spelling per category ignoring case), for a picker. |
 | `GET /api/products/:id` | `inventory.read` | `200` or `404`. |
 | `POST /api/products` | `inventory.manage` | Fields below. `201` with `Location: /api/products/:id`. |
@@ -1188,13 +1195,15 @@ are `404`; another clinic's product in a body is `422` with the same message as 
 **Fields:** `sku` (required, max 50, trimmed; letters, digits and `- . _ /`, starting with a letter or digit; **unique
 per clinic ignoring case**, inactive products included: `409`), `name` (required, max 200), `category` (optional, max
 100), `type` and `unit` (required on create), `reorderLevel` (0 to 1,000,000, at most 3 decimals; not on services),
-`defaultUnitPrice` (0 to 1,000,000,000, at most 4 decimals), `defaultTaxRateId` (an active rate of the clinic).
+`defaultUnitPrice` (0 to 1,000,000,000, at most 4 decimals), `defaultTaxRateId` (an active rate of the clinic),
+`controlled` (default `false`; a controlled drug, **medications only**, B-20).
 Missing, too long or malformed fields (SKU pattern, blank name) are `422` before the product is looked up; then
 `404`; then the value rules (amounts, tax rate) in one `422`. In a `PATCH`, `null` for `sku`, `name`, `category`,
-`type`, `unit` or `status` leaves the field unchanged.
-**The type and unit cannot change once the product has a stock lot** (`409`); before that they can. Products are never
+`type`, `unit`, `status` or `controlled` leaves the field unchanged.
+**The type, unit and controlled flag cannot change once the product has a stock lot** (`409`); before that they can. Products are never
 deleted: deactivate them. An inactive product cannot be received into or linked to a new invoice line; its stock and
-existing links stay. Changes are audited (`product.created`, `product.updated`, with field names, type and status;
+existing links stay; stock may still leave it. Changes are audited (`product.created`, `product.updated`, with
+field names, type, status and the controlled flag;
 never names, SKUs or categories). Reads are not audited.
 
 ### 11.2 Stock lots
@@ -1212,40 +1221,99 @@ location** (each optional; lot number and location compared ignoring case); it i
 only movements change its quantity, and the database checks at commit that it equals the sum of its movements.
 
 ### 11.3 Stock movements
+Implemented in B-19 (`Receive`) and B-20 (ADR-020; SRS Q-5 answered: **stock never goes negative**, controlled drugs
+are kept in a register with reasons and witnesses).
 
     {
-      "id": "uuid", "type": "Receive",
+      "id": "uuid", "type": "Receive" | "Dispense" | "Sell" | "Adjust" | "ReturnToSupplier" | "ReturnFromClient" | "Expire" | "Reversal",
       "product": { "id", "sku", "name", "unit" },
       "lot": { "id": "uuid", "lotNumber": "L-1" | null, "expiresOn": "2027-10-01" | null, "location": "Pharmacy" | null, "quantity": 120.5 },
-      "quantity": 20.5, "unitCost": 0.1234 | null, "currency": "EUR" | null,
-      "reference": "DN-5531" | null, "notes": "..." | null,
-      "occurredAt": "...", "performedBy": { "id", "name" } | null, "createdAt": "..."
+      "quantity": -2, "balanceAfter": 118.5, "unitCost": 0.1234 | null, "currency": "EUR" | null,
+      "reference": "DN-5531" | null, "reason": "..." | null, "notes": "..." | null,
+      "patientId": "uuid" | null, "consultationId": "uuid" | null, "invoiceItemId": "uuid" | null,
+      "reversesMovementId": "uuid" | null, "reversedByMovementId": "uuid" | null,
+      "occurredAt": "...", "performedBy": { "id", "name" } | null, "witnessedBy": { "id", "name" } | null, "createdAt": "..."
     }
 
-`quantity` is the signed change of the lot (positive for stock coming in); `lot.quantity` is the lot's quantity
-**now**. `occurredAt` carries the clinic's offset. Movements are never edited or deleted.
+`quantity` is the signed change of the lot (positive for stock coming in); `balanceAfter` is what the lot held right
+after this movement (0 or more), in the order movements were recorded; `lot.quantity` is the lot's quantity **now**.
+`reversedByMovementId` names the reversal that undid this movement. `patientId` and `consultationId` are ids only
+(patient names need `patients.read`). `occurredAt` carries the clinic's offset. Movements are never edited or deleted.
 
-- `GET /api/inventory/movements` (`inventory.read`): newest first (`occurredAt`), paginated; filters `productId`,
-  `stockLotId`, `type`.
-- `POST /api/inventory/movements` (`inventory.manage`): records a movement; B-19 accepts only `"type": "Receive"`
-  (any other value is `400`). `201` with the movement (no `Location`: there is no single-movement `GET`).
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /api/inventory/movements` | `inventory.read` | Newest first (`occurredAt`), paginated; filters `productId`, `stockLotId`, `type`. |
+| `GET /api/products/:id/register` | `inventory.read` | The product's **register**: every movement **oldest first in the order recorded**, paginated, each with its lot's `balanceAfter`. For a controlled drug this is the controlled-drug register. Unknown or another clinic's product: `404`. |
+| `POST /api/inventory/movements` | `inventory.manage`, or `inventory.dispense` for `Dispense` only | Records one movement (body below). `201` with the movement (no `Location`: there is no single-movement `GET`). |
+| `POST /api/inventory/movements/:id/reverse` | `inventory.manage` | `{ "reason": "...", "witnessUserId": "uuid"? }`: records the exact opposite movement on the same lot (`201` with the reversal). |
+
+**Types.** `quantity` in the body is **above 0** for every type except `Adjust`, where it is **not 0** and its sign
+gives the direction (negative takes stock out). At most 1,000,000 either way, at most 3 decimals, in the product's unit.
+
+| Type | Direction | Names | Required | Notes |
+|---|---|---|---|---|
+| `Receive` | in | `productId` and the lot identity (`lotNumber`, `expiresOn`, `location`) | — | B-19 rules below. |
+| `Dispense` | out | `stockLotId` | `patientId` (an **active** patient of the clinic); `consultationId` optional (in progress or completed, of that patient) | Given or used for a patient. |
+| `Sell` | out | `stockLotId` | — | `invoiceItemId` optional: a line of an **issued** invoice of the clinic that links the **same product**. Issuing an invoice never changes stock. |
+| `Adjust` | either | `stockLotId` | `reason` | A count correction. |
+| `ReturnToSupplier` | out | `stockLotId` | `reason` | Supplier links come with B-21. |
+| `ReturnFromClient` | in | `stockLotId` | `reason` | E.g. an unopened retail item. |
+| `Expire` | out | `stockLotId` | `reason` | Only a lot whose `expiresOn` is today or earlier (clinic-local); use `Adjust` otherwise. |
+| `Reversal` | opposite | — | — | Only through the reverse endpoint. |
+
+Fields a type does not use (`lotNumber`, `expiresOn`, `location`, `unitCost` outside `Receive`; `patientId` /
+`consultationId` outside `Dispense`; `invoiceItemId` outside `Sell`; `stockLotId` or `witnessUserId` on `Receive`)
+are `422`. A `productId` sent with a lot must be the lot's product. `reason` (max 500) and `notes` (max 500) are
+trimmed; `reference` (max 100) is optional for every type; `occurredAt` (optional, default now) may be earlier but not
+in the future or before 2000.
+
+**Never negative (SRS Q-5).** A movement that would take a lot below 0 is `409` (the message says what the lot holds),
+and so is one above 1,000,000,000. Stock found that was never recorded is added with a positive `Adjust` (or
+`Receive`) first. Movements of one product are applied one after the other, so concurrent sales cannot oversell.
+
+**Controlled drugs** (products with `controlled: true`, medications only):
+- `Dispense` needs `inventory.dispense_controlled` (**Veterinarians only**; `403` for nurses and for
+  `inventory.manage` holders) and a `reason`; `Sell` needs a `reason`.
+- `Adjust`, `Expire` and reversals need `witnessUserId`: **another active staff member** of the clinic (any role;
+  not the caller). The witness is recorded and shown as `witnessedBy`; they do not sign in to confirm (ADR-020).
+- The register endpoint lists every movement with its running balance.
+A witness may be named on other non-`Receive` movements too, with the same rule.
+
+**Reversals.** `reason` is required (max 500), and `witnessUserId` when the product is controlled. The reversal has
+type `Reversal`, the opposite `quantity`, `reversesMovementId` set, and `occurredAt` now. A movement is reversed at
+most once and a reversal is never reversed (`409`); a reversal that would take the lot below 0 (e.g. reversing a
+receipt whose stock was already used) is `409`. Unknown or another clinic's movement: `404`.
+
+**Order of checks:** missing or too long fields, and the field rules above, are `422`; then the permission for the
+type (`403`); then the lot or product lookup (`422`); then the controlled-drug and reference rules (`403` for a
+controlled dispense without the permission, otherwise `422`, reported together); then the quantity (`409`).
+
+**Audit:** `stock.received`, `stock.dispensed`, `stock.sold`, `stock.adjusted`, `stock.returned_to_supplier`,
+`stock.returned_from_client`, `stock.expired`, `stock.reversed`, with ids (product, lot, patient, consultation,
+invoice line, witness, reversed movement), type, quantity, balance after, unit cost and currency; never lot numbers,
+locations, references, reasons or notes. Movement and register reads are not audited.
+
+**Receive** (B-19):
 
       { "type": "Receive", "productId": "uuid", "quantity": 100, "lotNumber": "L-1", "expiresOn": "2027-10-01",
         "location": "Pharmacy", "unitCost": 0.1234, "reference": "DN-5531", "notes": "...", "occurredAt": "..." }
 
-  `productId` (required): an **active**, non-`Service` product of the clinic (`422`). `quantity` (required): above 0,
-  at most 1,000,000, at most 3 decimals, in the product's unit. `lotNumber` (max 50), `location` (max 100):
-  optional, trimmed. `expiresOn`: optional, but **required for `Medication` and `Vaccine`** products; not before the
-  clinic-local today (expired stock is not received) and not after 2100-12-31. `unitCost` (optional; 0 to
-  1,000,000,000, at most 4 decimals) is in the clinic currency, which must be set (`422`); the movement keeps the
-  currency. `reference` (max 100, e.g. the delivery note) and `notes` (max 500) are optional. `occurredAt` (optional,
-  default now) may be earlier but not in the future or before 2000.
-  The stock goes into the product's lot with the **same lot number, expiry and location**, which is topped up; when
-  there is none, a lot is created. A lot holds at most 1,000,000,000 (`409`). Receipts of one product are applied one
-  after the other. Audited as `stock.received` with ids, quantity, unit cost and currency; never lot numbers,
-  locations, references or notes.
+  `productId` (required): an **active**, non-`Service` product of the clinic (`422`). `lotNumber` (max 50),
+  `location` (max 100): optional, trimmed. `expiresOn`: optional, but **required for `Medication` and `Vaccine`**
+  products; not before the clinic-local today (expired stock is not received) and not after 2100-12-31. `unitCost`
+  (optional; 0 to 1,000,000,000, at most 4 decimals; `Receive` only) is in the clinic currency, which must be set
+  (`422`); the movement keeps the currency. The stock goes into the product's lot with the **same lot number, expiry
+  and location**, which is topped up; when there is none, a lot is created.
 
-Billing a product on an invoice line (section 10.3, `productId`) does not change stock in B-19.
+**Other movements** name an existing lot:
+
+      { "type": "Dispense", "stockLotId": "uuid", "quantity": 2, "patientId": "uuid", "consultationId": "uuid",
+        "reason": "Sedation for surgery" }
+
+      { "type": "Adjust", "stockLotId": "uuid", "quantity": -1, "reason": "Broken vial", "witnessUserId": "uuid" }
+
+Billing a product on an invoice line (section 10.3, `productId`) does not change stock; record a `Sell` (optionally
+naming the line) when the item leaves the shelf.
 
 ## 12. Reports
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.

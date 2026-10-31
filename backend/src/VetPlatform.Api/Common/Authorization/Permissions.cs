@@ -74,6 +74,12 @@ public static class Permissions
     /// <summary>Create and edit products and receive stock (ADR-019).</summary>
     public const string InventoryManage = "inventory.manage";
 
+    /// <summary>Record Dispense movements: stock given or used for a patient (B-20, ADR-020).</summary>
+    public const string InventoryDispense = "inventory.dispense";
+
+    /// <summary>Dispense controlled drugs. Veterinarians only, whatever other inventory permissions a role has (ADR-020).</summary>
+    public const string InventoryDispenseControlled = "inventory.dispense_controlled";
+
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
@@ -86,12 +92,12 @@ public static class Permissions
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn, AppointmentsRead, AppointmentsManage,
             ClinicalRead, ClinicalWrite, ConsultationsComplete, PrescriptionsIssue, VaccinationsReadDue, BillingRead,
-            InventoryRead,
+            InventoryRead, InventoryDispense, InventoryDispenseControlled,
         }.ToFrozenSet(),
         [Role.Nurse] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage, ClinicalRead,
-            ClinicalWrite, VaccinationsReadDue, InventoryRead,
+            ClinicalWrite, VaccinationsReadDue, InventoryRead, InventoryDispense,
         }.ToFrozenSet(),
         [Role.Receptionist] = new[]
         {

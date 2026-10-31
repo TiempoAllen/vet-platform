@@ -660,6 +660,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasKey("Id")
                         .HasName("pk_invoice_items");
 
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_invoice_items_clinic_id_id");
+
                     b.HasIndex("ClinicId", "ConsultationId")
                         .HasDatabaseName("ix_invoice_items_clinic_id_consultation_id");
 
@@ -1605,6 +1608,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("prescribed_by_user_id");
 
+                    b.Property<Guid?>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(10, 3)
                         .HasColumnType("numeric(10,3)")
@@ -1643,6 +1650,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasIndex("ClinicId", "PrescribedByUserId")
                         .HasDatabaseName("ix_prescriptions_clinic_id_prescribed_by_user_id");
+
+                    b.HasIndex("ClinicId", "ProductId")
+                        .HasDatabaseName("ix_prescriptions_clinic_id_product_id");
 
                     b.HasIndex("ClinicId", "ConsultationId", "DiagnosisId")
                         .HasDatabaseName("ix_prescriptions_clinic_id_consultation_id_diagnosis_id");
@@ -1977,6 +1987,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("clinic_id");
 
+                    b.Property<bool>("Controlled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("controlled");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -2049,6 +2063,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.ToTable("products", null, t =>
                         {
                             t.HasCheckConstraint("ck_products_category", "category IS NULL OR btrim(category) <> ''");
+
+                            t.HasCheckConstraint("ck_products_controlled", "NOT controlled OR type = 'Medication'");
 
                             t.HasCheckConstraint("ck_products_default_unit_price", "default_unit_price IS NULL OR (default_unit_price >= 0 AND default_unit_price <= 1000000000)");
 
@@ -2141,9 +2157,18 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<decimal>("BalanceAfter")
+                        .HasPrecision(15, 3)
+                        .HasColumnType("numeric(15,3)")
+                        .HasColumnName("balance_after");
+
                     b.Property<Guid>("ClinicId")
                         .HasColumnType("uuid")
                         .HasColumnName("clinic_id");
+
+                    b.Property<Guid?>("ConsultationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("consultation_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -2155,6 +2180,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnName("currency")
                         .IsFixedLength();
 
+                    b.Property<Guid?>("InvoiceItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("invoice_item_id");
+
                     b.Property<string>("Notes")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -2163,6 +2192,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Property<DateTimeOffset>("OccurredAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("occurred_at");
+
+                    b.Property<Guid?>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
 
                     b.Property<Guid>("PerformedByUserId")
                         .HasColumnType("uuid")
@@ -2177,10 +2210,19 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("quantity");
 
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
                     b.Property<string>("Reference")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("reference");
+
+                    b.Property<Guid?>("ReversesMovementId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reverses_movement_id");
 
                     b.Property<Guid>("StockLotId")
                         .HasColumnType("uuid")
@@ -2188,8 +2230,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.Property<string>("Type")
                         .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
                         .HasColumnName("type");
 
                     b.Property<decimal?>("UnitCost")
@@ -2201,34 +2243,70 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
+                    b.Property<Guid?>("WitnessUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("witness_user_id");
+
                     b.HasKey("Id")
                         .HasName("pk_stock_movements");
+
+                    b.HasAlternateKey("ClinicId", "StockLotId", "Id")
+                        .HasName("ak_stock_movements_clinic_id_stock_lot_id_id");
+
+                    b.HasIndex("ReversesMovementId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_stock_movements_reverses_movement_id")
+                        .HasFilter("reverses_movement_id IS NOT NULL");
+
+                    b.HasIndex("ClinicId", "InvoiceItemId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_invoice_item_id");
 
                     b.HasIndex("ClinicId", "PerformedByUserId")
                         .HasDatabaseName("ix_stock_movements_clinic_id_performed_by_user_id");
 
+                    b.HasIndex("ClinicId", "WitnessUserId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_witness_user_id");
+
                     b.HasIndex("ClinicId", "OccurredAt", "Id")
                         .HasDatabaseName("ix_stock_movements_clinic_id_occurred_at_id");
 
+                    b.HasIndex("ClinicId", "PatientId", "ConsultationId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_patient_id_consultation_id");
+
                     b.HasIndex("ClinicId", "ProductId", "OccurredAt")
                         .HasDatabaseName("ix_stock_movements_clinic_id_product_id_occurred_at");
+
+                    b.HasIndex("ClinicId", "StockLotId", "ReversesMovementId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_stock_lot_id_reverses_movement_id");
 
                     b.HasIndex("ClinicId", "ProductId", "StockLotId", "OccurredAt")
                         .HasDatabaseName("ix_stock_movements_lot_occurred_at");
 
                     b.ToTable("stock_movements", null, t =>
                         {
+                            t.HasCheckConstraint("ck_stock_movements_balance_after", "balance_after >= 0 AND balance_after <= 1000000000");
+
                             t.HasCheckConstraint("ck_stock_movements_currency", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("ck_stock_movements_invoice_item", "invoice_item_id IS NULL OR type = 'Sell'");
 
                             t.HasCheckConstraint("ck_stock_movements_notes", "notes IS NULL OR btrim(notes) <> ''");
 
-                            t.HasCheckConstraint("ck_stock_movements_quantity", "quantity <> 0 AND abs(quantity) <= 1000000 AND (type <> 'Receive' OR quantity > 0)");
+                            t.HasCheckConstraint("ck_stock_movements_patient", "(patient_id IS NOT NULL) = (type = 'Dispense')");
+
+                            t.HasCheckConstraint("ck_stock_movements_quantity", "quantity <> 0 AND abs(quantity) <= 1000000 AND (type NOT IN ('Receive', 'ReturnFromClient') OR quantity > 0) AND (type NOT IN ('Dispense', 'Sell', 'ReturnToSupplier', 'Expire') OR quantity < 0)");
+
+                            t.HasCheckConstraint("ck_stock_movements_reason", "(reason IS NULL OR btrim(reason) <> '') AND (type NOT IN ('Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal') OR reason IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_stock_movements_reference", "reference IS NULL OR btrim(reference) <> ''");
 
-                            t.HasCheckConstraint("ck_stock_movements_type", "type IN ('Receive')");
+                            t.HasCheckConstraint("ck_stock_movements_reversal", "(reverses_movement_id IS NOT NULL) = (type = 'Reversal')");
 
-                            t.HasCheckConstraint("ck_stock_movements_unit_cost", "(unit_cost IS NULL) = (currency IS NULL) AND (unit_cost IS NULL OR (unit_cost >= 0 AND unit_cost <= 1000000000))");
+                            t.HasCheckConstraint("ck_stock_movements_type", "type IN ('Receive', 'Dispense', 'Sell', 'Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal')");
+
+                            t.HasCheckConstraint("ck_stock_movements_unit_cost", "(unit_cost IS NULL) = (currency IS NULL) AND (unit_cost IS NULL OR (type = 'Receive' AND unit_cost >= 0 AND unit_cost <= 1000000000))");
+
+                            t.HasCheckConstraint("ck_stock_movements_witness", "witness_user_id IS NULL OR witness_user_id <> performed_by_user_id");
                         });
                 });
 
@@ -2553,6 +2631,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("patient_id");
 
+                    b.Property<Guid?>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
                     b.Property<Guid?>("RecordedByUserId")
                         .HasColumnType("uuid")
                         .HasColumnName("recorded_by_user_id");
@@ -2592,6 +2674,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_vaccinations");
+
+                    b.HasIndex("ClinicId", "ProductId")
+                        .HasDatabaseName("ix_vaccinations_clinic_id_product_id");
 
                     b.HasIndex("ClinicId", "RecordedByUserId")
                         .HasDatabaseName("ix_vaccinations_clinic_id_recorded_by_user_id");
@@ -3136,6 +3221,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_prescriptions_users_clinic_id_prescribed_by_user_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Inventory.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_prescriptions_products_clinic_id_product_id");
+
                     b.HasOne("VetPlatform.Api.Features.Consultations.Diagnosis", null)
                         .WithMany()
                         .HasForeignKey("ClinicId", "ConsultationId", "DiagnosisId")
@@ -3270,6 +3362,20 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_stock_movements_clinics_clinic_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Billing.InvoiceItem", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "InvoiceItemId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_invoice_items_clinic_id_invoice_item_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Patients.Patient", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_patients_clinic_id_patient_id");
+
                     b.HasOne("VetPlatform.Api.Features.Identity.User", "PerformedBy")
                         .WithMany()
                         .HasForeignKey("ClinicId", "PerformedByUserId")
@@ -3286,6 +3392,20 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_stock_movements_products_clinic_id_product_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "Witness")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "WitnessUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_users_clinic_id_witness_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Consultations.Consultation", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "PatientId", "ConsultationId")
+                        .HasPrincipalKey("ClinicId", "PatientId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_consultations_clinic_id_patient_id_consulta");
+
                     b.HasOne("VetPlatform.Api.Features.Inventory.StockLot", "StockLot")
                         .WithMany()
                         .HasForeignKey("ClinicId", "ProductId", "StockLotId")
@@ -3294,11 +3414,20 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_stock_movements_stock_lots_clinic_id_product_id_stock_lot_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Inventory.StockMovement", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "StockLotId", "ReversesMovementId")
+                        .HasPrincipalKey("ClinicId", "StockLotId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_stock_movements_clinic_id_stock_lot_id_reve");
+
                     b.Navigation("PerformedBy");
 
                     b.Navigation("Product");
 
                     b.Navigation("StockLot");
+
+                    b.Navigation("Witness");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Patients.Patient", b =>
@@ -3372,6 +3501,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_vaccinations_patients_clinic_id_patient_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Inventory.Product", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_vaccinations_products_clinic_id_product_id");
 
                     b.HasOne("VetPlatform.Api.Features.Identity.User", "RecordedBy")
                         .WithMany()
