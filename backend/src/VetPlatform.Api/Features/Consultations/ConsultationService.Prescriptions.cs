@@ -3,6 +3,7 @@ using VetPlatform.Api.Common.Auditing;
 using VetPlatform.Api.Common.Errors;
 using VetPlatform.Api.Common.Http;
 using VetPlatform.Api.Features.Appointments;
+using VetPlatform.Api.Features.Inventory;
 using VetPlatform.Api.Features.Patients;
 
 namespace VetPlatform.Api.Features.Consultations;
@@ -30,6 +31,10 @@ public sealed partial class ConsultationService
             CheckRefills(request.Refills ?? 0, problems);
             ThrowIfAny(problems);
             CheckDiagnosisLink(consultation, request.DiagnosisId);
+            if (request.ProductId is { } productId)
+            {
+                await ProductLinks.CheckAsync(db, productId, ProductType.Medication, cancellationToken);
+            }
 
             var prescription = new Prescription
             {
@@ -37,6 +42,7 @@ public sealed partial class ConsultationService
                 ConsultationId = consultation.Id,
                 PatientId = consultation.PatientId,
                 DiagnosisId = request.DiagnosisId,
+                ProductId = request.ProductId,
                 MedicationName = request.MedicationName!.Trim(),
                 Dose = request.Dose!.Trim(),
                 Route = NullIfBlank(request.Route),
@@ -51,7 +57,7 @@ public sealed partial class ConsultationService
             };
             consultation.Prescriptions.Add(prescription);
             db.Prescriptions.Add(prescription);
-            return (object?)new { prescriptionId = prescription.Id, diagnosisId = prescription.DiagnosisId };
+            return (object?)new { prescriptionId = prescription.Id, diagnosisId = prescription.DiagnosisId, productId = prescription.ProductId };
         }, cancellationToken);
 
     public Task<ConsultationResponse> UpdatePrescriptionAsync(
@@ -59,7 +65,7 @@ public sealed partial class ConsultationService
         Guid prescriptionId,
         UpdatePrescriptionRequest request,
         CancellationToken cancellationToken) =>
-        WriteAsync(id, AuditActions.PrescriptionUpdated, consultation =>
+        WriteAsync(id, AuditActions.PrescriptionUpdated, async consultation =>
         {
             var prescription = FindPrescription(consultation, prescriptionId);
             if (consultation.Status == ConsultationStatus.Completed)
@@ -123,7 +129,17 @@ public sealed partial class ConsultationService
                 Set("diagnosisId", prescription.DiagnosisId, request.DiagnosisId.Value, v => prescription.DiagnosisId = v);
             }
 
-            return Task.FromResult<object?>(changed.Count == 0 ? null : new { prescriptionId, fields = changed });
+            if (request.ProductId.IsSet && request.ProductId.Value != prescription.ProductId)
+            {
+                if (request.ProductId.Value is { } productId)
+                {
+                    await ProductLinks.CheckAsync(db, productId, ProductType.Medication, cancellationToken);
+                }
+
+                Set("productId", prescription.ProductId, request.ProductId.Value, v => prescription.ProductId = v);
+            }
+
+            return changed.Count == 0 ? null : (object)new { prescriptionId, fields = changed };
         }, cancellationToken);
 
     public Task<ConsultationResponse> RemovePrescriptionAsync(Guid id, Guid prescriptionId, CancellationToken cancellationToken) =>

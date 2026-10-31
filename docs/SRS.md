@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.15, 2026-10-31, updated for B-19.
+Veterinary Management Platform. Version 1.16, 2026-10-31, updated for B-20.
 
 ## 1. Introduction
 
@@ -171,8 +171,8 @@ A user may hold several roles; their permissions are the union.
 | ID | Requirement | Status |
 |---|---|---|
 | FR-INV-1 | Products (SKU, name, category, type, unit, reorder level, active) can be managed. | Done (B-19: SKU unique per clinic ignoring case; fixed unit list; non-stocked `Service` type; optional default price and tax rate; deactivated, never deleted) |
-| FR-INV-2 | Stock is held per lot with optional expiration date and location, and is changed only through recorded stock movements (receive, dispense, sell, adjust, return, expire). | Partly done (B-19: lots by lot number, expiry and location; `Receive` movements; a lot always equals the sum of its movements, database-enforced; the other movement types in B-20) |
-| FR-INV-3 | Stock may not go negative unless a documented rule allows it. | Planned (B-20) |
+| FR-INV-2 | Stock is held per lot with optional expiration date and location, and is changed only through recorded stock movements (receive, dispense, sell, adjust, return, expire). | Done (B-19: lots, `Receive`; B-20: dispense, sell, adjust, both returns, expire and reversals; each lot equals the sum of its movements and every movement stores the balance after it, database-enforced) |
+| FR-INV-3 | Stock may not go negative unless a documented rule allows it. | Done (B-20, Q-5: never negative; outgoing movements name a lot and cannot exceed it, database-enforced) |
 | FR-INV-4 | Suppliers and purchase orders can be managed; receiving a purchase order creates stock movements. | Planned (B-21) |
 | FR-INV-5 | Low-stock (below reorder level) and expiring-soon queries are available. | Planned (B-22) |
 
@@ -182,7 +182,7 @@ A user may hold several roles; their permissions are the union.
 | FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Planned (B-23, B-24) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
 | FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); currency and tax rates (B-16); the rest B-26 |
-| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16), clinic settings, products and stock receipts (B-19); stock adjustments (B-20) and sensitive exports (B-23/B-24) later |
+| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16), clinic settings, products and stock movements including adjustments (B-19, B-20) and sensitive exports (B-23/B-24) later |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
 ### 3.10 Dashboard and UI (FR-UI) — F-01..F-22
@@ -260,7 +260,7 @@ Targets for a single clinic of up to 50 concurrent staff; verified in X-04.
 | Q-2 | File storage provider and maximum upload size. | **Answered (ADR-015):** an `IFileStore` abstraction with a local-disk provider now, an S3-compatible provider with hosting (X-05); at most 20 MB; JPEG, PNG, WebP and PDF only, recognised by content. |
 | Q-3 | Appointment slot granularity, buffer times, and whether double-booking can be overridden. | **Answered (ADR-008):** 5-minute grid; no buffers (a per-clinic buffer may come with B-26); conflicts may be overridden by `appointments.manage` holders with a required, audited reason (B-09). |
 | Q-4 | Tax model (inclusive/exclusive, per-line rates) and rounding rules. | **Answered (ADR-016):** prices exclude tax; a per-line rate from a clinic tax-rate table (copied onto the line); each line rounded half away from zero to the currency's minor units; invoice totals are the sums of the lines. |
-| Q-5 | Whether stock may go negative and how controlled drugs are logged. | B-20 |
+| Q-5 | Whether stock may go negative and how controlled drugs are logged. | **Answered (ADR-020):** never negative; controlled drugs (a medication flag) keep a register with the balance after each movement, a reason on every outgoing movement, a witness on every outgoing movement except a veterinarian's dispense, and veterinarian-only dispensing. |
 | Q-6 | Email/SMS provider. | B-25 |
 | Q-7 | Hosting platform, backup tooling, final RPO/RTO. | X-05 |
 | Q-8 | Jurisdictional record-retention and privacy obligations. | Before production |

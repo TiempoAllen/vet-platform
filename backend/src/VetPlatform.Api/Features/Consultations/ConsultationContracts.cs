@@ -57,6 +57,7 @@ public sealed record PrescriptionResponse(
     int Refills,
     string? Instructions,
     Guid? DiagnosisId,
+    Guid? ProductId,
     PrescriptionStatus Status,
     AppointmentPersonSummary? PrescribedBy,
     DateTimeOffset? CancelledAt,
@@ -70,7 +71,7 @@ public sealed record PrescriptionResponse(
         new(
             p.Id, p.MedicationName, p.Dose, p.Route, p.Frequency, p.Duration,
             p.Quantity / 1.000000000000000000000000000000000m, // numeric(10,3) returns 14.000; respond with 14
-            p.QuantityUnit, p.Refills, p.Instructions, p.DiagnosisId, p.Status,
+            p.QuantityUnit, p.Refills, p.Instructions, p.DiagnosisId, p.ProductId, p.Status,
             p.PrescribedBy is { } by ? new AppointmentPersonSummary(by.Id, by.Name) : null,
             p.CancelledAt is { } at ? TimeZoneInfo.ConvertTime(at, zone) : null,
             p.CancelledBy is { } canceller ? new AppointmentPersonSummary(canceller.Id, canceller.Name) : null,
@@ -285,7 +286,8 @@ public sealed record CreatePrescriptionRequest(
     [Required, MaxLength(Prescription.QuantityUnitMaxLength)] string? QuantityUnit,
     int? Refills,
     [MaxLength(Prescription.InstructionsMaxLength)] string? Instructions,
-    Guid? DiagnosisId);
+    Guid? DiagnosisId,
+    Guid? ProductId);
 
 /// <summary>
 /// Partial update of a prescription of an in-progress consultation; omitted or null fields are unchanged, <c>""</c>
@@ -301,7 +303,8 @@ public sealed record UpdatePrescriptionRequest(
     [MaxLength(Prescription.QuantityUnitMaxLength)] string? QuantityUnit,
     int? Refills,
     [MaxLength(Prescription.InstructionsMaxLength)] string? Instructions,
-    Optional<Guid?> DiagnosisId);
+    Optional<Guid?> DiagnosisId,
+    Optional<Guid?> ProductId);
 
 public sealed record CancelPrescriptionRequest([Required, MaxLength(Prescription.ReasonMaxLength)] string? Reason);
 

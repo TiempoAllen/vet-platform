@@ -39,6 +39,11 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
             products = products.Where(p => p.Status == status);
         }
 
+        if (query.Controlled is { } controlled)
+        {
+            products = products.Where(p => p.Controlled == controlled);
+        }
+
         if (!string.IsNullOrWhiteSpace(query.Category))
         {
             var category = query.Category.Trim();
@@ -81,6 +86,7 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
             ReorderLevel = request.ReorderLevel,
             DefaultUnitPrice = request.DefaultUnitPrice,
             DefaultTaxRateId = request.DefaultTaxRateId,
+            Controlled = request.Controlled ?? false,
         };
         CheckAmounts(product, problems);
         if (request.DefaultTaxRateId is { } taxRateId)
@@ -90,7 +96,7 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
 
         ThrowIfAny(problems);
         db.Products.Add(product);
-        audit.Record(AuditActions.ProductCreated, nameof(Product), product.Id, new { type = product.Type, unit = product.Unit });
+        audit.Record(AuditActions.ProductCreated, nameof(Product), product.Id, new { type = product.Type, unit = product.Unit, controlled = product.Controlled });
         await SaveAsync(cancellationToken);
         return await GetAsync(product.Id, cancellationToken);
     }
@@ -144,20 +150,22 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
             changed.Add("defaultTaxRateId");
         }
 
-        var typeOrUnitChanges = (request.Type is { } type && type != product.Type) || (request.Unit is { } unit && unit != product.Unit);
+        var fixedFieldsChange = (request.Type is { } type && type != product.Type) || (request.Unit is { } unit && unit != product.Unit)
+            || (request.Controlled is { } flag && flag != product.Controlled);
         if (request.Type is { } newType) Set("type", product.Type, newType, v => product.Type = v);
         if (request.Unit is { } newUnit) Set("unit", product.Unit, newUnit, v => product.Unit = v);
+        if (request.Controlled is { } newControlled) Set("controlled", product.Controlled, newControlled, v => product.Controlled = v);
         CheckAmounts(product, problems);
         ThrowIfAny(problems);
-        if (typeOrUnitChanges && await db.StockLots.AnyAsync(l => l.ProductId == id, cancellationToken))
+        if (fixedFieldsChange && await db.StockLots.AnyAsync(l => l.ProductId == id, cancellationToken))
         {
             throw new ApiException(
-                StatusCodes.Status409Conflict, ErrorCodes.Conflict, "The type and unit cannot change once stock has been received.");
+                StatusCodes.Status409Conflict, ErrorCodes.Conflict, "The type, unit and controlled flag cannot change once stock has been received.");
         }
 
         if (changed.Count > 0)
         {
-            audit.Record(AuditActions.ProductUpdated, nameof(Product), id, new { fields = changed, type = product.Type, status = product.Status });
+            audit.Record(AuditActions.ProductUpdated, nameof(Product), id, new { fields = changed, type = product.Type, status = product.Status, controlled = product.Controlled });
             await SaveAsync(cancellationToken);
         }
 
@@ -192,9 +200,14 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
         }
     }
 
-    /// <summary>The reorder level and default price, against each other and the type.</summary>
+    /// <summary>The reorder level, default price and controlled flag, against each other and the type.</summary>
     private static void CheckAmounts(Product product, List<ApiErrorDetail> problems)
     {
+        if (product.Controlled && product.Type != ProductType.Medication)
+        {
+            problems.Add(new ApiErrorDetail("controlled", "Only medications can be controlled drugs."));
+        }
+
         if (product.ReorderLevel is { } level)
         {
             if (!product.HoldsStock)

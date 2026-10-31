@@ -377,7 +377,7 @@ public sealed class InvoicesTests(DatabaseApiFactory factory) : IClassFixture<Da
     [InlineData("UPDATE invoice_items SET unit_price = unit_price + 1 WHERE invoice_id = {0}")]
     [InlineData("INSERT INTO invoice_items (id, clinic_id, invoice_id, position, description, quantity, unit_price, discount_type, discount_value, tax_rate_id, tax_rate_name, tax_rate_percent, net, discount, tax, total, created_at, updated_at) SELECT gen_random_uuid(), clinic_id, invoice_id, 99, 'late', quantity, unit_price, discount_type, discount_value, tax_rate_id, tax_rate_name, tax_rate_percent, net, discount, tax, total, now(), now() FROM invoice_items WHERE invoice_id = {0}")]
     [InlineData("UPDATE invoices SET status = 'Draft', number = NULL, issued_at = NULL, due_on = NULL, issued_by_user_id = NULL WHERE id = {0}")]
-    [InlineData("TRUNCATE invoice_items")]
+    [InlineData("TRUNCATE stock_movements, invoice_items")] // since B-20 stock sales reference lines
     public async Task Database_FreezesIssuedInvoices(string sql)
     {
         var clinic = await ClinicAsync();

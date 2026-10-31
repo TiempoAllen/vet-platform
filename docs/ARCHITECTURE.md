@@ -790,3 +790,59 @@ Choose the simplest solution that satisfies documented requirements, security, m
   response shows the rate's status); receipts read the clinic currency before the transaction, so a concurrent
   currency change can only make a movement keep the previous code, which it stores explicitly; stock values (cost × quantity) are reports (B-24);
   vaccine names and medication names stay free text until B-20 links them.
+
+### ADR-020: Stock movements, controlled drugs and reversals (decided in B-20)
+- **Confirmed with the user (SRS Q-5 answered):** stock **never goes negative**: every outgoing movement names one lot
+  and cannot take more than it holds (`409`); unrecorded stock is first added with a positive `Adjust`. Controlled
+  drugs are medication products with a `controlled` flag; they get a **register** (every movement with the lot's
+  balance after it), a **reason** on every outgoing movement (dispense and sell; the other outgoing types always need
+  one) and a **witness** (another active staff member) on every movement that can take them out except a
+  veterinarian's dispense (sales, adjustments, returns to suppliers, expiry write-offs and reversals; widened from
+  adjustments, write-offs and reversals in the B-20 review); only veterinarians dispense them. The caller names the lot of every outgoing movement (the frontend offers lots
+  first-expiry-first, as the stock list sorts them). A `Dispense` names the patient and optionally a consultation;
+  vaccinations (`Vaccine` products) and prescriptions (`Medication` products) get an optional `productId`, and nothing
+  deducts stock automatically. `inventory.dispense` (Veterinarian, Nurse) records dispensing only; `inventory.manage`
+  (Admin, Inventory) records every type; `inventory.dispense_controlled` (Veterinarian) is needed on top for a
+  controlled dispense. A `Sell` may name a line of an **issued** invoice for the same product; issuing an invoice still
+  never changes stock. Returns go both ways (`ReturnToSupplier`, `ReturnFromClient`, reason required). A movement
+  recorded by mistake is undone by a **reversal** (the exact opposite movement, once only, refused if the lot cannot
+  cover it); the original stays.
+- **Made here (recorded for review):** every movement stores `balance_after`; the B-19 receipts were backfilled in
+  the order recorded. The register is ordered by recording order (`created_at`, id), not `occurredAt`, so balances
+  read top to bottom even with backdated movements; the movement list stays newest-`occurredAt` first. `Expire` is
+  only for lots whose expiry date is today or earlier (clinic-local); damaged or lost stock is an `Adjust`. A unit cost
+  is recorded on receipts only. A reversal is recorded now (`occurredAt` cannot be given) with a required reason;
+  reversals need `inventory.manage`, so clinicians ask inventory staff to undo a dispense. The controlled flag is fixed
+  once the product has a lot (like the type and unit), so it cannot be switched off to avoid the witness rule. The
+  witness is any active user of the clinic other than the caller, of any role. Responses carry `patientId` and
+  `consultationId` as ids only, so inventory staff without `patients.read` see no patient names, and (B-20 review,
+  confirmed with the user) the reason and notes of `Dispense` movements, which may hold clinical detail, are returned
+  only to callers with `clinical.read`; movement and register reads are not audited. The movement `type` column widened to 20 characters.
+- **Database:** `stock_movements_guard` on INSERT locks the product `FOR SHARE` and then the **lot** `FOR NO KEY
+  UPDATE`, so movements of one lot queue, and checks that `balance_after` equals the sum of the lot's earlier
+  movements plus this one (CHECK `balance_after >= 0`: never negative); it also enforces the controlled-drug reason
+  and witness rules, that a reversal exactly undoes a non-reversal of the same lot, and that a sale's invoice line is on
+  an issued invoice and bills the same product. CHECKs tie each type to its direction, its required reason, its patient
+  (Dispense only), invoice line (Sell only) and reversal link (Reversal only), keep the witness different from the
+  performer and the unit cost to receipts. Composite keys keep the patient and consultation together
+  ((clinic_id, patient_id, consultation_id) → consultations), the reversal on the same lot ((clinic_id, stock_lot_id,
+  reverses_movement_id) → stock_movements), the invoice line, witness, vaccination and prescription products in the
+  clinic; a partial unique index allows one reversal per movement. `products_guard` also fixes `controlled` once lots
+  exist. Vaccinations and prescriptions are frozen by their existing whole-row guards, which now cover `product_id`.
+  Rolling back refuses while non-receipt movements, controlled products or clinical product links exist, and restores
+  the B-19 guard functions.
+- **Review fixes (B-20):** the witness CHECK had been created under an index's name by a migration script (renamed,
+  and a migration test now checks it); a CHECK keeps `consultation_id` to `Dispense` rows (its key is not checked
+  without a patient); the guard refuses dispensing against a discarded consultation and locks a sale's invoice before
+  testing its status; the type permission is checked before the field rules; a vaccination's product problem is
+  reported with the other field problems; the B-20 rollback also refuses receipts that carry a reason or witness; an
+  index (clinic_id, product_id, created_at, id) serves the register; tests cover another clinic's lot, patient,
+  consultation, invoice line, witness, movement, register and product links.
+- **Accepted for now:** the register is ordered by `created_at`, set by the application clock; with several API
+  instances (X-05) clock skew could show two consecutive movements of a lot out of order (the balances themselves stay
+  exact). The full index on (clinic_id, stock_lot_id, reverses_movement_id) only backs the reversal key. The witness does not authenticate (no second sign-in or PIN): a caller can name a colleague
+  without them knowing; the audit entry records both ids, and a stronger confirmation can come with notifications
+  (B-25) or a later step-up flow. Vaccinations and prescriptions do not check that a linked product is the one
+  dispensed. A sale names at most one invoice line and its quantity is not compared with the line's. `TRUNCATE
+  invoice_items` now fails on the stock-movement foreign key before its own guard (refused either way). Patient-level
+  reports of dispensed drugs are B-23/B-24.
