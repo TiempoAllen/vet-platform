@@ -41,6 +41,9 @@ public sealed class StockMovementsMigrationTests(DatabaseApiFactory factory) : I
         await migrator.MigrateAsync("AddProductsAndStock");
         await migrator.MigrateAsync();
 
+        await factory.UpdateDatabaseAsync(async db => Assert.Equal(1, await db.Database.SqlQueryRaw<int>(
+            "SELECT count(*)::int AS \"Value\" FROM pg_constraint WHERE conname = 'ck_stock_movements_witness' AND contype = 'c'").SingleAsync()));
+
         var register = await stock.GetFromJsonAsync<JsonElement>($"/api/products/{product}/register");
         Assert.Equal([3m, 5m, 4m], register.GetProperty("data").EnumerateArray().Select(m => m.GetProperty("balanceAfter").GetDecimal()));
 

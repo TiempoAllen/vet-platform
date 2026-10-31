@@ -2739,7 +2739,8 @@ paths:
         Requires `inventory.manage`, or `inventory.dispense` for Dispense only; dispensing a controlled drug also needs
         `inventory.dispense_controlled` (veterinarians). Receive tops up the product's lot with the same lot number,
         expiry date and location, or creates one. Stock never goes below 0 and a lot holds at most 1,000,000,000 (409).
-        Controlled drugs need a reason on Dispense and Sell and a witness on Adjust and Expire (422). No Location header
+        Controlled drugs need a reason on Dispense and Sell and a witness on Sell, Adjust, ReturnToSupplier and Expire
+        (422). Callers with only inventory.dispense get 403 for other types before the field rules. No Location header
         (there is no single-movement GET). Audited without lot numbers, locations, references, reasons or notes.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
@@ -4030,7 +4031,7 @@ components:
       required: [id, medicationName, dose, route, frequency, duration, quantity, quantityUnit, refills, instructions, diagnosisId, productId, status, prescribedBy, cancelledAt, cancelledBy, cancelReason, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
-        medicationName: { type: string, maxLength: 200, description: Free text until the product catalogue exists (B-19). }
+        medicationName: { type: string, maxLength: 200, description: 'Free text, even when productId links a product.' }
         dose: { type: string, maxLength: 100 }
         route: { type: [string, 'null'], maxLength: 100 }
         frequency: { type: string, maxLength: 100 }
@@ -4126,7 +4127,7 @@ components:
         patientId: { type: string, format: uuid }
         consultationId: { type: [string, 'null'], format: uuid }
         productId: { type: [string, 'null'], format: uuid, description: 'A Vaccine product (B-20); linking never changes stock.' }
-        vaccineName: { type: string, maxLength: 200, description: Free text until the product catalogue exists (B-19). }
+        vaccineName: { type: string, maxLength: 200, description: 'Free text, even when productId links a product.' }
         manufacturer: { type: [string, 'null'], maxLength: 100 }
         lotNumber: { type: [string, 'null'], maxLength: 50 }
         lotExpiresOn: { type: [string, 'null'], format: date }
@@ -4887,8 +4888,8 @@ components:
         unitCost: { type: [number, 'null'] }
         currency: { type: [string, 'null'], description: 'ISO 4217; set exactly when unitCost is.' }
         reference: { type: [string, 'null'] }
-        reason: { type: [string, 'null'] }
-        notes: { type: [string, 'null'] }
+        reason: { type: [string, 'null'], description: 'On Dispense rows, null for callers without clinical.read.' }
+        notes: { type: [string, 'null'], description: 'On Dispense rows, null for callers without clinical.read.' }
         patientId: { type: [string, 'null'], format: uuid, description: Dispense only. }
         consultationId: { type: [string, 'null'], format: uuid }
         invoiceItemId: { type: [string, 'null'], format: uuid, description: Sell only. }
@@ -4935,7 +4936,7 @@ components:
         patientId: { type: [string, 'null'], format: uuid, description: Required for Dispense (an active patient); not used otherwise. }
         consultationId: { type: [string, 'null'], format: uuid, description: 'Dispense only: an in-progress or completed consultation of the patient.' }
         invoiceItemId: { type: [string, 'null'], format: uuid, description: 'Sell only: a line of an issued invoice that links the same product.' }
-        witnessUserId: { type: [string, 'null'], format: uuid, description: 'Another active staff member; required for Adjust and Expire of controlled drugs; not on Receive.' }
+        witnessUserId: { type: [string, 'null'], format: uuid, description: 'Another active staff member; required for Sell, Adjust, ReturnToSupplier and Expire of controlled drugs; not on Receive.' }
         occurredAt: { type: [string, 'null'], format: date-time, description: 'Default now; not in the future or before 2000.' }
 
     ReverseStockMovementRequest:

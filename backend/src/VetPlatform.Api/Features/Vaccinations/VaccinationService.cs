@@ -198,11 +198,12 @@ public sealed class VaccinationService(
             }
         }
 
-        ThrowIfAny(problems);
         if (request.ProductId is { } productId)
         {
-            await ProductLinks.CheckAsync(db, productId, ProductType.Vaccine, cancellationToken);
+            await ProductLinks.CheckAsync(db, productId, ProductType.Vaccine, problems, cancellationToken);
         }
+
+        ThrowIfAny(problems);
 
         var vaccination = new Vaccination
         {

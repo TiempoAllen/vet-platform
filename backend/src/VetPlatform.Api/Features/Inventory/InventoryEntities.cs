@@ -215,9 +215,13 @@ public sealed class StockMovement : Entity, IClinicOwned
         type is StockMovementType.Adjust or StockMovementType.ReturnToSupplier or StockMovementType.ReturnFromClient
             or StockMovementType.Expire or StockMovementType.Reversal;
 
-    /// <summary>Types that need a witness when the product is a controlled drug.</summary>
+    /// <summary>
+    /// Types that need a witness when the product is a controlled drug: everything that can take stock out except a
+    /// veterinarian's dispense (B-20 review).
+    /// </summary>
     public static bool NeedsWitnessWhenControlled(StockMovementType type) =>
-        type is StockMovementType.Adjust or StockMovementType.Expire or StockMovementType.Reversal;
+        type is StockMovementType.Sell or StockMovementType.Adjust or StockMovementType.ReturnToSupplier
+            or StockMovementType.Expire or StockMovementType.Reversal;
 }
 
 /// <summary>Stored by name, so never rename a member without a data migration.</summary>
@@ -350,6 +354,8 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
                 "(reason IS NULL OR btrim(reason) <> '') " +
                 "AND (type NOT IN ('Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal') OR reason IS NOT NULL)");
             table.HasCheckConstraint("ck_stock_movements_patient", "(patient_id IS NOT NULL) = (type = 'Dispense')");
+            // The consultation key is checked only with a patient, so a consultation on another type would never be.
+            table.HasCheckConstraint("ck_stock_movements_consultation", "consultation_id IS NULL OR type = 'Dispense'");
             table.HasCheckConstraint("ck_stock_movements_invoice_item", "invoice_item_id IS NULL OR type = 'Sell'");
             table.HasCheckConstraint("ck_stock_movements_reversal", "(reverses_movement_id IS NOT NULL) = (type = 'Reversal')");
             table.HasCheckConstraint("ck_stock_movements_witness", "witness_user_id IS NULL OR witness_user_id <> performed_by_user_id");
@@ -406,5 +412,6 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
         builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.OccurredAt });
         builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.StockLotId, m.OccurredAt }).HasDatabaseName("ix_stock_movements_lot_occurred_at");
         builder.HasIndex(m => new { m.ClinicId, m.OccurredAt, m.Id }); // the unfiltered list, newest first
+        builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.CreatedAt, m.Id }).HasDatabaseName("ix_stock_movements_register");
     }
 }
