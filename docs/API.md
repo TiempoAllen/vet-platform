@@ -162,6 +162,8 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `billing.manage` | ✓ | – | – | ✓ | – |
 | `payments.record` | ✓ | – | – | ✓ | – |
 | `payments.refund` | ✓ | – | – | – | – |
+| `inventory.read` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `inventory.manage` | ✓ | – | – | – | ✓ |
 
 **User object**
 
@@ -999,7 +1001,7 @@ creates, edits, issues, voids and deletes drafts. Tax rates are managed with `se
         "id": "uuid", "position": 1, "description": "Consultation", "quantity": 1, "unitPrice": 45,
         "discountType": "None" | "Percent" | "Amount", "discountValue": 0,
         "taxRate": { "id": "uuid", "name": "Standard", "percent": 20 }, "consultationId": "uuid" | null,
-        "net": 45, "discount": 0, "tax": 9, "total": 54
+        "productId": "uuid" | null, "net": 45, "discount": 0, "tax": 9, "total": 54
       } ],
       "subtotal": 45, "discountTotal": 0, "taxTotal": 9, "total": 54,
       "amountPaid": 20, "balanceDue": 34, "paymentStatus": "Unpaid" | "PartiallyPaid" | "Paid" | null,
@@ -1026,7 +1028,7 @@ invoice is never edited or deleted, only voided (its number stays taken). The da
 | `PATCH /api/invoices/:id` | `billing.manage` | Drafts only. `clientId`, `patientId` (`null` removes it), `notes` (`""` clears; max 2000). Changing the patient while lines bill its consultations is `409`. |
 | `DELETE /api/invoices/:id` | `billing.manage` | Drafts only (`204`); an issued invoice is `409`. |
 | `POST /api/invoices/:id/items` | `billing.manage` | Adds a line (fields below); at most 200 lines (`409`). |
-| `PATCH /api/invoices/:id/items/:itemId` | `billing.manage` | Partial update; `consultationId: null` unlinks; a new `taxRateId` copies the new rate. |
+| `PATCH /api/invoices/:id/items/:itemId` | `billing.manage` | Partial update; `consultationId: null` or `productId: null` unlinks; a new `taxRateId` copies the new rate. |
 | `DELETE /api/invoices/:id/items/:itemId` | `billing.manage` | Removes a line. |
 | `POST /api/invoices/:id/issue` | `billing.manage` | Optional body `{ "dueOn": "YYYY-MM-DD" }` (default: the clinic-local issue day; earlier, or after 2100-12-31, is `422`). Needs at least one line (`409`). |
 | `POST /api/invoices/:id/void` | `billing.manage` | `{ "reason": "..." }` (required, max 500, trimmed). Issued invoices only; a draft (delete it), a void invoice, or one that still holds payments (refund them first) is `409`. |
@@ -1040,9 +1042,10 @@ other.
 of the clinic), `discountType` (`None` by default, `Percent` or `Amount`) with `discountValue` (omit or `0` for
 `None`; a percentage above 0 and at most 100 with at most 4 decimals; an amount above 0 in the currency's minor units
 and **not more than the line's net**), `consultationId` (optional; a non-discarded consultation of the invoice's patient, so the invoice needs
-a patient). Order of checks: missing or too long fields are `422` before the invoice is looked up; then unknown
+a patient), `productId` (optional, B-19; an **active** product of the clinic, services included; the line keeps its
+own description and price, and stock does not change). Order of checks: missing or too long fields are `422` before the invoice is looked up; then unknown
 invoice or line `404`; then the invoice's state (`409` for a non-draft) and the 200-line cap (`409`); then the value
-rules (ranges, decimals, tax rate, consultation, `dueOn`), reported together in one `422`. A line total or invoice total
+rules (ranges, decimals, tax rate, consultation, product, `dueOn`), reported together in one `422`. A line total or invoice total
 above 1,000,000,000,000 (in the invoice currency) is `422`. Issuing is also `409` when the patient no longer belongs to
 the invoice's client (change one of them first) or when the stored amounts differ from a recomputation (edit a line to
 recompute).
@@ -1148,16 +1151,99 @@ entry had no signed-in user or the account cannot be shown (only this clinic's s
 search is B-27.
 
 ## 11. Inventory
-`GET /api/products`
-`GET /api/products/:id`
-`POST /api/products`
-`PATCH /api/products/:id`
-`GET /api/inventory/stock`
-`POST /api/inventory/movements`
-`GET /api/suppliers`
-`POST /api/purchase-orders`
+Products and stock are implemented in B-19 (ADR-019). Stock is held **per lot** and changes **only through recorded
+stock movements**; B-19 records one movement type, `Receive`. Outgoing movements (dispense, sell, adjust, return,
+expire), the negative-stock rule and controlled-drug logging come with B-20 (SRS Q-5); suppliers and purchase orders
+with B-21; low-stock and expiring-soon queries with B-22.
 
-Stock-changing operations require appropriate permissions and auditability.
+Permissions: `inventory.read` (Admin, Veterinarian, Nurse, Receptionist, Inventory) reads products, stock and
+movements; `inventory.manage` (Admin, Inventory) creates and edits products and receives stock. Other clinics' products
+are `404`; another clinic's product in a body is `422` with the same message as an unknown one.
+
+### 11.1 Products
+
+    {
+      "id": "uuid", "sku": "AMX-250", "name": "Amoxicillin 250 mg", "category": "Antibiotics" | null,
+      "type": "Medication" | "Vaccine" | "Supply" | "Retail" | "Service",
+      "unit": "Each" | "Tablet" | "Capsule" | "Millilitre" | "Litre" | "Gram" | "Kilogram" | "Dose" | "Vial" | "Ampoule" | "Bottle" | "Box" | "Pack",
+      "reorderLevel": 100 | null, "defaultUnitPrice": 0.45 | null,
+      "defaultTaxRate": { "id": "uuid", "name": "Standard", "percent": 20, "status": "Active" | "Archived" } | null,
+      "status": "Active" | "Inactive", "quantityOnHand": 130.5 | null, "createdAt": "...", "updatedAt": "..."
+    }
+
+- `quantityOnHand` is the sum of the product's lots, in its `unit`; `null` for a `Service`, which is billed but never
+  stocked (no lots, no movements, no reorder level).
+- `defaultUnitPrice` (clinic currency, before tax) and `defaultTaxRate` are suggestions for invoice lines: the frontend
+  prefills a line from them; the server copies nothing. The default rate may have been archived since it was set
+  (`status` tells), and an archived rate cannot be used on a new line.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /api/products` | `inventory.read` | Ordered by name, paginated. `q` (part of the name or SKU, ignoring case), `type`, `status`, `category` (exact, ignoring case). |
+| `GET /api/products/categories` | `inventory.read` | The categories in use, as a sorted JSON array of strings (one spelling per category ignoring case), for a picker. |
+| `GET /api/products/:id` | `inventory.read` | `200` or `404`. |
+| `POST /api/products` | `inventory.manage` | Fields below. `201` with `Location: /api/products/:id`. |
+| `PATCH /api/products/:id` | `inventory.manage` | Partial update: omitted fields are unchanged; `category: ""` clears it; `reorderLevel`, `defaultUnitPrice` or `defaultTaxRateId` set to `null` clears them; `status` `Inactive` deactivates, `Active` restores. |
+
+**Fields:** `sku` (required, max 50, trimmed; letters, digits and `- . _ /`, starting with a letter or digit; **unique
+per clinic ignoring case**, inactive products included: `409`), `name` (required, max 200), `category` (optional, max
+100), `type` and `unit` (required on create), `reorderLevel` (0 to 1,000,000, at most 3 decimals; not on services),
+`defaultUnitPrice` (0 to 1,000,000,000, at most 4 decimals), `defaultTaxRateId` (an active rate of the clinic).
+Missing or too long fields are `422` before the product is looked up; then `404`; then the value rules in one `422`.
+**The type and unit cannot change once the product has a stock lot** (`409`); before that they can. Products are never
+deleted: deactivate them. An inactive product cannot be received into or linked to a new invoice line; its stock and
+existing links stay. Changes are audited (`product.created`, `product.updated`, with field names, type and status;
+never names, SKUs or categories). Reads are not audited.
+
+### 11.2 Stock lots
+
+    {
+      "id": "uuid", "product": { "id": "uuid", "sku": "AMX-250", "name": "Amoxicillin 250 mg", "unit": "Tablet" },
+      "lotNumber": "L-1" | null, "expiresOn": "2027-10-01" | null, "location": "Pharmacy" | null,
+      "quantity": 120.5, "createdAt": "...", "updatedAt": "..."
+    }
+
+`GET /api/inventory/stock` (`inventory.read`): lots of the clinic, paginated, ordered by product name, then the lot
+expiring first (lots without expiry last). Filters: `productId`; `includeEmpty=true` also lists lots with nothing
+left (by default only lots holding stock). A lot is identified by its product, **lot number, expiry date and
+location** (each optional; lot number and location compared ignoring case); it is never deleted and never edited:
+only movements change its quantity, and the database checks at commit that it equals the sum of its movements.
+
+### 11.3 Stock movements
+
+    {
+      "id": "uuid", "type": "Receive",
+      "product": { "id", "sku", "name", "unit" },
+      "lot": { "id": "uuid", "lotNumber": "L-1" | null, "expiresOn": "2027-10-01" | null, "location": "Pharmacy" | null, "quantity": 120.5 },
+      "quantity": 20.5, "unitCost": 0.1234 | null, "currency": "EUR" | null,
+      "reference": "DN-5531" | null, "notes": "..." | null,
+      "occurredAt": "...", "performedBy": { "id", "name" } | null, "createdAt": "..."
+    }
+
+`quantity` is the signed change of the lot (positive for stock coming in); `lot.quantity` is the lot's quantity
+**now**. `occurredAt` carries the clinic's offset. Movements are never edited or deleted.
+
+- `GET /api/inventory/movements` (`inventory.read`): newest first (`occurredAt`), paginated; filters `productId`,
+  `stockLotId`, `type`.
+- `POST /api/inventory/movements` (`inventory.manage`): records a movement; B-19 accepts only `"type": "Receive"`
+  (any other value is `400`). `201` with the movement (no `Location`: there is no single-movement `GET`).
+
+      { "type": "Receive", "productId": "uuid", "quantity": 100, "lotNumber": "L-1", "expiresOn": "2027-10-01",
+        "location": "Pharmacy", "unitCost": 0.1234, "reference": "DN-5531", "notes": "...", "occurredAt": "..." }
+
+  `productId` (required): an **active**, non-`Service` product of the clinic (`422`). `quantity` (required): above 0,
+  at most 1,000,000, at most 3 decimals, in the product's unit. `lotNumber` (max 50), `location` (max 100):
+  optional, trimmed. `expiresOn`: optional, but **required for `Medication` and `Vaccine`** products; not before the
+  clinic-local today (expired stock is not received) and not after 2100-12-31. `unitCost` (optional; 0 to
+  1,000,000,000, at most 4 decimals) is in the clinic currency, which must be set (`422`); the movement keeps the
+  currency. `reference` (max 100, e.g. the delivery note) and `notes` (max 500) are optional. `occurredAt` (optional,
+  default now) may be earlier but not in the future or before 2000.
+  The stock goes into the product's lot with the **same lot number, expiry and location**, which is topped up; when
+  there is none, a lot is created. A lot holds at most 1,000,000,000 (`409`). Receipts of one product are applied one
+  after the other. Audited as `stock.received` with ids, quantity, unit cost and currency; never lot numbers,
+  locations, references or notes.
+
+Billing a product on an invoice line (section 10.3, `productId`) does not change stock in B-19.
 
 ## 12. Reports
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.

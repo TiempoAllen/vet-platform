@@ -68,30 +68,37 @@ public static class Permissions
     /// <summary>Refund payments: money leaves the clinic, so administrators only (ADR-017).</summary>
     public const string PaymentsRefund = "payments.refund";
 
+    /// <summary>Read the product catalogue, stock lots and stock movements (ADR-019).</summary>
+    public const string InventoryRead = "inventory.read";
+
+    /// <summary>Create and edit products and receive stock (ADR-019).</summary>
+    public const string InventoryManage = "inventory.manage";
+
     private static readonly FrozenDictionary<Role, FrozenSet<string>> Grants = new Dictionary<Role, FrozenSet<string>>
     {
         [Role.Admin] = new[]
         {
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
             SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead, VaccinationsReadDue,
-            BillingRead, BillingManage, PaymentsRecord, PaymentsRefund,
+            BillingRead, BillingManage, PaymentsRecord, PaymentsRefund, InventoryRead, InventoryManage,
         }.ToFrozenSet(),
         [Role.Veterinarian] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, SchedulesManageOwn, AppointmentsRead, AppointmentsManage,
             ClinicalRead, ClinicalWrite, ConsultationsComplete, PrescriptionsIssue, VaccinationsReadDue, BillingRead,
+            InventoryRead,
         }.ToFrozenSet(),
         [Role.Nurse] = new[]
         {
             ClientsRead, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage, ClinicalRead,
-            ClinicalWrite, VaccinationsReadDue,
+            ClinicalWrite, VaccinationsReadDue, InventoryRead,
         }.ToFrozenSet(),
         [Role.Receptionist] = new[]
         {
             ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage,
-            VaccinationsReadDue, BillingRead, BillingManage, PaymentsRecord,
+            VaccinationsReadDue, BillingRead, BillingManage, PaymentsRecord, InventoryRead,
         }.ToFrozenSet(),
-        [Role.Inventory] = FrozenSet<string>.Empty,
+        [Role.Inventory] = new[] { InventoryRead, InventoryManage }.ToFrozenSet(),
     }.ToFrozenDictionary();
 
     public static IReadOnlyList<string> For(IEnumerable<Role> roles) =>

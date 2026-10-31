@@ -8,6 +8,7 @@ using VetPlatform.Api.Features.ClinicalNotes;
 using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Consultations;
+using VetPlatform.Api.Features.Inventory;
 using VetPlatform.Api.Features.Patients;
 using VetPlatform.Api.Features.Scheduling;
 using VetPlatform.Api.Features.Vaccinations;
@@ -84,6 +85,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options, ITenant
     public DbSet<Receipt> Receipts => Set<Receipt>();
 
     public DbSet<ReceiptNumberSequence> ReceiptNumberSequences => Set<ReceiptNumberSequence>();
+
+    public DbSet<Product> Products => Set<Product>();
+
+    public DbSet<StockLot> StockLots => Set<StockLot>();
+
+    public DbSet<StockMovement> StockMovements => Set<StockMovement>();
 
     /// <summary>Name of the tenant query filter. Named so entities can add other filters (e.g. soft delete) beside it.</summary>
     public const string ClinicFilter = "Clinic";

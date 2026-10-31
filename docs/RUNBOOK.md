@@ -227,7 +227,8 @@ not restore old sessions.
 2. Do not roll back migrations by default: migrations are backward compatible (4.2). Roll back a migration only if
    it is destructive to the old version, after a backup, with
    `dotnet ef database update <PreviousMigration> --project src/VetPlatform.Api`. Rolling back past
-   `AddRolesAndAuditLog` is refused while `audit_logs` has rows, by design.
+   `AddRolesAndAuditLog` is refused while `audit_logs` has rows, by design; so is rolling back past
+   `AddProductsAndStock` (B-19) while stock movements exist or issued invoice lines link products.
 
 ### 6.7 Suspected account compromise
 1. Ask the clinic administrator to disable the user (ends all sessions immediately), or operator SQL:

@@ -106,7 +106,7 @@ public sealed class PatientsTests(DatabaseApiFactory factory) : IClassFixture<Da
             [
                 Permissions.AppointmentsManage, Permissions.AppointmentsRead, Permissions.BillingRead, Permissions.ClientsRead,
                 Permissions.ClinicalRead,
-                Permissions.ClinicalWrite, Permissions.ConsultationsComplete, Permissions.PatientsManage,
+                Permissions.ClinicalWrite, Permissions.ConsultationsComplete, Permissions.InventoryRead, Permissions.PatientsManage,
                 Permissions.PatientsRead, Permissions.PrescriptionsIssue, Permissions.SchedulesManageOwn, Permissions.SchedulesRead,
                 Permissions.VaccinationsReadDue,
             ],

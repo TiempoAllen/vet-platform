@@ -112,6 +112,11 @@ Since B-18 (ADR-018): receipts are frozen copies, never changed or deleted (data
 `billing.read`; opening one and each list call are audited. The per-invoice activity trail shows audit metadata only, which never holds
 free text, and names only the caller's clinic's staff.
 
+Since B-19 (ADR-019): `inventory.read` (Admin, Veterinarian, Nurse, Receptionist, Inventory) reads products, stock and
+movements; `inventory.manage` (Admin, Inventory) edits products and receives stock. The Inventory role has no
+clinical, client or billing access. Stock movements are append-only and lots change only with them
+(database-enforced); audit metadata never holds names, SKUs, lot numbers, locations, references or notes.
+
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 

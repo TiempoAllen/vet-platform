@@ -743,3 +743,42 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - **Accepted for now:** no clinic address, tax number or logo on receipts until B-26 adds those settings (the
   frontend may print what it has); no credit notes; receipts are not emailed until B-25; `TRUNCATE payments` now fails
   on the receipts foreign key before its own guard (either way it is refused).
+
+### ADR-019: Products, stock lots and stock receipts (decided in B-19)
+- **Confirmed with the user:** B-19 delivers the product catalogue, stock lots and **one** movement type, `Receive`;
+  outgoing movements, the negative-stock rule and controlled drugs stay in B-20 with SRS Q-5 (receiving can never make
+  stock negative, so Q-5 is not needed yet). Permissions: `inventory.read` for Admin, Veterinarian, Nurse, Receptionist
+  and Inventory (vets and nurses check stock, reception bills products); `inventory.manage` (products and receiving)
+  for Admin and Inventory. The catalogue includes a non-stocked `Service` type so invoice lines can link to a price
+  list; products carry an optional default price and tax rate. Invoice lines get an optional `productId`; the
+  description and price are still sent by the client (the frontend prefills them) and billing does not touch stock.
+  Vaccination and prescription product links come with dispensing in B-20. SKUs are required, unique per clinic
+  ignoring case (inactive products included) and editable. Units are a fixed list; quantities have up to 3 decimals.
+  Categories are free text with an exact, case-insensitive filter and a list of the categories in use. A lot is
+  identified by (lot number, expiry date, location), each optional; receiving a match tops it up. Medications and
+  vaccines need an expiry date. Unit cost is recorded on each movement, not on the lot.
+- **Made here (recorded for review):** the lot keeps a stored `quantity` (fast stock reads) that the database checks
+  **at commit** equals the sum of its movements (deferred constraint triggers on both tables, the B-17 pattern), so stock
+  is derived from movements and cannot drift. Movements store a signed quantity (B-20 adds negative ones) and are
+  append-only. The type and unit of a product are fixed once it has a lot (the service answers `409`, a trigger
+  refuses it too); before that they can be corrected. Every receipt locks the product row `FOR NO KEY UPDATE` after the
+  clinic-filtered lookup, so concurrent receipts of one product queue and a new lot is never created twice; product
+  edits take the same lock (lock order: product, then lot). Expired stock (expiry before the clinic-local today) is not
+  received; `occurredAt` may be backdated but not in the future. A unit cost needs the clinic currency, which the
+  movement copies. `GET /api/inventory/movements` (read) was added beside the documented `POST` so the stock history is
+  visible from the start. Product, stock and movement reads are not audited (not clinical or financial records);
+  changes are, without names, SKUs, lot numbers, locations, references or notes.
+- **Database:** `products` (SKU, category, lot number and location use the `case_insensitive` collation; the SKU CHECK
+  compares under `COLLATE "C"` because PostgreSQL has no regular expressions on nondeterministic collations, and the
+  name search uses ILIKE while the SKU search uses LIKE for the same reason); `stock_lots` with a unique identity
+  index `NULLS NOT DISTINCT` on (clinic, product, lot number, expiry, location); `stock_movements` referencing its lot
+  through (clinic_id, product_id, stock_lot_id), so a movement can never name another product's lot.
+  `products_guard` refuses DELETE, moving a product and changing the type or unit while lots exist (it locks the row
+  before looking, so a lot being inserted is waited for); `stock_lots_guard` locks the product `FOR SHARE` and refuses
+  lots of services and medication or vaccine lots without expiry, and allows an UPDATE of nothing but the quantity;
+  `stock_movements_guard` refuses UPDATE and DELETE; TRUNCATE is refused on all three. Rolling back refuses while
+  stock movements exist or issued invoice lines link products.
+- **Accepted for now:** no supplier on a receipt until B-21 (purchase orders); no low-stock or expiry queries until
+  B-22 (the reorder level is stored now); the database does not check that a linked invoice product is active (the
+  service does; deactivating a product later leaves its links); stock values (cost × quantity) are reports (B-24);
+  vaccine names and medication names stay free text until B-20 links them.
