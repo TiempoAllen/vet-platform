@@ -213,7 +213,9 @@ public sealed class StockMovementsTests(DatabaseApiFactory factory) : IClassFixt
         Assert.Equal(clinic.VetUser.Id, witnessed.GetProperty("witnessedBy").GetProperty("id").GetGuid());
 
         var sale = await Move(clinic.Stock, new { type = "Sell", stockLotId = lot, quantity = 1 });
-        Assert.Equal("reason", Assert.Single((await ErrorOf(sale)).Details).Field);
+        Assert.Equal(["reason", "witnessUserId"], (await ErrorOf(sale)).Details!.Select(d => d.Field).Order());
+        var returned = await Move(clinic.Stock, new { type = "ReturnToSupplier", stockLotId = lot, quantity = 1, reason = "Recall" });
+        Assert.Equal("witnessUserId", Assert.Single((await ErrorOf(returned)).Details).Field);
 
         var register = await clinic.Stock.GetFromJsonAsync<JsonElement>($"/api/products/{id}/register");
         Assert.Equal([10m, 9m, 8m], register.GetProperty("data").EnumerateArray().Select(m => Number(m, "balanceAfter")));
@@ -321,6 +323,131 @@ public sealed class StockMovementsTests(DatabaseApiFactory factory) : IClassFixt
         var lot = await LotAsync(clinic, medication, 14);
         var dispensed = await OkAsync(await Move(clinic.Nurse, new { type = "Dispense", stockLotId = lot, quantity = 14, patientId = clinic.PatientId, consultationId = consultation }), HttpStatusCode.Created);
         Assert.Equal(consultation, dispensed.GetProperty("consultationId").GetGuid());
+    }
+
+    // ---------- Review fixes (B-20) ----------
+
+    [Fact]
+    public async Task DispenseReasons_AreShownOnlyToClinicalReaders()
+    {
+        var clinic = await ClinicAsync();
+        var id = await ProductAsync(clinic, "SUP");
+        var lot = await LotAsync(clinic, id, 5);
+        await OkAsync(await Move(clinic.Nurse, new { type = "Dispense", stockLotId = lot, quantity = 1, patientId = clinic.PatientId, reason = "Post-op pain", notes = "Left ear" }), HttpStatusCode.Created);
+        await OkAsync(await Move(clinic.Stock, new { type = "Adjust", stockLotId = lot, quantity = -1, reason = "Count", notes = "Shelf 2" }), HttpStatusCode.Created);
+
+        static JsonElement Of(JsonElement page, string type) =>
+            page.GetProperty("data").EnumerateArray().Single(m => m.GetProperty("type").GetString() == type);
+
+        foreach (var http in new[] { clinic.Desk, clinic.Stock })
+        {
+            var page = await http.GetFromJsonAsync<JsonElement>($"/api/products/{id}/register");
+            Assert.Equal(JsonValueKind.Null, Of(page, "Dispense").GetProperty("reason").ValueKind);
+            Assert.Equal(JsonValueKind.Null, Of(page, "Dispense").GetProperty("notes").ValueKind);
+            Assert.Equal(("Count", "Shelf 2"), (Of(page, "Adjust").GetProperty("reason").GetString(), Of(page, "Adjust").GetProperty("notes").GetString()));
+        }
+
+        foreach (var http in new[] { clinic.Vet, clinic.Nurse, clinic.Admin })
+        {
+            var page = await http.GetFromJsonAsync<JsonElement>($"/api/inventory/movements?stockLotId={lot}");
+            Assert.Equal(("Post-op pain", "Left ear"), (Of(page, "Dispense").GetProperty("reason").GetString(), Of(page, "Dispense").GetProperty("notes").GetString()));
+        }
+    }
+
+    [Fact]
+    public async Task TypePermissions_AreCheckedBeforeTheBody()
+    {
+        var clinic = await ClinicAsync();
+        // Neither permission: refused before the body is read. Dispense only: refused for other types before field rules.
+        Assert.Equal(HttpStatusCode.Forbidden, (await Move(clinic.Desk, new { type = "Sell", quantity = 1 })).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await Move(clinic.Nurse, new { type = "Sell", quantity = -5 })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await Move(clinic.Nurse, new { type = "Dispense", quantity = -5 })).StatusCode);
+    }
+
+    [Fact]
+    public async Task OtherClinics_References_AreRefusedLikeUnknownOnes()
+    {
+        var mine = await ClinicAsync();
+        var theirs = await ClinicAsync();
+        var myProduct = await ProductAsync(mine, "MINE", "Retail");
+        var myLot = await LotAsync(mine, myProduct, 5);
+        var theirProduct = await ProductAsync(theirs, "THEIRS", "Medication");
+        var theirLot = await LotAsync(theirs, theirProduct, 5);
+        var theirMovement = (await OkAsync(await Move(theirs.Stock, new { type = "Sell", stockLotId = theirLot, quantity = 1 }), HttpStatusCode.Created))
+            .GetProperty("id").GetGuid();
+        var theirConsultation = (await OkAsync(await theirs.Vet.PostAsJsonAsync("/api/consultations", new { patientId = theirs.PatientId, veterinarianId = theirs.VetUser.Id }), HttpStatusCode.Created))
+            .GetProperty("id").GetGuid();
+        var client = await OkAsync(await theirs.Desk.PostAsJsonAsync("/api/clients", new { firstName = "T", lastName = "C" }), HttpStatusCode.Created);
+        var invoice = (await OkAsync(await theirs.Desk.PostAsJsonAsync("/api/invoices", new { clientId = client.GetProperty("id").GetGuid() }), HttpStatusCode.Created)).GetProperty("id").GetGuid();
+        var theirLine = (await OkAsync(await theirs.Desk.PostAsJsonAsync($"/api/invoices/{invoice}/items", new { description = "x", quantity = 1, unitPrice = 1, taxRateId = theirs.Standard, productId = theirProduct })))
+            .GetProperty("items")[0].GetProperty("id").GetGuid();
+        await OkAsync(await theirs.Desk.PostAsync($"/api/invoices/{invoice}/issue", null));
+
+        async Task SameAsUnknown(object theirsBody, object unknownBody, string field)
+        {
+            var a = await Move(mine.Stock, theirsBody);
+            var b = await Move(mine.Stock, unknownBody);
+            Assert.Equal((HttpStatusCode.UnprocessableEntity, HttpStatusCode.UnprocessableEntity), (a.StatusCode, b.StatusCode));
+            var theirMessage = (await ErrorOf(a)).Details!.Single(d => d.Field == field).Message;
+            Assert.Equal((await ErrorOf(b)).Details!.Single(d => d.Field == field).Message, theirMessage);
+        }
+
+        await SameAsUnknown(new { type = "Sell", stockLotId = theirLot, quantity = 1 }, new { type = "Sell", stockLotId = Guid.NewGuid(), quantity = 1 }, "stockLotId");
+        await SameAsUnknown(
+            new { type = "Dispense", stockLotId = myLot, quantity = 1, patientId = theirs.PatientId },
+            new { type = "Dispense", stockLotId = myLot, quantity = 1, patientId = Guid.NewGuid() }, "patientId");
+        await SameAsUnknown(
+            new { type = "Dispense", stockLotId = myLot, quantity = 1, patientId = mine.PatientId, consultationId = theirConsultation },
+            new { type = "Dispense", stockLotId = myLot, quantity = 1, patientId = mine.PatientId, consultationId = Guid.NewGuid() }, "consultationId");
+        await SameAsUnknown(
+            new { type = "Sell", stockLotId = myLot, quantity = 1, invoiceItemId = theirLine },
+            new { type = "Sell", stockLotId = myLot, quantity = 1, invoiceItemId = Guid.NewGuid() }, "invoiceItemId");
+        await SameAsUnknown(
+            new { type = "Adjust", stockLotId = myLot, quantity = -1, reason = "x", witnessUserId = theirs.VetUser.Id },
+            new { type = "Adjust", stockLotId = myLot, quantity = -1, reason = "x", witnessUserId = Guid.NewGuid() }, "witnessUserId");
+
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.PostAsJsonAsync($"/api/inventory/movements/{theirMovement}/reverse", new { reason = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.GetAsync($"/api/products/{theirProduct}/register")).StatusCode);
+        var vaccination = await mine.Nurse.PostAsJsonAsync($"/api/patients/{mine.PatientId}/vaccinations",
+            new { vaccineName = "Rabies", administeredOn = Today, veterinarianId = mine.VetUser.Id, productId = theirProduct });
+        Assert.Equal("productId", Assert.Single((await ErrorOf(vaccination)).Details).Field);
+        Assert.Equal(5m, await LotQuantityAsync(mine, myProduct));
+        Assert.Equal(4m, await LotQuantityAsync(theirs, theirProduct));
+    }
+
+    [Fact]
+    public async Task VaccinationProductProblems_AreReportedWithTheOthers()
+    {
+        var clinic = await ClinicAsync();
+        var response = await clinic.Nurse.PostAsJsonAsync($"/api/patients/{clinic.PatientId}/vaccinations",
+            new { vaccineName = "Rabies", administeredOn = Today, productId = Guid.NewGuid() });
+        Assert.Equal(["productId", "veterinarianId"], (await ErrorOf(response)).Details!.Select(d => d.Field).Order());
+    }
+
+    [Fact]
+    public async Task Database_RefusesStrayOrDiscardedConsultations()
+    {
+        var clinic = await ClinicAsync();
+        var id = await ProductAsync(clinic, "SUP");
+        var lot = await LotAsync(clinic, id, 5);
+        var consultation = (await OkAsync(await clinic.Vet.PostAsJsonAsync("/api/consultations", new { patientId = clinic.PatientId, veterinarianId = clinic.VetUser.Id }), HttpStatusCode.Created))
+            .GetProperty("id").GetGuid();
+        await OkAsync(await clinic.Vet.PostAsJsonAsync($"/api/consultations/{consultation}/discard", new { reason = "Opened by mistake" }));
+
+        const string insert =
+            "UPDATE stock_lots SET quantity = 4 WHERE id = {0}; " +
+            "INSERT INTO stock_movements (id, clinic_id, product_id, stock_lot_id, type, quantity, balance_after, patient_id, consultation_id, occurred_at, performed_by_user_id, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, product_id, stock_lot_id, {1}, -1, 4, {2}, {3}, now(), performed_by_user_id, now(), now() FROM stock_movements WHERE stock_lot_id = {0} LIMIT 1";
+        var discarded = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            insert, lot, "Dispense", clinic.PatientId, consultation)));
+        Assert.Equal("42501", discarded.SqlState);
+        // A sale carrying a consultation id: no patient, so the key would never check it.
+        var stray = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "UPDATE stock_lots SET quantity = 4 WHERE id = {0}; " +
+            "INSERT INTO stock_movements (id, clinic_id, product_id, stock_lot_id, type, quantity, balance_after, consultation_id, occurred_at, performed_by_user_id, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, product_id, stock_lot_id, 'Sell', -1, 4, {1}, now(), performed_by_user_id, now(), now() FROM stock_movements WHERE stock_lot_id = {0} LIMIT 1",
+            lot, Guid.NewGuid())));
+        Assert.Equal(PostgresErrorCodes.CheckViolation, stray.SqlState);
     }
 
     // ---------- Database rules ----------

@@ -781,7 +781,8 @@ clinical reader sees them.
 `medicationName` (max 200), `dose` and `frequency` (max 100 each), `quantity` and `quantityUnit` (max 50) are required;
 `route`, `duration` (max 100 each) and `instructions` (max 2000) are optional. `medicationName` is free text;
 `productId` (optional, B-20) links an **active `Medication` product** of the clinic (`422` otherwise; `null` in a
-PATCH unlinks; frozen with the prescription after sign-off). Linking never changes stock: dispensing is a stock
+PATCH unlinks; frozen with the prescription after sign-off). It is checked after the other fields and the
+diagnosis link, as its own `422`. Linking never changes stock: dispensing is a stock
 movement (section 11.3). `quantity` is a number above 0 and at most 100000 with at most 3
 decimals (e.g. 14 tablets, 10.5 ml); it is returned in its shortest form. `refills` (0 to 12, default 0) is recorded
 only; repeat supplies are not tracked yet. `diagnosisId` links one diagnosis of the **same** consultation (`422`
@@ -792,7 +793,7 @@ otherwise); removing that diagnosis unlinks the prescription. `prescribedBy` is 
 | Endpoint | Permission | While `InProgress` | After `Completed` |
 |---|---|---|---|
 | `POST /api/consultations/:id/prescriptions` | `prescriptions.issue` | adds (`422` on invalid fields) | `409` |
-| `PATCH /api/consultations/:id/prescriptions/:prescriptionId` | `prescriptions.issue` | any field; omitted or `null` unchanged, `""` clears optional text (required text cannot be blank: `422`), `"diagnosisId": null` unlinks | `409` |
+| `PATCH /api/consultations/:id/prescriptions/:prescriptionId` | `prescriptions.issue` | any field; omitted or `null` unchanged, `""` clears optional text (required text cannot be blank: `422`), `"diagnosisId": null` or `"productId": null` unlinks | `409` |
 | `DELETE /api/consultations/:id/prescriptions/:prescriptionId` | `prescriptions.issue` | removes it | `409` |
 | `POST /api/consultations/:id/prescriptions/:prescriptionId/cancel` | `prescriptions.issue` | `409` (edit or remove it instead) | `{ "reason": "..." }` (required, max 500, trimmed): `Active` → `Cancelled`, recording who and when; an already cancelled one is `409` |
 
@@ -801,8 +802,8 @@ Each returns `200` with the whole consultation. A body that fails field validati
 prescriptions cannot change at all (`409`). At most 50 prescriptions per consultation (`409`). Unknown prescriptions (or another clinic's, or one of
 another consultation) are `404`. The database enforces the same freeze: after completion only the cancellation step
 is possible. Audited (`prescription.added`, `.updated`, `.removed`, `.cancelled`) with ids, field names and statuses,
-never medication names, instructions or the cancellation reason. Controlled-drug logging is not part of this
-milestone (SRS Q-5, B-20).
+never medication names, instructions or the cancellation reason. Dispensing and controlled-drug records are stock
+movements (section 11.3).
 
 `GET /api/patients/:id/prescriptions` (`clinical.read`): the patient's **medication list**: prescriptions of completed
 consultations, most recently completed consultation first (`consultationCompletedAt` descending), in the order
@@ -851,8 +852,8 @@ vaccination and `Location: /api/vaccinations/:id`.
   another patient's or another clinic's is one identical `422`. The link does not make the record follow the
   consultation's state.
 - Order of checks: missing or too long fields `422` first (before the patient is looked at); then an unknown or
-  another clinic's patient `404` and a patient that is not `Active` `409`; then the date, veterinarian and
-  consultation checks, reported together in one `422`. Limits apply to the value as sent, before trimming. A date that
+  another clinic's patient `404` and a patient that is not `Active` `409`; then the date, veterinarian,
+  consultation and `productId` checks, reported together in one `422`. Limits apply to the value as sent, before trimming. A date that
   is not exactly `YYYY-MM-DD` or a malformed id is `400`. Audited (`vaccination.recorded`) with ids, never the vaccine
   name or notes.
 
@@ -1171,8 +1172,9 @@ are `404`; another clinic's product in a body is `422` with the same message as 
 
     {
       "id": "uuid", "sku": "AMX-250", "name": "Amoxicillin 250 mg", "category": "Antibiotics" | null,
-      "type": "Medication" | "Vaccine" | "Supply" | "Retail" | "Service", "controlled": false,
+      "type": "Medication" | "Vaccine" | "Supply" | "Retail" | "Service",
       "unit": "Each" | "Tablet" | "Capsule" | "Millilitre" | "Litre" | "Gram" | "Kilogram" | "Dose" | "Vial" | "Ampoule" | "Bottle" | "Box" | "Pack",
+      "controlled": false,
       "reorderLevel": 100 | null, "defaultUnitPrice": 0.45 | null,
       "defaultTaxRate": { "id": "uuid", "name": "Standard", "percent": 20, "status": "Active" | "Archived" } | null,
       "status": "Active" | "Inactive", "quantityOnHand": 130.5 | null, "createdAt": "...", "updatedAt": "..."
@@ -1238,7 +1240,8 @@ are kept in a register with reasons and witnesses).
 `quantity` is the signed change of the lot (positive for stock coming in); `balanceAfter` is what the lot held right
 after this movement (0 or more), in the order movements were recorded; `lot.quantity` is the lot's quantity **now**.
 `reversedByMovementId` names the reversal that undid this movement. `patientId` and `consultationId` are ids only
-(patient names need `patients.read`). `occurredAt` carries the clinic's offset. Movements are never edited or deleted.
+(patient names need `patients.read`). On `Dispense` movements, `reason` and `notes` may hold clinical detail, so they
+are returned only to callers with `clinical.read` (Admin, Veterinarian, Nurse); others get `null`. `occurredAt` carries the clinic's offset. Movements are never edited or deleted.
 
 | Endpoint | Permission | Notes |
 |---|---|---|
@@ -1259,7 +1262,10 @@ gives the direction (negative takes stock out). At most 1,000,000 either way, at
 | `ReturnToSupplier` | out | `stockLotId` | `reason` | Supplier links come with B-21. |
 | `ReturnFromClient` | in | `stockLotId` | `reason` | E.g. an unopened retail item. |
 | `Expire` | out | `stockLotId` | `reason` | Only a lot whose `expiresOn` is today or earlier (clinic-local); use `Adjust` otherwise. |
-| `Reversal` | opposite | — | — | Only through the reverse endpoint. |
+| `Reversal` | opposite | — | — | Only through the reverse endpoint (`422` on `type` here). |
+
+An unknown type name is `400` (section 13). For B-19 clients: the outgoing types that were `400` then are accepted
+now, and `type=Sell` etc. are valid list filters.
 
 Fields a type does not use (`lotNumber`, `expiresOn`, `location`, `unitCost` outside `Receive`; `patientId` /
 `consultationId` outside `Dispense`; `invoiceItemId` outside `Sell`; `stockLotId` or `witnessUserId` on `Receive`)
@@ -1274,8 +1280,9 @@ and so is one above 1,000,000,000. Stock found that was never recorded is added 
 **Controlled drugs** (products with `controlled: true`, medications only):
 - `Dispense` needs `inventory.dispense_controlled` (**Veterinarians only**; `403` for nurses and for
   `inventory.manage` holders) and a `reason`; `Sell` needs a `reason`.
-- `Adjust`, `Expire` and reversals need `witnessUserId`: **another active staff member** of the clinic (any role;
-  not the caller). The witness is recorded and shown as `witnessedBy`; they do not sign in to confirm (ADR-020).
+- `Sell`, `Adjust`, `ReturnToSupplier`, `Expire` and reversals (everything that can take it out except a
+  veterinarian's dispense) need `witnessUserId`: **another active staff member** of the clinic (any role; not the
+  caller). The witness is recorded and shown as `witnessedBy`; they do not sign in to confirm (ADR-020).
 - The register endpoint lists every movement with its running balance.
 A witness may be named on other non-`Receive` movements too, with the same rule.
 
@@ -1284,9 +1291,14 @@ type `Reversal`, the opposite `quantity`, `reversesMovementId` set, and `occurre
 most once and a reversal is never reversed (`409`); a reversal that would take the lot below 0 (e.g. reversing a
 receipt whose stock was already used) is `409`. Unknown or another clinic's movement: `404`.
 
-**Order of checks:** missing or too long fields, and the field rules above, are `422`; then the permission for the
-type (`403`); then the lot or product lookup (`422`); then the controlled-drug and reference rules (`403` for a
-controlled dispense without the permission, otherwise `422`, reported together); then the quantity (`409`).
+**Order of checks:** a caller with neither `inventory.manage` nor `inventory.dispense` is `403` before the body is
+read; a malformed body or unknown enum name is `400`; missing or too long fields are `422`; a caller with only
+`inventory.dispense` recording another type is `403`; then the field rules above (`422`); then the lot or product
+lookup (`422`); then the controlled-drug and reference rules (`403` for a controlled dispense without the permission,
+otherwise `422`, reported together); then the quantity (`409`).
+
+**Reversal order of checks:** a missing or too long `reason` is `422`; an unknown movement `404`; a reversal, or a
+movement already reversed, `409`; the witness (`422`); then the quantity (`409`).
 
 **Audit:** `stock.received`, `stock.dispensed`, `stock.sold`, `stock.adjusted`, `stock.returned_to_supplier`,
 `stock.returned_from_client`, `stock.expired`, `stock.reversed`, with ids (product, lot, patient, consultation,

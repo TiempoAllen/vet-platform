@@ -134,6 +134,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 columns: new[] { "clinic_id", "witness_user_id" });
 
             migrationBuilder.CreateIndex(
+                name: "ix_stock_movements_register",
+                table: "stock_movements",
+                columns: new[] { "clinic_id", "product_id", "created_at", "id" });
+
+            migrationBuilder.CreateIndex(
                 name: "ux_stock_movements_reverses_movement_id",
                 table: "stock_movements",
                 column: "reverses_movement_id",
@@ -144,6 +149,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 name: "ck_stock_movements_balance_after",
                 table: "stock_movements",
                 sql: "balance_after >= 0 AND balance_after <= 1000000000");
+
+            migrationBuilder.AddCheckConstraint(
+                name: "ck_stock_movements_consultation",
+                table: "stock_movements",
+                sql: "consultation_id IS NULL OR type = 'Dispense'");
 
             migrationBuilder.AddCheckConstraint(
                 name: "ck_stock_movements_invoice_item",
@@ -181,7 +191,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 sql: "(unit_cost IS NULL) = (currency IS NULL) AND (unit_cost IS NULL OR (type = 'Receive' AND unit_cost >= 0 AND unit_cost <= 1000000000))");
 
             migrationBuilder.AddCheckConstraint(
-                name: "ix_stock_movements_lot_occurred_at",
+                name: "ck_stock_movements_witness",
                 table: "stock_movements",
                 sql: "witness_user_id IS NULL OR witness_user_id <> performed_by_user_id");
 
@@ -264,8 +274,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
             // Products keep their type, unit and controlled flag once they have a lot. A movement locks its lot, so
             // movements of one lot queue and each one's balance_after is the lot's running balance (never below 0:
-            // CHECK); controlled drugs need a reason on outgoing sales and dispensing and a witness on adjustments,
-            // write-offs and reversals; a reversal exactly undoes a non-reversal of its lot; a sale names a line of an
+            // CHECK); controlled drugs need a reason on outgoing sales and dispensing and a witness on every other
+            // movement that can take stock out; a reversal exactly undoes a non-reversal of its lot; a sale names a line of an
             // issued invoice for the same product. Parents are locked first and tested after (the B-14 lesson).
             migrationBuilder.Sql("""
                 CREATE OR REPLACE FUNCTION products_guard() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -295,6 +305,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     prior numeric;
                     original_type text;
                     original_quantity numeric;
+                    linked_status text;
                 BEGIN
                     IF TG_OP <> 'INSERT' THEN
                         RAISE EXCEPTION 'stock movements are never changed or deleted' USING ERRCODE = 'insufficient_privilege';
@@ -320,8 +331,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         IF NEW.type IN ('Dispense', 'Sell') AND NEW.reason IS NULL THEN
                             RAISE EXCEPTION 'outgoing controlled-drug movements need a reason' USING ERRCODE = 'insufficient_privilege';
                         END IF;
-                        IF NEW.type IN ('Adjust', 'Expire', 'Reversal') AND NEW.witness_user_id IS NULL THEN
-                            RAISE EXCEPTION 'controlled-drug adjustments, write-offs and reversals need a witness'
+                        IF NEW.type IN ('Sell', 'Adjust', 'ReturnToSupplier', 'Expire', 'Reversal') AND NEW.witness_user_id IS NULL THEN
+                            RAISE EXCEPTION 'controlled-drug movements other than receipts, dispensing and client returns need a witness'
                                 USING ERRCODE = 'insufficient_privilege';
                         END IF;
                     END IF;
@@ -333,13 +344,29 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                                 USING ERRCODE = 'insufficient_privilege';
                         END IF;
                     END IF;
-                    IF NEW.invoice_item_id IS NOT NULL AND NOT EXISTS (
-                        SELECT 1 FROM invoice_items ii
-                        JOIN invoices i ON i.id = ii.invoice_id AND i.clinic_id = ii.clinic_id
+                    -- A dispensed consultation must not be discarded (locked, then tested, as for vaccinations).
+                    IF NEW.consultation_id IS NOT NULL THEN
+                        SELECT status INTO linked_status FROM consultations
+                        WHERE id = NEW.consultation_id AND clinic_id = NEW.clinic_id
+                        FOR SHARE;
+                        IF linked_status = 'Discarded' THEN
+                            RAISE EXCEPTION 'stock cannot be dispensed against a discarded consultation'
+                                USING ERRCODE = 'insufficient_privilege';
+                        END IF;
+                    END IF;
+                    IF NEW.invoice_item_id IS NOT NULL THEN
+                        -- Lock the invoice first, then test its status (a concurrent void is waited for).
+                        PERFORM 1 FROM invoices i JOIN invoice_items ii ON ii.invoice_id = i.id AND ii.clinic_id = i.clinic_id
                         WHERE ii.id = NEW.invoice_item_id AND ii.clinic_id = NEW.clinic_id
-                          AND ii.product_id = NEW.product_id AND i.status = 'Issued') THEN
-                        RAISE EXCEPTION 'a sale names a line of an issued invoice for the same product'
-                            USING ERRCODE = 'insufficient_privilege';
+                        FOR SHARE OF i;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM invoice_items ii
+                            JOIN invoices i ON i.id = ii.invoice_id AND i.clinic_id = ii.clinic_id
+                            WHERE ii.id = NEW.invoice_item_id AND ii.clinic_id = NEW.clinic_id
+                              AND ii.product_id = NEW.product_id AND i.status = 'Issued') THEN
+                            RAISE EXCEPTION 'a sale names a line of an issued invoice for the same product'
+                                USING ERRCODE = 'insufficient_privilege';
+                        END IF;
                     END IF;
                     RETURN NEW;
                 END;
@@ -356,7 +383,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                 DO $$
                 BEGIN
-                    IF EXISTS (SELECT 1 FROM stock_movements WHERE type <> 'Receive') THEN
+                    IF EXISTS (SELECT 1 FROM stock_movements
+                               WHERE type <> 'Receive' OR reason IS NOT NULL OR witness_user_id IS NOT NULL) THEN
                         RAISE EXCEPTION 'Refusing to drop B-20 stock movements: they are the stock history.';
                     END IF;
                     IF EXISTS (SELECT 1 FROM vaccinations WHERE product_id IS NOT NULL)
@@ -455,11 +483,19 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 table: "stock_movements");
 
             migrationBuilder.DropIndex(
+                name: "ix_stock_movements_register",
+                table: "stock_movements");
+
+            migrationBuilder.DropIndex(
                 name: "ux_stock_movements_reverses_movement_id",
                 table: "stock_movements");
 
             migrationBuilder.DropCheckConstraint(
                 name: "ck_stock_movements_balance_after",
+                table: "stock_movements");
+
+            migrationBuilder.DropCheckConstraint(
+                name: "ck_stock_movements_consultation",
                 table: "stock_movements");
 
             migrationBuilder.DropCheckConstraint(
@@ -491,7 +527,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 table: "stock_movements");
 
             migrationBuilder.DropCheckConstraint(
-                name: "ix_stock_movements_lot_occurred_at",
+                name: "ck_stock_movements_witness",
                 table: "stock_movements");
 
             migrationBuilder.DropCheckConstraint(

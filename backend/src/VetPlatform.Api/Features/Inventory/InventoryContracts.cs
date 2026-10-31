@@ -165,17 +165,24 @@ public sealed record StockMovementResponse(
     AppointmentPersonSummary? WitnessedBy,
     DateTimeOffset CreatedAt)
 {
-    /// <summary>The product, lot, performer and witness must be loaded (a missing person shows null).</summary>
-    public static StockMovementResponse From(StockMovement m, Guid? reversedBy, TimeZoneInfo zone) =>
+    /// <summary>
+    /// The product, lot, performer and witness must be loaded (a missing person shows null). The reason and notes of a
+    /// <see cref="StockMovementType.Dispense"/> may hold clinical detail, so they are shown only to callers with
+    /// <c>clinical.read</c> (<paramref name="clinicalReader"/>); others get null.
+    /// </summary>
+    public static StockMovementResponse From(StockMovement m, Guid? reversedBy, TimeZoneInfo zone, bool clinicalReader) =>
         new(
             m.Id, m.Type, StockLotResponse.Summary(m.Product!),
             new StockMovementLotSummary(m.StockLot!.Id, m.StockLot.LotNumber, m.StockLot.ExpiresOn, m.StockLot.Location, Currencies.Shortest(m.StockLot.Quantity)),
             Currencies.Shortest(m.Quantity), Currencies.Shortest(m.BalanceAfter), ProductResponse.Shortest(m.UnitCost), m.Currency,
-            m.Reference, m.Reason, m.Notes, m.PatientId, m.ConsultationId, m.InvoiceItemId, m.ReversesMovementId, reversedBy,
+            m.Reference, Clinical(m, m.Reason, clinicalReader), Clinical(m, m.Notes, clinicalReader), m.PatientId, m.ConsultationId, m.InvoiceItemId, m.ReversesMovementId, reversedBy,
             TimeZoneInfo.ConvertTime(m.OccurredAt, zone), Person(m.PerformedBy), Person(m.Witness), m.CreatedAt);
 
     private static AppointmentPersonSummary? Person(Identity.User? user) =>
         user is null ? null : new AppointmentPersonSummary(user.Id, user.Name);
+
+    private static string? Clinical(StockMovement m, string? text, bool clinicalReader) =>
+        m.Type == StockMovementType.Dispense && !clinicalReader ? null : text;
 }
 
 /// <summary>

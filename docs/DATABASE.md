@@ -445,8 +445,10 @@ trigger `stock_lots_match_movements`: at commit, the quantity equals the sum of 
 Table `stock_movements`. Append-only: `stock_movements_guard` refuses UPDATE and DELETE; on INSERT it locks the
 product `FOR SHARE` (refusing a `Receive` into a product that is not active), then the lot `FOR NO KEY UPDATE` (so a
 lot's movements queue), and checks that `balance_after` is the sum of the lot's earlier movements plus this one, the
-controlled-drug reason (Dispense, Sell) and witness (Adjust, Expire, Reversal) rules, that a reversal exactly undoes a
-non-reversal of the same lot, and that a sale's invoice line is on an issued invoice for the same product.
+controlled-drug reason (Dispense, Sell) and witness (Sell, Adjust, ReturnToSupplier, Expire, Reversal) rules, that
+a reversal exactly undoes a non-reversal of the same lot, that a dispensed consultation is not discarded (locked
+`FOR SHARE`, then tested), and that a sale's invoice line is on an issued invoice for the same product (the invoice
+is locked `FOR SHARE` first).
 `stock_movements_no_truncate` refuses TRUNCATE.
 - id, clinic_id; product_id and stock_lot_id: composite FK (clinic_id, product_id, stock_lot_id) → stock_lots
   (clinic_id, product_id, id), so the lot is always the product's; also (clinic_id, product_id) → products
@@ -458,8 +460,9 @@ non-reversal of the same lot, and that a sale's invoice line is on an issued inv
 - unit_cost `numeric(19,4)` and currency `char(3)`: both null or both set, receipts only (CHECK; cost 0 to
   1,000,000,000; ISO pattern)
 - reason (max 500; CHECK not blank; required for `Adjust`, both returns, `Expire` and `Reversal`)
-- patient_id (CHECK set exactly for `Dispense`): composite FK (clinic_id, patient_id) → patients; consultation_id:
-  composite FK (clinic_id, patient_id, consultation_id) → consultations (clinic_id, patient_id, id)
+- patient_id (CHECK set exactly for `Dispense`): composite FK (clinic_id, patient_id) → patients; consultation_id
+  (CHECK `Dispense` only, since the key is not checked without a patient): composite FK (clinic_id, patient_id,
+  consultation_id) → consultations (clinic_id, patient_id, id)
 - invoice_item_id (CHECK `Sell` only): composite FK (clinic_id, invoice_item_id) → invoice_items (clinic_id, id)
 - reverses_movement_id (CHECK set exactly for `Reversal`): composite FK (clinic_id, stock_lot_id, reverses_movement_id)
   → stock_movements (clinic_id, stock_lot_id, id), so it is a movement of the same lot; partial unique index
@@ -469,14 +472,18 @@ non-reversal of the same lot, and that a sale's invoice line is on an issued inv
 - occurred_at, performed_by_user_id (composite FK to users), created_at, updated_at
 
 Indexes: (clinic_id, product_id, occurred_at), `ix_stock_movements_lot_occurred_at` on (clinic_id, product_id,
-stock_lot_id, occurred_at), (clinic_id, occurred_at, id) for the unfiltered list, one per user key. Deferred constraint trigger `stock_movements_match_lot`: at commit, the
+stock_lot_id, occurred_at), (clinic_id, occurred_at, id) for the unfiltered list, `ix_stock_movements_register` on
+(clinic_id, product_id, created_at, id) for the register, and one per foreign key (users, witness, invoice line,
+(clinic_id, patient_id, consultation_id), (clinic_id, stock_lot_id, reverses_movement_id)). Alternate key
+(clinic_id, stock_lot_id, id) for reversals. Deferred constraint trigger `stock_movements_match_lot`: at commit, the
 lot's quantity equals the sum of its movements, so a movement without the lot's change (or the reverse) cannot commit.
-The original `reference_type` / `reference_id` columns arrive with the movements that have a source document (B-20,
-B-21).
+The original `reference_type` / `reference_id` columns became explicit links (patient, consultation, invoice line,
+reversed movement; purchase orders with B-21).
 
-Rolling the migration back locks the inventory tables and invoice lines, then refuses while stock movements exist
-or issued invoice lines link products (products, empty lots and draft-line links are dropped, as drafts are in
-B-16).
+Rolling the B-19 migration back locks the inventory tables and invoice lines, then refuses while stock movements
+exist or issued invoice lines link products (products, empty lots and draft-line links are dropped, as drafts are in
+B-16). Rolling the B-20 migration back refuses while any movement is not a plain receipt (another type, a reason or
+a witness), a product is controlled, or a vaccination or prescription links a product; it restores the B-19 guards.
 
 ### Supplier
 - id

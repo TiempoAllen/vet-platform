@@ -93,16 +93,17 @@ public sealed class StockService(
         var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, zone).DateTime);
         var type = request.Type!.Value;
 
-        // Body rules first (422 before anything is read), then the caller's permission for the type (403).
-        var problems = new List<ApiErrorDetail>();
-        CheckBody(request, type, clinic, today, now, problems);
-        ThrowIfAny(problems);
-        var roles = Permissions.RolesOf(httpContextAccessor.HttpContext!.User).ToList();
+        // The caller's permission for the type first (403), then the field rules (422) before anything is read.
+        var roles = Roles;
         if (!Permissions.Grant(roles, Permissions.InventoryManage)
             && !(type == StockMovementType.Dispense && Permissions.Grant(roles, Permissions.InventoryDispense)))
         {
             throw Forbidden($"Recording {type} movements needs inventory.manage.");
         }
+
+        var problems = new List<ApiErrorDetail>();
+        CheckBody(request, type, clinic, today, now, problems);
+        ThrowIfAny(problems);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var (product, lot, newLot) = type == StockMovementType.Receive
@@ -482,15 +483,17 @@ public sealed class StockService(
         var zone = await ZoneAsync(cancellationToken);
         var page = await WithDetails(ordered).ToPageAsync(query, m => m, cancellationToken);
         var reversedBy = await ReversalsOfAsync(page.Data.Select(m => m.Id).ToList(), cancellationToken);
+        var clinicalReader = IsClinicalReader;
         return new PagedResponse<StockMovementResponse>(
-            page.Data.Select(m => StockMovementResponse.From(m, reversedBy.GetValueOrDefault(m.Id), zone)).ToList(), page.Pagination);
+            page.Data.Select(m => StockMovementResponse.From(m, reversedBy.GetValueOrDefault(m.Id), zone, clinicalReader)).ToList(),
+            page.Pagination);
     }
 
     private async Task<StockMovementResponse> GetAsync(Guid id, TimeZoneInfo zone, CancellationToken cancellationToken)
     {
         var movement = await WithDetails(db.StockMovements.AsNoTracking()).SingleAsync(m => m.Id == id, cancellationToken);
         var reversedBy = await ReversalsOfAsync([id], cancellationToken);
-        return StockMovementResponse.From(movement, reversedBy.GetValueOrDefault(id), zone);
+        return StockMovementResponse.From(movement, reversedBy.GetValueOrDefault(id), zone, IsClinicalReader);
     }
 
     private async Task<Dictionary<Guid, Guid?>> ReversalsOfAsync(List<Guid> ids, CancellationToken cancellationToken) =>
@@ -533,6 +536,10 @@ public sealed class StockService(
 
     private static IQueryable<StockMovement> WithDetails(IQueryable<StockMovement> movements) =>
         movements.Include(m => m.Product).Include(m => m.StockLot).Include(m => m.PerformedBy).Include(m => m.Witness);
+
+    private List<Role> Roles => Permissions.RolesOf(httpContextAccessor.HttpContext!.User).ToList();
+
+    private bool IsClinicalReader => Permissions.Grant(Roles, Permissions.ClinicalRead);
 
     private Guid CurrentClinicId => tenant.ClinicId ?? throw new InvalidOperationException("Stock requires a current clinic.");
 

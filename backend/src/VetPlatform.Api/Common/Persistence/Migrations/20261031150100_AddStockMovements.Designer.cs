@@ -12,7 +12,7 @@ using VetPlatform.Api.Common.Persistence;
 namespace VetPlatform.Api.Common.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261031143859_AddStockMovements")]
+    [Migration("20261031150100_AddStockMovements")]
     partial class AddStockMovements
     {
         /// <inheritdoc />
@@ -2282,12 +2282,17 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "StockLotId", "ReversesMovementId")
                         .HasDatabaseName("ix_stock_movements_clinic_id_stock_lot_id_reverses_movement_id");
 
+                    b.HasIndex("ClinicId", "ProductId", "CreatedAt", "Id")
+                        .HasDatabaseName("ix_stock_movements_register");
+
                     b.HasIndex("ClinicId", "ProductId", "StockLotId", "OccurredAt")
                         .HasDatabaseName("ix_stock_movements_lot_occurred_at");
 
                     b.ToTable("stock_movements", null, t =>
                         {
                             t.HasCheckConstraint("ck_stock_movements_balance_after", "balance_after >= 0 AND balance_after <= 1000000000");
+
+                            t.HasCheckConstraint("ck_stock_movements_consultation", "consultation_id IS NULL OR type = 'Dispense'");
 
                             t.HasCheckConstraint("ck_stock_movements_currency", "currency ~ '^[A-Z]{3}$'");
 

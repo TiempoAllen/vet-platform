@@ -13,11 +13,22 @@ public static class ProductLinks
 {
     public static async Task CheckAsync(AppDbContext db, Guid productId, ProductType type, CancellationToken cancellationToken)
     {
-        if (!await db.Products.AnyAsync(p => p.Id == productId && p.Type == type && p.Status == ProductStatus.Active, cancellationToken))
+        var problems = new List<ApiErrorDetail>();
+        await CheckAsync(db, productId, type, problems, cancellationToken);
+        if (problems.Count > 0)
         {
             throw new ApiException(
-                StatusCodes.Status422UnprocessableEntity, ErrorCodes.ValidationError, "One or more fields are invalid.",
-                [new ApiErrorDetail("productId", $"The product was not found, is not active, or is not a {type} product.")]);
+                StatusCodes.Status422UnprocessableEntity, ErrorCodes.ValidationError, "One or more fields are invalid.", problems);
+        }
+    }
+
+    /// <summary>Adds the problem to <paramref name="problems"/> instead of throwing, to be reported with the others.</summary>
+    public static async Task CheckAsync(
+        AppDbContext db, Guid productId, ProductType type, List<ApiErrorDetail> problems, CancellationToken cancellationToken)
+    {
+        if (!await db.Products.AnyAsync(p => p.Id == productId && p.Type == type && p.Status == ProductStatus.Active, cancellationToken))
+        {
+            problems.Add(new ApiErrorDetail("productId", $"The product was not found, is not active, or is not a {type} product."));
         }
     }
 }
