@@ -101,7 +101,7 @@ public sealed class ClientsTests(DatabaseApiFactory factory) : IClassFixture<Dat
         Assert.Equal(
             [
                 Permissions.AppointmentsManage, Permissions.AppointmentsRead, Permissions.BillingManage, Permissions.BillingRead,
-                Permissions.ClientsManage, Permissions.ClientsRead,
+                Permissions.ClientsManage, Permissions.ClientsRead, Permissions.InventoryRead,
                 Permissions.PatientsManage, Permissions.PatientsRead, Permissions.PaymentsRecord, Permissions.SchedulesRead,
                 Permissions.VaccinationsReadDue,
             ],
