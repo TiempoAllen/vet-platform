@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.14, 2026-10-30, updated for B-18.
+Veterinary Management Platform. Version 1.15, 2026-10-31, updated for B-19.
 
 ## 1. Introduction
 
@@ -161,7 +161,7 @@ A user may hold several roles; their permissions are the union.
 ### 3.7 Billing (FR-BIL) — B-16..B-18, F-14, F-15
 | ID | Requirement | Status |
 |---|---|---|
-| FR-BIL-1 | Invoices with line items (services/products) can be created for a client and optionally a patient; invoice numbers are unique per clinic. | Done (B-16; gapless numbers assigned on issue; products linked from B-19) |
+| FR-BIL-1 | Invoices with line items (services/products) can be created for a client and optionally a patient; invoice numbers are unique per clinic. | Done (B-16; gapless numbers assigned on issue; B-19: lines may link a catalogue product, services included) |
 | FR-BIL-2 | Subtotal, discounts, tax, total and balance due are calculated by the server, using clinic tax configuration; client-supplied totals are ignored. | Done (B-16: subtotal, discounts, tax and total from the clinic tax-rate table; B-17: amount paid and balance due) |
 | FR-BIL-3 | Payments (amount, method, reference) can be recorded against an invoice; the balance updates atomically; overpayment rules are defined in B-17. | Done (B-17; overpayment refused, refunds against payments, card numbers refused as references) |
 | FR-BIL-4 | Receipts can be produced; every invoice and payment change is audited. | Done (B-18: gapless, frozen receipts per payment and refund; frozen bill-to on issue; per-invoice activity; changes audited since B-16/B-17) |
@@ -170,8 +170,8 @@ A user may hold several roles; their permissions are the union.
 ### 3.8 Inventory (FR-INV) — B-19..B-22, F-16..F-18
 | ID | Requirement | Status |
 |---|---|---|
-| FR-INV-1 | Products (SKU, name, category, type, unit, reorder level, active) can be managed. | Planned (B-19) |
-| FR-INV-2 | Stock is held per lot with optional expiration date and location, and is changed only through recorded stock movements (receive, dispense, sell, adjust, return, expire). | Planned (B-19, B-20) |
+| FR-INV-1 | Products (SKU, name, category, type, unit, reorder level, active) can be managed. | Done (B-19: SKU unique per clinic ignoring case; fixed unit list; non-stocked `Service` type; optional default price and tax rate; deactivated, never deleted) |
+| FR-INV-2 | Stock is held per lot with optional expiration date and location, and is changed only through recorded stock movements (receive, dispense, sell, adjust, return, expire). | Partly done (B-19: lots by lot number, expiry and location; `Receive` movements; a lot always equals the sum of its movements, database-enforced; the other movement types in B-20) |
 | FR-INV-3 | Stock may not go negative unless a documented rule allows it. | Planned (B-20) |
 | FR-INV-4 | Suppliers and purchase orders can be managed; receiving a purchase order creates stock movements. | Planned (B-21) |
 | FR-INV-5 | Low-stock (below reorder level) and expiring-soon queries are available. | Planned (B-22) |
@@ -182,7 +182,7 @@ A user may hold several roles; their permissions are the union.
 | FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Planned (B-23, B-24) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
 | FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); currency and tax rates (B-16); the rest B-26 |
-| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16) and clinic settings; stock adjustments (B-20) and sensitive exports (B-23/B-24) later |
+| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16), clinic settings, products and stock receipts (B-19); stock adjustments (B-20) and sensitive exports (B-23/B-24) later |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
 ### 3.10 Dashboard and UI (FR-UI) — F-01..F-22

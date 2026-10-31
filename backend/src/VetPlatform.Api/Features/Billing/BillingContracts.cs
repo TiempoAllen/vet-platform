@@ -72,6 +72,7 @@ public sealed record InvoiceItemResponse(
     decimal DiscountValue,
     InvoiceTaxRateSummary TaxRate,
     Guid? ConsultationId,
+    Guid? ProductId,
     decimal Net,
     decimal Discount,
     decimal Tax,
@@ -82,7 +83,7 @@ public sealed record InvoiceItemResponse(
             i.Id, i.Position, i.Description, Currencies.Shortest(i.Quantity), Currencies.Shortest(i.UnitPrice), i.DiscountType,
             Currencies.Shortest(i.DiscountValue),
             new InvoiceTaxRateSummary(i.TaxRateId, i.TaxRateName, Currencies.Shortest(i.TaxRatePercent)),
-            i.ConsultationId, Currencies.Shortest(i.Net), Currencies.Shortest(i.Discount), Currencies.Shortest(i.Tax),
+            i.ConsultationId, i.ProductId, Currencies.Shortest(i.Net), Currencies.Shortest(i.Discount), Currencies.Shortest(i.Tax),
             Currencies.Shortest(i.Total));
 }
 
@@ -149,7 +150,8 @@ public sealed record UpdateInvoiceRequest(
 
 /// <summary>
 /// A new line. <c>discountType</c> defaults to <c>None</c> (then <c>discountValue</c> must be omitted or 0).
-/// <c>consultationId</c> (optional) must be a non-discarded consultation of the invoice's patient.
+/// <c>consultationId</c> (optional) must be a non-discarded consultation of the invoice's patient. <c>productId</c>
+/// (optional) must be an active product of the clinic; the description and price are still given here (B-19).
 /// </summary>
 public sealed record CreateInvoiceItemRequest(
     [Required, MaxLength(InvoiceItem.DescriptionMaxLength)] string? Description,
@@ -158,9 +160,10 @@ public sealed record CreateInvoiceItemRequest(
     DiscountType? DiscountType,
     decimal? DiscountValue,
     [Required] Guid? TaxRateId,
-    Guid? ConsultationId);
+    Guid? ConsultationId,
+    Guid? ProductId);
 
-/// <summary>Partial update of a draft's line; <c>consultationId: null</c> unlinks it.</summary>
+/// <summary>Partial update of a draft's line; <c>consultationId: null</c> or <c>productId: null</c> unlinks it.</summary>
 public sealed record UpdateInvoiceItemRequest(
     [MaxLength(InvoiceItem.DescriptionMaxLength)] string? Description,
     decimal? Quantity,
@@ -168,7 +171,8 @@ public sealed record UpdateInvoiceItemRequest(
     DiscountType? DiscountType,
     decimal? DiscountValue,
     Guid? TaxRateId,
-    Optional<Guid?> ConsultationId);
+    Optional<Guid?> ConsultationId,
+    Optional<Guid?> ProductId);
 
 /// <summary><c>dueOn</c> defaults to the clinic-local issue day and may not be earlier.</summary>
 public sealed record IssueInvoiceRequest(DateOnly? DueOn);

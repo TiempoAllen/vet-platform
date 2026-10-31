@@ -105,7 +105,7 @@ public sealed class InvoicesTests(DatabaseApiFactory factory) : IClassFixture<Da
 
         var lines = invoice.GetProperty("items").EnumerateArray().ToList();
         Assert.Equal(
-            ["id", "position", "description", "quantity", "unitPrice", "discountType", "discountValue", "taxRate", "consultationId",
+            ["id", "position", "description", "quantity", "unitPrice", "discountType", "discountValue", "taxRate", "consultationId", "productId",
              "net", "discount", "tax", "total"],
             lines[0].EnumerateObject().Select(p => p.Name));
         Assert.Equal([1, 2], lines.Select(l => l.GetProperty("position").GetInt32()));

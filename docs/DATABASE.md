@@ -313,7 +313,8 @@ status, the void fields and `updated_at` (whole-row comparison); nothing else, n
 
 ### InvoiceItem
 Table `invoice_items` (no DbSet; reached through the invoice). `discount` / `tax` in the original list became the
-discount type and value plus computed amounts; `product_id` / `service_id` arrive with B-19.
+discount type and value plus computed amounts; `product_id` arrived with B-19 (services are products of type
+`Service`, so there is no `service_id`).
 - id, clinic_id; invoice_id: composite FK (clinic_id, invoice_id) → invoices (clinic_id, id)
 - position (CHECK > 0; unique per invoice), description (max 500, CHECK not blank)
 - quantity `numeric(12,3)` (CHECK > 0 and ≤ 1,000,000), unit_price `numeric(19,4)` (CHECK 0 to 1,000,000,000)
@@ -321,6 +322,8 @@ discount type and value plus computed amounts; `product_id` / `service_id` arriv
   ≤ 100 for Percent, above 0 for Amount)
 - tax_rate_id: composite FK to tax_rates (clinic_id, id); tax_rate_name and tax_rate_percent: copies (CHECK 0 to 100)
 - consultation_id (nullable): composite FK to consultations (clinic_id, id); the service requires the invoice's patient
+- product_id (nullable, B-19): composite FK (clinic_id, product_id) → products (clinic_id, id); the service requires an
+  active product when linking
 - net, discount, tax, total `numeric(19,4)`: CHECK non-negative, discount ≤ net, total = net − discount + tax and
   total ≤ 1,000,000,000,000
 - created_at, updated_at
@@ -396,40 +399,58 @@ clients' and patients' details **at migration time**, not at issue (the best ava
 shows the newer address on those old invoices). Rolling back refuses while receipts or non-draft invoices exist.
 
 ## 8. Inventory
-### Product
-- id
-- clinic_id
-- sku
-- name
-- category
-- type
-- unit
-- reorder_level
-- active
+Products, stock lots and stock movements are implemented in B-19 (ADR-019); B-19 records only `Receive` movements.
+Stock is derived from movements: a lot's stored quantity must equal the sum of its movements at commit.
 
-### InventoryItem / StockLot
-- id
-- product_id
-- lot_number nullable
-- expiration_date nullable
-- quantity
-- unit_cost
-- location nullable
+### Product
+Table `products`.
+- id, clinic_id
+- sku (max 50, `case_insensitive` collation; CHECK `sku COLLATE "C" ~ '^[A-Za-z0-9][A-Za-z0-9._/-]*$'`): unique
+  index `ux_products_clinic_id_sku` on (clinic_id, sku), inactive products included
+- name (max 200, CHECK not blank), category (max 100, nullable, `case_insensitive`, CHECK not blank)
+- type (`Medication`, `Vaccine`, `Supply`, `Retail`, `Service`; CHECK), unit (`Each`, `Tablet`, `Capsule`,
+  `Millilitre`, `Litre`, `Gram`, `Kilogram`, `Dose`, `Vial`, `Ampoule`, `Bottle`, `Box`, `Pack`; CHECK)
+- reorder_level `numeric(12,3)` (nullable; CHECK null for services, else 0 to 1,000,000)
+- default_unit_price `numeric(19,4)` (nullable; CHECK 0 to 1,000,000,000)
+- default_tax_rate_id (nullable): composite FK (clinic_id, default_tax_rate_id) → tax_rates (clinic_id, id)
+- status (`Active`, `Inactive`; CHECK), created_at, updated_at
+
+Alternate key (clinic_id, id) for lots, movements and invoice lines. Index (clinic_id, name). Trigger
+`products_guard`: no DELETE; id and clinic never change; type and unit change only while the product has no lot (the
+row is locked first, so a lot being inserted is waited for). TRUNCATE refused.
+
+### StockLot
+Table `stock_lots` (the original "InventoryItem / StockLot"; unit cost moved to the movement).
+- id, clinic_id; product_id: composite FK (clinic_id, product_id) → products (clinic_id, id)
+- lot_number (max 50), expires_on (date, 2000-01-01 to 2100-12-31), location (max 100): each nullable; text CHECKs
+  not blank; lot number and location use the `case_insensitive` collation
+- quantity `numeric(15,3)` (CHECK 0 to 1,000,000,000)
+- created_at, updated_at
+
+Unique index `ux_stock_lots_identity` on (clinic_id, product_id, lot_number, expires_on, location) `NULLS NOT
+DISTINCT`: one lot per identity. Alternate key (clinic_id, product_id, id) for movements. Trigger `stock_lots_guard`:
+an INSERT locks the product `FOR SHARE`, then refuses a lot of a service and a medication or vaccine lot without
+expiry; an UPDATE may change nothing but quantity and `updated_at`; no DELETE; TRUNCATE refused. Deferred constraint
+trigger `stock_lots_match_movements`: at commit, the quantity equals the sum of the lot's movements.
 
 ### StockMovement
-- id
-- clinic_id
-- product_id
-- stock_lot_id nullable
-- movement_type
-- quantity
-- reference_type
-- reference_id
-- performed_by
-- created_at
-- notes
+Table `stock_movements`. Append-only (`stock_movements_guard` refuses UPDATE, DELETE and TRUNCATE).
+- id, clinic_id; product_id and stock_lot_id: composite FK (clinic_id, product_id, stock_lot_id) → stock_lots
+  (clinic_id, product_id, id), so the lot is always the product's; also (clinic_id, product_id) → products
+- type (`Receive` only in B-19; CHECK; B-20 widens it)
+- quantity `numeric(12,3)`: signed change of the lot (CHECK not 0, at most 1,000,000 either way, above 0 for `Receive`)
+- unit_cost `numeric(19,4)` and currency `char(3)`: both null or both set (CHECK; cost 0 to 1,000,000,000; ISO
+  pattern)
+- reference (max 100), notes (max 500): nullable, CHECK not blank
+- occurred_at, performed_by_user_id (composite FK to users), created_at, updated_at
 
-Stock should be derived from auditable movements/lots rather than arbitrary direct edits wherever practical.
+Indexes: (clinic_id, product_id, occurred_at), `ix_stock_movements_lot_occurred_at` on (clinic_id, product_id,
+stock_lot_id, occurred_at), one per user key. Deferred constraint trigger `stock_movements_match_lot`: at commit, the
+lot's quantity equals the sum of its movements, so a movement without the lot's change (or the reverse) cannot commit.
+The original `reference_type` / `reference_id` columns arrive with the movements that have a source document (B-20,
+B-21).
+
+Rolling the migration back refuses while stock movements exist or issued invoice lines link products.
 
 ### Supplier
 - id

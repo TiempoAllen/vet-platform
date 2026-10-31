@@ -106,6 +106,9 @@ public static class AuditActions
     public const string PaymentRecorded = "payment.recorded";
     public const string PaymentRefunded = "payment.refunded";
     public const string ReceiptIssued = "receipt.issued";
+    public const string ProductCreated = "product.created";
+    public const string ProductUpdated = "product.updated";
+    public const string StockReceived = "stock.received";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";
