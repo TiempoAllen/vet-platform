@@ -294,5 +294,6 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
         // A product's or a lot's movements, newest first; the lot key also serves the guard's sums.
         builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.OccurredAt });
         builder.HasIndex(m => new { m.ClinicId, m.ProductId, m.StockLotId, m.OccurredAt }).HasDatabaseName("ix_stock_movements_lot_occurred_at");
+        builder.HasIndex(m => new { m.ClinicId, m.OccurredAt, m.Id }); // the unfiltered list, newest first
     }
 }

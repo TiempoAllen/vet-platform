@@ -322,8 +322,8 @@ discount type and value plus computed amounts; `product_id` arrived with B-19 (s
   ≤ 100 for Percent, above 0 for Amount)
 - tax_rate_id: composite FK to tax_rates (clinic_id, id); tax_rate_name and tax_rate_percent: copies (CHECK 0 to 100)
 - consultation_id (nullable): composite FK to consultations (clinic_id, id); the service requires the invoice's patient
-- product_id (nullable, B-19): composite FK (clinic_id, product_id) → products (clinic_id, id); the service requires an
-  active product when linking
+- product_id (nullable, B-19): composite FK (clinic_id, product_id) → products (clinic_id, id), index
+  (clinic_id, product_id); the service requires an active product when linking
 - net, discount, tax, total `numeric(19,4)`: CHECK non-negative, discount ≤ net, total = net − discount + tax and
   total ≤ 1,000,000,000,000
 - created_at, updated_at
@@ -415,9 +415,10 @@ Table `products`.
 - default_tax_rate_id (nullable): composite FK (clinic_id, default_tax_rate_id) → tax_rates (clinic_id, id)
 - status (`Active`, `Inactive`; CHECK), created_at, updated_at
 
-Alternate key (clinic_id, id) for lots, movements and invoice lines. Index (clinic_id, name). Trigger
-`products_guard`: no DELETE; id and clinic never change; type and unit change only while the product has no lot (the
-row is locked first, so a lot being inserted is waited for). TRUNCATE refused.
+Alternate key (clinic_id, id) for lots, movements and invoice lines. Indexes (clinic_id, name) and
+(clinic_id, default_tax_rate_id). Trigger `products_guard`: no DELETE; id and clinic never change; type and unit
+change only while the product has no lot (the UPDATE holds the row lock, so a lot being inserted has committed and is
+seen). `products_no_truncate` refuses TRUNCATE.
 
 ### StockLot
 Table `stock_lots` (the original "InventoryItem / StockLot"; unit cost moved to the movement).
@@ -434,7 +435,9 @@ expiry; an UPDATE may change nothing but quantity and `updated_at`; no DELETE; T
 trigger `stock_lots_match_movements`: at commit, the quantity equals the sum of the lot's movements.
 
 ### StockMovement
-Table `stock_movements`. Append-only (`stock_movements_guard` refuses UPDATE, DELETE and TRUNCATE).
+Table `stock_movements`. Append-only: `stock_movements_guard` refuses UPDATE and DELETE, and on INSERT locks the
+product `FOR SHARE` and refuses a `Receive` into a product that is not active; `stock_movements_no_truncate` refuses
+TRUNCATE.
 - id, clinic_id; product_id and stock_lot_id: composite FK (clinic_id, product_id, stock_lot_id) → stock_lots
   (clinic_id, product_id, id), so the lot is always the product's; also (clinic_id, product_id) → products
 - type (`Receive` only in B-19; CHECK; B-20 widens it)
@@ -445,12 +448,14 @@ Table `stock_movements`. Append-only (`stock_movements_guard` refuses UPDATE, DE
 - occurred_at, performed_by_user_id (composite FK to users), created_at, updated_at
 
 Indexes: (clinic_id, product_id, occurred_at), `ix_stock_movements_lot_occurred_at` on (clinic_id, product_id,
-stock_lot_id, occurred_at), one per user key. Deferred constraint trigger `stock_movements_match_lot`: at commit, the
+stock_lot_id, occurred_at), (clinic_id, occurred_at, id) for the unfiltered list, one per user key. Deferred constraint trigger `stock_movements_match_lot`: at commit, the
 lot's quantity equals the sum of its movements, so a movement without the lot's change (or the reverse) cannot commit.
 The original `reference_type` / `reference_id` columns arrive with the movements that have a source document (B-20,
 B-21).
 
-Rolling the migration back refuses while stock movements exist or issued invoice lines link products.
+Rolling the migration back locks the inventory tables and invoice lines, then refuses while stock movements exist
+or issued invoice lines link products (products, empty lots and draft-line links are dropped, as drafts are in
+B-16).
 
 ### Supplier
 - id

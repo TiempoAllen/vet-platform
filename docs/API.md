@@ -236,8 +236,8 @@ Implemented in B-08; the currency in B-16 (the other clinic settings follow in B
 
 `PATCH /api/clinic` (`settings.manage`): `{ "timeZone": "Europe/London", "currency": "EUR" }` (either or both).
 - `currency` is an upper-case ISO 4217 code (`422` otherwise, field `currency`). It is `null` until an administrator
-  sets it, and invoices cannot be created before. It can change only while the clinic has **no invoice** (`409`),
-  because invoices copy it. `GET /api/auth/me` does not carry the currency; read it here.
+  sets it, and invoices cannot be created before. It can change only while the clinic has **no invoice**, no
+  costed stock receipt and no product default price (`409`), because those amounts are in it (B-19). `GET /api/auth/me` does not carry the currency; read it here.
 - `timeZone` is an IANA id. Windows ids ("GMT Standard Time") and unknown ids are `422` (field `timeZone`).
 - New clinics get the zone from `create-admin --timezone` (default `UTC`); clinics created before B-08 start as `UTC`.
 - Weekly working hours are local wall-clock times, so changing the zone shifts every future working period with it.
@@ -777,8 +777,8 @@ clinical reader sees them.
     }
 
 `medicationName` (max 200), `dose` and `frequency` (max 100 each), `quantity` and `quantityUnit` (max 50) are required;
-`route`, `duration` (max 100 each) and `instructions` (max 2000) are optional. `medicationName` is free text until
-the inventory product catalogue exists (B-19). `quantity` is a number above 0 and at most 100000 with at most 3
+`route`, `duration` (max 100 each) and `instructions` (max 2000) are optional. `medicationName` is free text; linking it
+to a catalogue product comes with dispensing (B-20, ADR-019). `quantity` is a number above 0 and at most 100000 with at most 3
 decimals (e.g. 14 tablets, 10.5 ml); it is returned in its shortest form. `refills` (0 to 12, default 0) is recorded
 only; repeat supplies are not tracked yet. `diagnosisId` links one diagnosis of the **same** consultation (`422`
 otherwise); removing that diagnosis unlinks the prescription. `prescribedBy` is the veterinarian who added it.
@@ -833,7 +833,7 @@ Dates are calendar days (`YYYY-MM-DD`) in the clinic's time zone; `voidedAt` car
 
 `POST /api/patients/:id/vaccinations` (`clinical.write`: Veterinarian, Nurse) records a dose: `201` with the
 vaccination and `Location: /api/vaccinations/:id`.
-- `vaccineName` (required, max 200; free text until the product catalogue, B-19), `manufacturer` (max 100),
+- `vaccineName` (required, max 200; free text; a catalogue link comes with dispensing, B-20), `manufacturer` (max 100),
   `lotNumber` (max 50), `lotExpiresOn` (2000-01-01 to 2100-12-31), `notes` (max 2000). Optional text may be omitted,
   `null` or blank.
 - `administeredOn` (required): from 2000-01-01 up to **today** in the clinic's time zone; past dates record earlier
@@ -1189,7 +1189,9 @@ are `404`; another clinic's product in a body is `422` with the same message as 
 per clinic ignoring case**, inactive products included: `409`), `name` (required, max 200), `category` (optional, max
 100), `type` and `unit` (required on create), `reorderLevel` (0 to 1,000,000, at most 3 decimals; not on services),
 `defaultUnitPrice` (0 to 1,000,000,000, at most 4 decimals), `defaultTaxRateId` (an active rate of the clinic).
-Missing or too long fields are `422` before the product is looked up; then `404`; then the value rules in one `422`.
+Missing, too long or malformed fields (SKU pattern, blank name) are `422` before the product is looked up; then
+`404`; then the value rules (amounts, tax rate) in one `422`. In a `PATCH`, `null` for `sku`, `name`, `category`,
+`type`, `unit` or `status` leaves the field unchanged.
 **The type and unit cannot change once the product has a stock lot** (`409`); before that they can. Products are never
 deleted: deactivate them. An inactive product cannot be received into or linked to a new invoice line; its stock and
 existing links stay. Changes are audited (`product.created`, `product.updated`, with field names, type and status;

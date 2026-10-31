@@ -778,7 +778,15 @@ Choose the simplest solution that satisfies documented requirements, security, m
   lots of services and medication or vaccine lots without expiry, and allows an UPDATE of nothing but the quantity;
   `stock_movements_guard` refuses UPDATE and DELETE; TRUNCATE is refused on all three. Rolling back refuses while
   stock movements exist or issued invoice lines link products.
+- **Review fixes (B-19):** `stock_movements_guard` also refuses, on INSERT, a `Receive` into a product that is not
+  active (it locks the product `FOR SHARE` first), so the database and the service agree; the clinic currency is now
+  also fixed once a costed stock receipt or a product default price exists (those amounts are in it); the raw product
+  row locks also filter by clinic; a lot-identity collision maps to `409` instead of `500`; the rollback locks its
+  tables before checking for data; an index (clinic_id, occurred_at, id) serves the unfiltered movement list.
 - **Accepted for now:** no supplier on a receipt until B-21 (purchase orders); no low-stock or expiry queries until
   B-22 (the reorder level is stored now); the database does not check that a linked invoice product is active (the
-  service does; deactivating a product later leaves its links); stock values (cost × quantity) are reports (B-24);
+  service does, without a lock, so a concurrent deactivation may let one link through; deactivating a product later
+  leaves its links); likewise a product's default tax rate may be archived while it is being set (cosmetic: the
+  response shows the rate's status); receipts read the clinic currency before the transaction, so a concurrent
+  currency change can only make a movement keep the previous code, which it stores explicitly; stock values (cost × quantity) are reports (B-24);
   vaccine names and medication names stay free text until B-20 links them.

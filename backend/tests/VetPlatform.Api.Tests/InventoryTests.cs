@@ -403,6 +403,58 @@ public sealed class InventoryTests(DatabaseApiFactory factory) : IClassFixture<D
         Assert.Equal("42501", exception.SqlState);
     }
 
+    [Fact]
+    public async Task Database_ReceivesStockOnlyIntoActiveProducts()
+    {
+        var clinic = await ClinicAsync();
+        var id = await ProductAsync(clinic, "SUP");
+        await OkAsync(await ReceiveAsync(clinic, new { type = "Receive", productId = id, quantity = 3 }), HttpStatusCode.Created);
+        await OkAsync(await clinic.Stock.PatchAsJsonAsync($"/api/products/{id}", new { status = "Inactive" }));
+
+        // A balanced receipt (movement and lot together) into the now inactive product.
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => factory.UpdateDatabaseAsync(db => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO stock_movements (id, clinic_id, product_id, stock_lot_id, type, quantity, occurred_at, performed_by_user_id, created_at, updated_at) " +
+            "SELECT gen_random_uuid(), clinic_id, product_id, stock_lot_id, 'Receive', 1, now(), performed_by_user_id, now(), now() FROM stock_movements WHERE product_id = {0}; " +
+            "UPDATE stock_lots SET quantity = quantity + 1 WHERE product_id = {0};", id)));
+
+        Assert.Equal("42501", exception.SqlState);
+    }
+
+    [Fact]
+    public async Task TheClinicCurrency_IsFixed_OnceCostsOrPricesExist()
+    {
+        var priced = await ClinicAsync();
+        await OkAsync(await priced.Stock.PostAsJsonAsync("/api/products", new { sku = "P", name = "Priced", type = "Retail", unit = "Each", defaultUnitPrice = 5 }), HttpStatusCode.Created);
+        Assert.Equal(HttpStatusCode.Conflict, (await priced.Admin.PatchAsJsonAsync("/api/clinic", new { currency = "USD" })).StatusCode);
+
+        var costed = await ClinicAsync();
+        var id = await ProductAsync(costed, "SUP");
+        await OkAsync(await ReceiveAsync(costed, new { type = "Receive", productId = id, quantity = 1 }), HttpStatusCode.Created);
+        await OkAsync(await costed.Admin.PatchAsJsonAsync("/api/clinic", new { currency = "USD" })); // no cost yet
+        await OkAsync(await ReceiveAsync(costed, new { type = "Receive", productId = id, quantity = 1, unitCost = 2 }), HttpStatusCode.Created);
+        Assert.Equal(HttpStatusCode.Conflict, (await costed.Admin.PatchAsJsonAsync("/api/clinic", new { currency = "EUR" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task OtherClinics_TaxRatesAndLots_AreNotReachable()
+    {
+        var mine = await ClinicAsync();
+        var theirs = await ClinicAsync();
+        var theirProduct = await ProductAsync(theirs, "THEIRS");
+        var theirLot = (await OkAsync(await ReceiveAsync(theirs, new { type = "Receive", productId = theirProduct, quantity = 1 }), HttpStatusCode.Created))
+            .GetProperty("lot").GetProperty("id").GetGuid();
+
+        var withTheirRate = await mine.Stock.PostAsJsonAsync("/api/products", new { sku = "A", name = "x", type = "Supply", unit = "Each", defaultTaxRateId = theirs.Standard });
+        var withUnknownRate = await mine.Stock.PostAsJsonAsync("/api/products", new { sku = "A", name = "x", type = "Supply", unit = "Each", defaultTaxRateId = Guid.NewGuid() });
+        Assert.Equal((await ErrorOf(withUnknownRate)).Details!.Single().Message, Assert.Single((await ErrorOf(withTheirRate)).Details).Message);
+        var mineProduct = await ProductAsync(mine, "MINE");
+        var patch = await mine.Stock.PatchAsJsonAsync($"/api/products/{mineProduct}", new { defaultTaxRateId = theirs.Standard });
+        Assert.Equal("defaultTaxRateId", Assert.Single((await ErrorOf(patch)).Details).Field);
+
+        Assert.Empty((await mine.Stock.GetFromJsonAsync<JsonElement>($"/api/inventory/movements?stockLotId={theirLot}")).GetProperty("data").EnumerateArray());
+        Assert.Empty((await mine.Stock.GetFromJsonAsync<JsonElement>($"/api/inventory/stock?productId={theirProduct}&includeEmpty=true")).GetProperty("data").EnumerateArray());
+    }
+
     // ---------- Invoice lines ----------
 
     [Fact]

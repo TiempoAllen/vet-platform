@@ -180,6 +180,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 .Annotation("Npgsql:NullsDistinct", false);
 
             migrationBuilder.CreateIndex(
+                name: "ix_stock_movements_clinic_id_occurred_at_id",
+                table: "stock_movements",
+                columns: new[] { "clinic_id", "occurred_at", "id" });
+
+            migrationBuilder.CreateIndex(
                 name: "ix_stock_movements_clinic_id_performed_by_user_id",
                 table: "stock_movements",
                 columns: new[] { "clinic_id", "performed_by_user_id" });
@@ -215,8 +220,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         RAISE EXCEPTION 'a product cannot move' USING ERRCODE = 'insufficient_privilege';
                     END IF;
                     IF (NEW.type, NEW.unit) IS DISTINCT FROM (OLD.type, OLD.unit) THEN
-                        -- Wait for lots being inserted (they hold the product FOR SHARE), then look.
-                        PERFORM 1 FROM products WHERE id = OLD.id AND clinic_id = OLD.clinic_id FOR NO KEY UPDATE;
+                        -- The UPDATE already holds the row lock, so lots being inserted (they hold the product FOR SHARE)
+                        -- have committed; this statement's fresh snapshot sees them.
                         IF EXISTS (SELECT 1 FROM stock_lots WHERE clinic_id = OLD.clinic_id AND product_id = OLD.id) THEN
                             RAISE EXCEPTION 'the type and unit of a product with stock cannot change' USING ERRCODE = 'insufficient_privilege';
                         END IF;
@@ -260,13 +265,25 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     FOR EACH ROW EXECUTE FUNCTION stock_lots_guard();
 
                 CREATE FUNCTION stock_movements_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+                DECLARE
+                    product_status text;
                 BEGIN
+                    IF TG_OP = 'INSERT' THEN
+                        -- Stock is received only into active products (B-20 may let stock leave inactive ones).
+                        SELECT status INTO product_status FROM products
+                        WHERE id = NEW.product_id AND clinic_id = NEW.clinic_id
+                        FOR SHARE;
+                        IF NEW.type = 'Receive' AND product_status IS DISTINCT FROM 'Active' AND product_status IS NOT NULL THEN
+                            RAISE EXCEPTION 'stock is received only into active products' USING ERRCODE = 'insufficient_privilege';
+                        END IF;
+                        RETURN NEW; -- a missing product is left to the foreign key
+                    END IF;
                     RAISE EXCEPTION 'stock movements are never changed or deleted' USING ERRCODE = 'insufficient_privilege';
                 END;
                 $$;
 
                 CREATE TRIGGER stock_movements_guard
-                    BEFORE UPDATE OR DELETE ON stock_movements
+                    BEFORE INSERT OR UPDATE OR DELETE ON stock_movements
                     FOR EACH ROW EXECUTE FUNCTION stock_movements_guard();
 
                 -- At commit (deferred), every lot that was created, changed or moved must hold exactly the sum of its
@@ -317,6 +334,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
         {
             // Never silently destroy stock records or the product links of issued invoices.
             migrationBuilder.Sql("""
+                LOCK TABLE stock_movements, stock_lots, products, invoice_items IN ACCESS EXCLUSIVE MODE;
+
                 DO $$
                 BEGIN
                     IF EXISTS (SELECT 1 FROM stock_movements) THEN

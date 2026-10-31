@@ -114,7 +114,7 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
         }
 
         // Serialised with stock receipts of the product (lock order: product, then lot), so "has stock" stays true below.
-        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM products WHERE id = {id} FOR NO KEY UPDATE", cancellationToken);
+        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM products WHERE id = {id} AND clinic_id = {tenant.ClinicId} FOR NO KEY UPDATE", cancellationToken);
         var product = await db.Products.SingleAsync(p => p.Id == id, cancellationToken);
         var changed = new List<string>();
 

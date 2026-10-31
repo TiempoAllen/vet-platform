@@ -2207,6 +2207,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "PerformedByUserId")
                         .HasDatabaseName("ix_stock_movements_clinic_id_performed_by_user_id");
 
+                    b.HasIndex("ClinicId", "OccurredAt", "Id")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_occurred_at_id");
+
                     b.HasIndex("ClinicId", "ProductId", "OccurredAt")
                         .HasDatabaseName("ix_stock_movements_clinic_id_product_id_occurred_at");
 
