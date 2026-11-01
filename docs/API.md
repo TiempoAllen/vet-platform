@@ -166,6 +166,7 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `inventory.manage` | ✓ | – | – | – | ✓ |
 | `inventory.dispense` | – | ✓ | ✓ | – | – |
 | `inventory.dispense_controlled` | – | ✓ | – | – | – |
+| `reports.read` | ✓ | – | – | – | – |
 
 **User object**
 
@@ -1469,7 +1470,49 @@ an empty page).
 window; `today` is the clinic-local date the counts were computed for.
 
 ## 12. Reports
-Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.
+Operational reports are implemented in B-23 (ADR-023); financial and inventory reports follow in B-24. Reports are
+read-only aggregates over the caller's clinic, need `reports.read` (Admin), return JSON counts only (never patient or
+client names) and are not audited.
+
+**Periods.** Both reports take `from` and `to` (required clinic-local dates, inclusive, 2000-01-01 to 2100-12-31, at
+most 366 days), `groupBy` (`Day` by default, `Week` for ISO weeks Monday to Sunday, or `Month`) and optionally
+`veterinarianId` (only that veterinarian's appointments; an unknown id gives zeros). Every bucket of the period is
+returned, empty ones included, in order; the first and last are clipped to the period (a weekly report from a
+Friday starts with a three-day bucket). Appointments count on the **clinic-local day they were scheduled to start**,
+whatever their status. Invalid periods are `422`.
+
+    { "from": "2026-05-01", "to": "2026-05-31", "groupBy": "Day" | "Week" | "Month", "timeZone": "Europe/London", ... }
+
+**`GET /api/reports/appointments`**
+
+    {
+      ...period...,
+      "totals": { "total": 6, "scheduled": 1, "checkedIn": 1, "completed": 1, "cancelled": 2,
+                  "cancelledByClient": 1, "cancelledByClinic": 1, "noShow": 1, "noShowRate": 0.25, "cancellationRate": 0.5 },
+      "byVeterinarian": [ { "veterinarian": { "id", "name" }, "counts": { ...as totals... } } ],
+      "buckets": [ { "start": "2026-05-04", "end": "2026-05-10", "counts": { ...as totals... } } ]
+    }
+
+`noShowRate` and `cancellationRate` are fractions (0 to 1, 4 decimals) of the **resolved** appointments (completed,
+cancelled and no-shows), so future bookings do not dilute them; `null` when none is resolved. `byVeterinarian` lists
+the veterinarians with appointments in the period, by name.
+
+**`GET /api/reports/patients-seen`**
+
+    {
+      ...period...,
+      "totals": { "patients": 2, "newPatients": 1, "returningPatients": 1, "visits": 3 },
+      "bySpecies": [ { "species": "Dog", "counts": { ...as totals... } } ],
+      "byVeterinarian": [ { "veterinarian": { "id", "name" }, "counts": { ...as totals... } } ],
+      "buckets": [ { "start", "end", "counts": { ...as totals... } } ]
+    }
+
+A patient is **seen** when one of its appointments was **completed**; `visits` counts those appointments and
+`patients` the distinct patients (a patient seen in two buckets counts in each, and once in the totals). A patient
+is **new** in a bucket (or in the totals) when its **first-ever completed appointment**, with any veterinarian, falls
+in it; the others are returning, so `newPatients + returningPatients = patients`. Walk-ins without an appointment
+are not counted. `bySpecies` lists the species seen, in the species order of section 6.
+
 
 ## 13. Pagination
 List endpoints use this contract (implemented in B-04): query parameters `page` (default 1, 1 to 1,000,000) and `pageSize`

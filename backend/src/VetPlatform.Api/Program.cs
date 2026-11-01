@@ -12,6 +12,7 @@ using VetPlatform.Api.Features.Clients;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Inventory;
 using VetPlatform.Api.Features.Purchasing;
+using VetPlatform.Api.Features.Reports;
 using VetPlatform.Api.Features.Vaccinations;
 using VetPlatform.Api.Features.Patients;
 using VetPlatform.Api.Features.Scheduling;
@@ -57,6 +58,7 @@ builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<InventoryAlertService>();
 builder.Services.AddScoped<SupplierService>();
 builder.Services.AddScoped<PurchaseOrderService>();
+builder.Services.AddScoped<ReportService>();
 builder.Services.AddFileStorage(builder.Configuration);
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection

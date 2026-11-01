@@ -914,3 +914,26 @@ Choose the simplest solution that satisfies documented requirements, security, m
   paged lists count before they fetch); the index is created without `CONCURRENTLY` (stock tables are small before
   production); the frontend sees `onHand` here and `quantityOnHand` on products for the same value; a materialised on-hand total can come with X-04 if a clinic's catalogue makes it
   slow. No notifications or emails for low or expiring stock until B-25; no reorder suggestions (quantities to order).
+
+### ADR-023: Operational reports (decided in B-23)
+- **Confirmed with the user:** two reports, appointments (by status, veterinarian and period, with no-show and
+  cancellation rates) and patients seen (distinct patients, new vs returning, by species and veterinarian). A patient
+  is seen when one of its appointments was completed (no clinical access needed; walk-ins without an appointment are
+  not counted), and new when its first-ever completed appointment falls in the period. Appointments count on the
+  clinic-local day they were scheduled to start. Periods are `from`/`to` clinic-local dates (inclusive, at most 366
+  days) with `groupBy` Day, Week (ISO, Monday) or Month, every bucket returned even when empty. A new `reports.read`
+  permission, Admin only. JSON aggregates only, no CSV; report runs are not audited (counts, no personal data).
+- **Made here (recorded for review):** rates are fractions of the resolved appointments (completed, cancelled,
+  no-show), 4 decimals, `null` when none is resolved, so future bookings do not dilute them; cancellations are split
+  by who cancelled (client or clinic, recorded since B-10). The first and last buckets are clipped to the period. The
+  service fetches only the needed appointment columns of the period through the clinic query filters and counts per
+  clinic-local day in memory, which keeps daylight-saving days right without database time-zone arithmetic; a
+  patient's first completed appointment comes from one grouped query. `veterinarianId` narrows the report to one
+  veterinarian, but "new" still looks at the patient's first visit with anyone. Veterinarians are listed by name
+  (a user that can no longer be shown appears with an empty name). Not audited.
+- **Review fixes (B-23):** the rows are grouped by clinic-local day once, so each bucket reads only its own days
+  (instead of every bucket scanning the whole period); the patients whose first visit is looked up come from a
+  subquery, so no list of ids is sent; each out-of-range date is reported under its own field.
+- **Accepted for now:** a year-long report reads every appointment of the year (a few columns each); fine for clinic
+  volumes, and X-04 can move the counting into SQL or a read replica if needed. Consultations, vaccinations and
+  prescriptions per veterinarian are not reported yet.
