@@ -418,6 +418,7 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
         builder.HasOne(m => m.PurchaseOrderItem).WithMany()
             .HasForeignKey(m => new { m.ClinicId, m.ProductId, m.PurchaseOrderItemId })
             .HasPrincipalKey(i => new { i.ClinicId, i.ProductId, i.Id })
+            .HasConstraintName("fk_stock_movements_purchase_order_items_clinic_id_product_id")
             .OnDelete(DeleteBehavior.Restrict);
         // A reversal undoes a movement of the same lot.
         builder.HasAlternateKey(m => new { m.ClinicId, m.StockLotId, m.Id });

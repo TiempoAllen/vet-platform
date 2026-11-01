@@ -117,6 +117,17 @@ public sealed class StockService(
         ThrowIfAny(problems);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (request.UnitCost is not null)
+        {
+            // The clinic row FOR SHARE, then the currency again: a concurrent currency change waits and sees this cost.
+            await db.Database.ExecuteSqlAsync($"SELECT 1 FROM clinics WHERE id = {CurrentClinicId} FOR SHARE", cancellationToken);
+            clinic = await db.Clinics.AsNoTracking().SingleAsync(c => c.Id == CurrentClinicId, cancellationToken);
+            if (clinic.Currency is null)
+            {
+                throw Invalid("unitCost", "Set the clinic currency before recording costs.");
+            }
+        }
+
         var (product, lot, newLot) = type == StockMovementType.Receive
             ? await ReceivingLotAsync(request, cancellationToken)
             : await ExistingLotAsync(request.StockLotId!.Value, request.ProductId, cancellationToken);

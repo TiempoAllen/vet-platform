@@ -325,6 +325,51 @@ public sealed class PurchasingTests(DatabaseApiFactory factory) : IClassFixture<
         Assert.Single((await mine.Stock.GetFromJsonAsync<JsonElement>("/api/purchase-orders?status=Ordered")).GetProperty("data").EnumerateArray());
     }
 
+    // ---------- Review fixes (B-21) ----------
+
+    [Fact]
+    public async Task ProductsOnOpenOrders_KeepTheirTypeUnitAndControlledFlag()
+    {
+        var clinic = await ClinicAsync();
+        var onOrder = await ProductAsync(clinic, "ORDERED");
+        var onDraft = await ProductAsync(clinic, "DRAFTED");
+        await OrderedAsync(clinic, (onOrder, 5, 1));
+        var draft = await DraftAsync(clinic, (onDraft, 5, 1));
+
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Stock.PatchAsJsonAsync($"/api/products/{onOrder}", new { type = "Service" })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Stock.PatchAsJsonAsync($"/api/products/{onOrder}", new { unit = "Box" })).StatusCode);
+        await OkAsync(await clinic.Stock.PatchAsJsonAsync($"/api/products/{onOrder}", new { name = "Renamed" }));
+
+        // A draft does not hold the product, but a product that became a service cannot be ordered.
+        await OkAsync(await clinic.Stock.PatchAsJsonAsync($"/api/products/{onDraft}", new { type = "Service" }));
+        Assert.Equal(HttpStatusCode.Conflict, (await clinic.Stock.PostAsync($"/api/purchase-orders/{draft}/order", null)).StatusCode);
+    }
+
+    [Fact]
+    public async Task OtherClinics_OrderWritesAndLines_AreNotFound()
+    {
+        var mine = await ClinicAsync();
+        var theirs = await ClinicAsync();
+        var myProduct = await ProductAsync(mine, "MINE");
+        var theirProduct = await ProductAsync(theirs, "THEIRS");
+        var theirDraft = await DraftAsync(theirs, (theirProduct, 2, 1));
+        var theirLine = Item(await theirs.Stock.GetFromJsonAsync<JsonElement>($"/api/purchase-orders/{theirDraft}"), 0);
+        var theirOrder = await OrderedAsync(theirs, (theirProduct, 2, 1));
+        await OkAsync(await ReceiveAsync(theirs, theirOrder.GetProperty("id").GetGuid(), new { itemId = Item(theirOrder, 0), quantity = 2 }), HttpStatusCode.Created);
+        var theirDelivery = Assert.Single((await theirs.Stock.GetFromJsonAsync<JsonElement>($"/api/inventory/movements?purchaseOrderId={theirOrder.GetProperty("id").GetGuid()}"))
+            .GetProperty("data").EnumerateArray()).GetProperty("id").GetGuid();
+        var myDraft = await DraftAsync(mine, (myProduct, 1, 1));
+
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.PatchAsJsonAsync($"/api/purchase-orders/{theirDraft}", new { notes = "x" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.DeleteAsync($"/api/purchase-orders/{theirDraft}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.PatchAsJsonAsync($"/api/purchase-orders/{myDraft}/items/{theirLine}", new { quantity = 3 })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.DeleteAsync($"/api/purchase-orders/{myDraft}/items/{theirLine}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await mine.Stock.PostAsJsonAsync($"/api/inventory/movements/{theirDelivery}/reverse", new { reason = "x" })).StatusCode);
+        var toTheirSupplier = await mine.Stock.PatchAsJsonAsync($"/api/purchase-orders/{myDraft}", new { supplierId = theirs.Supplier });
+        Assert.Equal("supplierId", Assert.Single((await ErrorOf(toTheirSupplier)).Details).Field);
+        Assert.Equal(2m, Number((await theirs.Stock.GetFromJsonAsync<JsonElement>($"/api/purchase-orders/{theirOrder.GetProperty("id").GetGuid()}")).GetProperty("items")[0], "quantityReceived"));
+    }
+
     // ---------- Database rules ----------
 
     [Theory]

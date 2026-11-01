@@ -1204,7 +1204,8 @@ per clinic ignoring case**, inactive products included: `409`), `name` (required
 Missing, too long or malformed fields (SKU pattern, blank name) are `422` before the product is looked up; then
 `404`; then the value rules (amounts, tax rate) in one `422`. In a `PATCH`, `null` for `sku`, `name`, `category`,
 `type`, `unit`, `status` or `controlled` leaves the field unchanged.
-**The type, unit and controlled flag cannot change once the product has a stock lot** (`409`); before that they can. Products are never
+**The type, unit and controlled flag cannot change once the product has a stock lot, or while an open purchase
+order awaits it** (`409`); before that they can. Products are never
 deleted: deactivate them. An inactive product cannot be received into or linked to a new invoice line; its stock and
 existing links stay; stock may still leave it. Changes are audited (`product.created`, `product.updated`, with
 field names, type, status and the controlled flag;
@@ -1292,7 +1293,8 @@ A witness may be named on other non-`Receive` movements too, with the same rule.
 
 **Reversals.** `reason` is required (max 500), and `witnessUserId` when the product is controlled. The reversal has
 type `Reversal`, the opposite `quantity`, `reversesMovementId` set, and `occurredAt` now. A movement is reversed at
-most once and a reversal is never reversed (`409`); a reversal that would take the lot below 0 (e.g. reversing a
+most once and a reversal is never reversed (`409`). It carries the original's `supplierId`, `purchaseOrderId` and
+`purchaseOrderItemId`; a reversal that would take the lot below 0 (e.g. reversing a
 receipt whose stock was already used) is `409`. Unknown or another clinic's movement: `404`.
 
 **Order of checks:** a caller with neither `inventory.manage` nor `inventory.dispense` is `403` before the body is
@@ -1391,15 +1393,15 @@ reversals and that the status matches.
 | `PATCH /api/purchase-orders/:id` | `inventory.manage` | Drafts only (`409` otherwise): `supplierId`, `notes` (`""` clears; max 2000). |
 | `DELETE /api/purchase-orders/:id` | `inventory.manage` | Drafts only (`204`; `409` otherwise). |
 | `POST /api/purchase-orders/:id/items` | `inventory.manage` | `{ "productId", "quantity", "unitCost" }`: an active, non-`Service` product not already on the order; `quantity` above 0, at most 1,000,000, 3 decimals; `unitCost` 0 to 1,000,000,000, 4 decimals (`422`, reported together). At most 200 lines (`409`). |
-| `PATCH /api/purchase-orders/:id/items/:itemId` | `inventory.manage` | `quantity`, `unitCost`. |
-| `DELETE /api/purchase-orders/:id/items/:itemId` | `inventory.manage` | Removes a line. |
-| `POST /api/purchase-orders/:id/order` | `inventory.manage` | Draft → `Ordered`; needs a line, an active supplier and active products (`409`). |
+| `PATCH /api/purchase-orders/:id/items/:itemId` | `inventory.manage` | `quantity`, `unitCost`. An unknown line is `404` (checked before the draft rule). |
+| `DELETE /api/purchase-orders/:id/items/:itemId` | `inventory.manage` | Removes a line. An unknown line is `404` (checked before the draft rule). |
+| `POST /api/purchase-orders/:id/order` | `inventory.manage` | Draft → `Ordered`; needs a line, an active supplier and active, stocked (non-`Service`) products (`409`). |
 | `POST /api/purchase-orders/:id/cancel` | `inventory.manage` | `{ "reason" }` (required, max 500). `Ordered` with nothing received only (`409`). |
 | `POST /api/purchase-orders/:id/close` | `inventory.manage` | `{ "reason" }` (required, max 500). `PartiallyReceived` only (`409`). |
 | `POST /api/purchase-orders/:id/receipts` | `inventory.manage` | Receives a delivery (below). `201` with the order. |
 
 Every change to a draft, ordering, cancelling and closing returns the whole order with `200`; changes to a placed
-order's lines are `409`. A line total or order total above 1,000,000,000,000 is `422`.
+order's lines are `409`. A line total or order total above 1,000,000,000,000 is `422` (field `unitCost`).
 
 **Receiving a delivery:**
 
@@ -1412,13 +1414,18 @@ order's lines are `409`. A line total or order total above 1,000,000,000,000 is 
 `notes` and `occurredAt` (default now; not in the future and not before the order was placed). Lot rules are those of
 `Receive`: `expiresOn` is required for medications and vaccines and may not be past. Order of checks: body rules
 (`422`, with fields like `lines[0].quantity`); unknown order `404`; an order that is not `Ordered` or
-`PartiallyReceived` `409`; a line not on the order `422`; a quantity above what the line still awaits `409`; then
+`PartiallyReceived` `409`; an `occurredAt` before the order was placed `422`; a line not on the order `422`; a quantity above what the line still awaits `409`; then
 inactive products and missing expiry dates (`422`, reported together); then the lot maximum (`409`). Deliveries of one
-order are applied one after the other. The delivery's movements are listed with
-`GET /api/inventory/movements?purchaseOrderId=:id`.
+order are applied one after the other. The delivery's movements (their reversals included) are
+listed with `GET /api/inventory/movements?purchaseOrderId=:id`.
 
 Reversing one of those movements (section 11.3) lowers its line's `quantityReceived` and moves the order back to
-`PartiallyReceived` or `Ordered` (`receivedAt` cleared); a closed order stays closed.
+`PartiallyReceived` or `Ordered` (`receivedAt` cleared); a closed order stays closed, even if reversals leave it
+with nothing received.
+
+While an `Ordered` or `PartiallyReceived` order awaits a product, the product's `type`, `unit` and `controlled` flag
+cannot change (`409`, section 11.1), because the order's quantities are in that unit; a product deactivated or turned
+into a service since it was ordered cannot be received (`422`).
 
 **Audit:** `purchase_order.created`, `.updated`, `.deleted`, `.item_added`, `.item_updated`, `.item_removed`,
 `.ordered`, `.received` (line ids, quantities, movement ids), `.cancelled`, `.closed`, with ids, numbers, quantities and

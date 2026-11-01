@@ -877,6 +877,15 @@ Choose the simplest solution that satisfies documented requirements, security, m
   through (clinic_id, product_id, purchase_order_item_id), so the line is always for the movement's product.
   `suppliers_guard` refuses deletes and moves. Rolling back refuses while placed orders or supplier-linked movements
   exist and restores the B-20 guard.
+- **Review fixes (B-21):** a product's type, unit and controlled flag are also fixed while an open order awaits it,
+  ordering refuses lines whose product became a service and deliveries refuse products that are no longer stocked;
+  creating an order (and a costed plain receipt) reads the clinic currency under the clinic row's shared lock, which
+  the currency change takes exclusively; ordering locks the supplier and the products `FOR SHARE` before testing
+  them (lock order: order, supplier, products); the line and movement triggers lock the order `FOR NO KEY UPDATE`
+  when a received quantity changes, so the commit-time status check cannot be beaten by two writers of different
+  lines; `received_at` cannot be rewritten on a Received order; the deferred line check uses the product index; the
+  rollback also refuses while suppliers exist; two generated constraint names are pinned to the table name. A closed
+  order may end with nothing received after reversals (accepted: Closed means no more deliveries will come).
 - **Accepted for now:** the database checks that line totals add up to the order total but not how a line total was
   rounded (as for invoices); no expected delivery date, supplier SKUs or price lists; a purchase order is not emailed
   to the supplier (B-25 notifications); what a closed order will never receive is still shown as outstanding on its

@@ -2662,7 +2662,7 @@ paths:
       tags: [Inventory]
       operationId: updateProduct
       summary: Edit, deactivate or restore a product
-      description: Requires `inventory.manage`. Omitted fields are unchanged. The type, unit and controlled flag cannot change once the product has a stock lot (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
+      description: Requires `inventory.manage`. Omitted fields are unchanged. The type, unit and controlled flag cannot change once the product has a stock lot or while an open purchase order awaits it (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -3114,7 +3114,7 @@ paths:
       tags: [Inventory]
       operationId: orderPurchaseOrder
       summary: Place a draft with the supplier
-      description: Requires `inventory.manage`. Assigns the next gapless number and freezes the lines. Needs a line, an active supplier and active products (409).
+      description: Requires `inventory.manage`. Assigns the next gapless number and freezes the lines. Needs a line, an active supplier and active, non-Service products (409).
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       responses:

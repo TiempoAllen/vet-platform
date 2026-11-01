@@ -230,8 +230,7 @@ not restore old sessions.
    `AddRolesAndAuditLog` is refused while `audit_logs` has rows, by design; so is rolling back past
    `AddProductsAndStock` (B-19) while stock movements exist or issued invoice lines link products, and past
    `AddStockMovements` (B-20) while movements other than receipts, controlled products or clinical product links
-   exist, and past `AddSuppliersAndPurchaseOrders` (B-21) while placed purchase orders or supplier-linked movements
-   exist.
+   exist, and past `AddSuppliersAndPurchaseOrders` (B-21) while suppliers or supplier-linked movements exist.
 
 ### 6.7 Suspected account compromise
 1. Ask the clinic administrator to disable the user (ends all sessions immediately), or operator SQL:

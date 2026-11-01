@@ -170,7 +170,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_purchase_order_items", x => x.id);
-                    table.UniqueConstraint("ak_purchase_order_item_clinic_id_product_id_id", x => new { x.clinic_id, x.product_id, x.id });
+                    table.UniqueConstraint("ak_purchase_order_items_clinic_id_product_id_id", x => new { x.clinic_id, x.product_id, x.id });
                     table.CheckConstraint("ck_purchase_order_items_line_total", "line_total >= 0 AND line_total <= 1000000000000");
                     table.CheckConstraint("ck_purchase_order_items_position", "position > 0");
                     table.CheckConstraint("ck_purchase_order_items_quantity", "quantity > 0 AND quantity <= 1000000");
@@ -272,7 +272,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 unique: true);
 
             migrationBuilder.AddForeignKey(
-                name: "fk_stock_movements_purchase_order_item_clinic_id_product_id_pu",
+                name: "fk_stock_movements_purchase_order_items_clinic_id_product_id",
                 table: "stock_movements",
                 columns: new[] { "clinic_id", "product_id", "purchase_order_item_id" },
                 principalTable: "purchase_order_items",
@@ -334,7 +334,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                              - 'closed_at' - 'closed_by_user_id' - 'close_reason' - 'updated_at')
                           = (to_jsonb(OLD) - 'status' - 'received_at' - 'cancelled_at' - 'cancelled_by_user_id' - 'cancel_reason'
                              - 'closed_at' - 'closed_by_user_id' - 'close_reason' - 'updated_at')
-                        AND (OLD.status <> 'Closed' OR (to_jsonb(NEW) - 'updated_at') = (to_jsonb(OLD) - 'updated_at')) THEN
+                        AND (OLD.status <> 'Closed' OR (to_jsonb(NEW) - 'updated_at') = (to_jsonb(OLD) - 'updated_at'))
+                        AND (OLD.status <> 'Received' OR NEW.status <> 'Received' OR NEW.received_at IS NOT DISTINCT FROM OLD.received_at) THEN
                         RETURN NEW;
                     END IF;
                     RAISE EXCEPTION 'a % purchase order cannot be changed this way', OLD.status USING ERRCODE = 'insufficient_privilege';
@@ -352,9 +353,17 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     IF TG_OP = 'UPDATE' AND (NEW.purchase_order_id, NEW.clinic_id) IS DISTINCT FROM (OLD.purchase_order_id, OLD.clinic_id) THEN
                         RAISE EXCEPTION 'a purchase order line cannot move to another order' USING ERRCODE = 'insufficient_privilege';
                     END IF;
-                    SELECT status INTO parent_status FROM purchase_orders
-                    WHERE id = COALESCE(NEW.purchase_order_id, OLD.purchase_order_id) AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
-                    FOR SHARE;
+                    IF TG_OP = 'UPDATE' AND NEW.quantity_received <> OLD.quantity_received THEN
+                        -- Exclusive, so concurrent writers of different lines queue and the commit-time status check sees
+                        -- them all (the API takes this lock first anyway).
+                        SELECT status INTO parent_status FROM purchase_orders
+                        WHERE id = NEW.purchase_order_id AND clinic_id = NEW.clinic_id
+                        FOR NO KEY UPDATE;
+                    ELSE
+                        SELECT status INTO parent_status FROM purchase_orders
+                        WHERE id = COALESCE(NEW.purchase_order_id, OLD.purchase_order_id) AND clinic_id = COALESCE(NEW.clinic_id, OLD.clinic_id)
+                        FOR SHARE;
+                    END IF;
                     IF parent_status IS NULL OR parent_status = 'Draft' THEN
                         IF TG_OP <> 'DELETE' AND NEW.quantity_received <> 0 THEN
                             RAISE EXCEPTION 'nothing is received on a draft' USING ERRCODE = 'insufficient_privilege';
@@ -386,7 +395,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     END IF;
                     SELECT quantity_received INTO stored FROM purchase_order_items WHERE id = item_id AND clinic_id = NEW.clinic_id;
                     SELECT COALESCE(sum(quantity), 0) INTO moved FROM stock_movements
-                    WHERE clinic_id = NEW.clinic_id AND purchase_order_item_id = item_id;
+                    WHERE clinic_id = NEW.clinic_id AND product_id = NEW.product_id AND purchase_order_item_id = item_id;
                     IF stored IS NOT NULL AND stored <> moved THEN
                         RAISE EXCEPTION 'a purchase order line''s received quantity must equal its deliveries'
                             USING ERRCODE = 'insufficient_privilege';
@@ -543,13 +552,14 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                                 USING ERRCODE = 'insufficient_privilege';
                         END IF;
                     END IF;
-                    -- A delivery against an order line (B-21): the order is locked first, then tested; it must have been
+                    -- A delivery against an order line (B-21): the order is locked (exclusively, see the line trigger) first,
+                    -- then tested; it must have been
                     -- placed and be neither cancelled nor closed, and the movement names the order's supplier.
                     IF NEW.purchase_order_item_id IS NOT NULL THEN
                         SELECT o.status, o.supplier_id INTO order_status, order_supplier
                         FROM purchase_orders o JOIN purchase_order_items i ON i.purchase_order_id = o.id AND i.clinic_id = o.clinic_id
                         WHERE i.id = NEW.purchase_order_item_id AND i.clinic_id = NEW.clinic_id
-                        FOR SHARE OF o;
+                        FOR NO KEY UPDATE OF o;
                         IF order_supplier IS DISTINCT FROM NEW.supplier_id
                             OR (NEW.type = 'Receive' AND order_status IN ('Draft', 'Cancelled', 'Closed')) THEN
                             RAISE EXCEPTION 'a delivery is received only against a placed, open order and names its supplier'
@@ -571,9 +581,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                 DO $$
                 BEGIN
-                    IF EXISTS (SELECT 1 FROM purchase_orders WHERE status <> 'Draft')
+                    IF EXISTS (SELECT 1 FROM suppliers)
                        OR EXISTS (SELECT 1 FROM stock_movements WHERE supplier_id IS NOT NULL OR purchase_order_item_id IS NOT NULL) THEN
-                        RAISE EXCEPTION 'Refusing to drop purchasing records: placed orders or supplier-linked stock movements exist.';
+                        RAISE EXCEPTION 'Refusing to drop purchasing records: suppliers, orders or supplier-linked stock movements exist.';
                     END IF;
                 END;
                 $$;
@@ -670,7 +680,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                 """);
 
             migrationBuilder.DropForeignKey(
-                name: "fk_stock_movements_purchase_order_item_clinic_id_product_id_pu",
+                name: "fk_stock_movements_purchase_order_items_clinic_id_product_id",
                 table: "stock_movements");
 
             migrationBuilder.DropForeignKey(

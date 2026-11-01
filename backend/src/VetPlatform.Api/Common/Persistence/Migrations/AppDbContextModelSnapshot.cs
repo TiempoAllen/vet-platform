@@ -2660,7 +2660,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasName("pk_purchase_order_items");
 
                     b.HasAlternateKey("ClinicId", "ProductId", "Id")
-                        .HasName("ak_purchase_order_item_clinic_id_product_id_id");
+                        .HasName("ak_purchase_order_items_clinic_id_product_id_id");
 
                     b.HasIndex("ClinicId", "PurchaseOrderId", "Position")
                         .IsUnique()
@@ -3781,7 +3781,7 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasForeignKey("ClinicId", "ProductId", "PurchaseOrderItemId")
                         .HasPrincipalKey("ClinicId", "ProductId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("fk_stock_movements_purchase_order_item_clinic_id_product_id_pu");
+                        .HasConstraintName("fk_stock_movements_purchase_order_items_clinic_id_product_id");
 
                     b.HasOne("VetPlatform.Api.Features.Inventory.StockLot", "StockLot")
                         .WithMany()

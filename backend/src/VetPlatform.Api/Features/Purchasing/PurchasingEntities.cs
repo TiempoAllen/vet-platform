@@ -326,7 +326,7 @@ internal sealed class PurchaseOrderItemConfiguration : IEntityTypeConfiguration<
         builder.HasOne<Clinic>().WithMany().HasForeignKey(i => i.ClinicId).OnDelete(DeleteBehavior.Restrict);
 
         // Movements reference a line of their own product through this key.
-        builder.HasAlternateKey(i => new { i.ClinicId, i.ProductId, i.Id });
+        builder.HasAlternateKey(i => new { i.ClinicId, i.ProductId, i.Id }).HasName("ak_purchase_order_items_clinic_id_product_id_id");
         builder.HasIndex(i => new { i.ClinicId, i.PurchaseOrderId, i.Position }).IsUnique();
         builder.HasIndex(i => new { i.ClinicId, i.PurchaseOrderId, i.ProductId }).IsUnique();
     }

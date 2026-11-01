@@ -54,6 +54,9 @@ public sealed class PurchaseOrderService(
 
     public async Task<PurchaseOrderResponse> CreateAsync(CreatePurchaseOrderRequest request, CancellationToken cancellationToken)
     {
+        // The clinic row FOR SHARE: a concurrent currency change waits, and then sees this order.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.Database.ExecuteSqlAsync($"SELECT 1 FROM clinics WHERE id = {CurrentClinicId} FOR SHARE", cancellationToken);
         var clinic = await db.Clinics.AsNoTracking().SingleAsync(c => c.Id == CurrentClinicId, cancellationToken);
         if (clinic.Currency is null)
         {
@@ -74,6 +77,7 @@ public sealed class PurchaseOrderService(
         db.PurchaseOrders.Add(order);
         audit.Record(AuditActions.PurchaseOrderCreated, nameof(PurchaseOrder), order.Id, new { supplierId = order.SupplierId, currency = order.Currency });
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return await GetAsync(order.Id, cancellationToken);
     }
 
@@ -204,15 +208,24 @@ public sealed class PurchaseOrderService(
                 throw Conflict("Add at least one line before ordering.");
             }
 
+            // Lock the supplier, then test it, so a concurrent deactivation is waited for (lock order: order, supplier).
+            await db.Database.ExecuteSqlAsync(
+                $"SELECT 1 FROM suppliers WHERE id = {order.SupplierId} AND clinic_id = {CurrentClinicId} FOR SHARE", cancellationToken);
             if (!await db.Suppliers.AnyAsync(s => s.Id == order.SupplierId && s.Status == SupplierStatus.Active, cancellationToken))
             {
                 throw Conflict("The supplier is no longer active; choose another one.");
             }
 
-            var productIds = order.Items.Select(i => i.ProductId).ToList();
-            if (await db.Products.CountAsync(p => productIds.Contains(p.Id) && p.Status == ProductStatus.Active, cancellationToken) != productIds.Count)
+            // The products FOR SHARE too (lock order: order, supplier, products), so a type change waits or is seen.
+            var productIds = order.Items.Select(i => i.ProductId).Order().ToList();
+            await db.Database.ExecuteSqlAsync(
+                $"SELECT 1 FROM products WHERE id = ANY({productIds.ToArray()}) AND clinic_id = {CurrentClinicId} ORDER BY id FOR SHARE",
+                cancellationToken);
+            if (await db.Products.CountAsync(
+                    p => productIds.Contains(p.Id) && p.Status == ProductStatus.Active && p.Type != ProductType.Service, cancellationToken)
+                != productIds.Count)
             {
-                throw Conflict("A product on the order is no longer active; remove its line or reactivate it.");
+                throw Conflict("A product on the order is no longer active or is now a service; remove its line or change the product.");
             }
 
             Recompute(order);
@@ -362,9 +375,9 @@ public sealed class PurchaseOrderService(
         foreach (var (index, item, line) in received)
         {
             var product = products[item.ProductId];
-            if (product.Status != ProductStatus.Active)
+            if (product.Status != ProductStatus.Active || !product.HoldsStock)
             {
-                problems.Add(new ApiErrorDetail($"lines[{index}].itemId", "The product is no longer active; reactivate it or close the order."));
+                problems.Add(new ApiErrorDetail($"lines[{index}].itemId", "The product is no longer active and stocked; reactivate it or close the order."));
             }
             else if (product.RequiresExpiry && line.ExpiresOn is null)
             {
