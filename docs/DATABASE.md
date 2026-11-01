@@ -437,7 +437,8 @@ Table `stock_lots` (the original "InventoryItem / StockLot"; unit cost moved to 
 
 Unique index `ux_stock_lots_identity` on (clinic_id, product_id, lot_number, expires_on, location) `NULLS NOT
 DISTINCT`: one lot per identity. Partial index `ix_stock_lots_expiring` on (clinic_id, expires_on) where
-`quantity > 0 AND expires_on IS NOT NULL` serves the expiring-soon query (B-22). Alternate key (clinic_id, product_id, id) for movements. Trigger `stock_lots_guard`:
+`quantity > 0 AND expires_on IS NOT NULL` serves the expiring-soon query (B-22). Alternate key (clinic_id, product_id,
+id) for movements. Trigger `stock_lots_guard`:
 an INSERT locks the product `FOR SHARE`, then refuses a lot of a service and a medication or vaccine lot without
 expiry; an UPDATE may change nothing but quantity and `updated_at`; no DELETE; TRUNCATE refused. Deferred constraint
 trigger `stock_lots_match_movements`: at commit, the quantity equals the sum of the lot's movements.

@@ -78,20 +78,33 @@ public sealed class InventoryAlertService(AppDbContext db, ITenantContext tenant
         public decimal OnOrder { get; init; }
     }
 
-    private IQueryable<LowStockRow> LowStockRows() =>
-        db.Products.AsNoTracking()
-            .Where(p => p.Status == ProductStatus.Active && p.Type != ProductType.Service && p.ReorderLevel != null)
-            .Select(p => new LowStockRow
-            {
-                Product = p,
-                OnHand = db.StockLots.Where(l => l.ProductId == p.Id).Sum(l => (decimal?)l.Quantity) ?? 0m,
-                OnOrder = db.PurchaseOrders
-                    .Where(o => o.Status == PurchaseOrderStatus.Ordered || o.Status == PurchaseOrderStatus.PartiallyReceived)
-                    .SelectMany(o => o.Items)
-                    .Where(i => i.ProductId == p.Id)
-                    .Sum(i => (decimal?)(i.Quantity - i.QuantityReceived)) ?? 0m,
-            })
-            .Where(r => r.OnHand <= r.Product.ReorderLevel);
+    /// <summary>
+    /// The totals come from two grouped subqueries joined to the products (one aggregate each per request), not from
+    /// correlated sums, which the database would repeat in every clause that uses them (B-22 review).
+    /// </summary>
+    private IQueryable<LowStockRow> LowStockRows()
+    {
+        var onHand = db.StockLots.AsNoTracking()
+            .GroupBy(l => l.ProductId)
+            .Select(g => new { ProductId = g.Key, Quantity = g.Sum(l => l.Quantity) });
+        var onOrder = db.PurchaseOrders.AsNoTracking()
+            .Where(o => o.Status == PurchaseOrderStatus.Ordered || o.Status == PurchaseOrderStatus.PartiallyReceived)
+            .SelectMany(o => o.Items)
+            .GroupBy(i => i.ProductId)
+            .Select(g => new { ProductId = g.Key, Quantity = g.Sum(i => i.Quantity - i.QuantityReceived) });
+
+        return
+            from p in db.Products.AsNoTracking()
+            where p.Status == ProductStatus.Active && p.Type != ProductType.Service && p.ReorderLevel != null
+            join h in onHand on p.Id equals h.ProductId into held
+            from h in held.DefaultIfEmpty()
+            join o in onOrder on p.Id equals o.ProductId into ordered
+            from o in ordered.DefaultIfEmpty()
+            select new LowStockRow { Product = p, OnHand = (decimal?)h.Quantity ?? 0m, OnOrder = (decimal?)o.Quantity ?? 0m }
+        into row
+            where row.OnHand <= row.Product.ReorderLevel
+            select row;
+    }
 
     private IQueryable<StockLot> ExpiringLots(DateOnly today, int withinDays)
     {

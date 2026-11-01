@@ -3227,7 +3227,7 @@ paths:
       tags: [Inventory]
       operationId: listLowStock
       summary: Products at or below their reorder level
-      description: Requires `inventory.read`. Active, stocked products with a reorder level whose on-hand stock is at or below it, deepest below first. onOrder counts what Ordered and PartiallyReceived purchase orders still await.
+      description: Requires `inventory.read`. Active, stocked products with a reorder level whose on-hand stock is at or below it, largest shortfall first. onOrder counts what Ordered and PartiallyReceived purchase orders still await.
       parameters:
         - { name: type, in: query, schema: { $ref: '#/components/schemas/ProductType' }, description: 'A stocked type; Service is 422.' }
         - { name: category, in: query, schema: { type: string, maxLength: 100 } }
@@ -3251,7 +3251,7 @@ paths:
       tags: [Inventory]
       operationId: listExpiringLots
       summary: Lots expiring soon or already expired
-      description: Requires `inventory.read`. Lots holding stock whose expiry date is within withinDays clinic-local days (expired lots included), soonest first.
+      description: Requires `inventory.read`. Lots holding stock whose expiry date is within withinDays clinic-local days (inclusive; expired lots included), soonest first. An unknown productId gives an empty page.
       parameters:
         - { name: withinDays, in: query, schema: { type: integer, minimum: 0, maximum: 365, default: 30 } }
         - { name: productId, in: query, schema: { type: string, format: uuid } }

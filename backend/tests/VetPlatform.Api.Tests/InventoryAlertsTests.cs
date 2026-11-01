@@ -169,5 +169,35 @@ public sealed class InventoryAlertsTests(DatabaseApiFactory factory) : IClassFix
         Assert.Equal((2, 1, 0, 0, 30), (alerts.GetProperty("lowStock").GetInt32(), alerts.GetProperty("lowStockUncovered").GetInt32(),
             alerts.GetProperty("expiredLots").GetInt32(), alerts.GetProperty("expiringLots").GetInt32(), alerts.GetProperty("withinDays").GetInt32()));
     }
-}
 
+    // ---------- Review fixes (B-22) ----------
+
+    [Fact]
+    public async Task OtherClinics_LotsOrdersAndCounts_NeverShow()
+    {
+        var mine = await ClinicAsync();
+        var theirs = await ClinicAsync();
+        var myProduct = await ProductAsync(mine, "MINE", 10);
+        var theirProduct = await ProductAsync(theirs, "THEIRS", 10, "Vaccine");
+        await ReceiveAsync(theirs, theirProduct, 2, 3);
+        await OrderAsync(theirs, theirProduct, 50);
+
+        var expiring = await mine.Stock.GetFromJsonAsync<JsonElement>("/api/inventory/expiring?withinDays=365");
+        Assert.Empty(expiring.GetProperty("data").EnumerateArray());
+        Assert.Empty((await mine.Stock.GetFromJsonAsync<JsonElement>($"/api/inventory/expiring?productId={theirProduct}")).GetProperty("data").EnumerateArray());
+        var low = Assert.Single((await mine.Stock.GetFromJsonAsync<JsonElement>("/api/inventory/low-stock")).GetProperty("data").EnumerateArray());
+        Assert.Equal((myProduct, 0m), (low.GetProperty("product").GetProperty("id").GetGuid(), Number(low, "onOrder")));
+        var alerts = await mine.Stock.GetFromJsonAsync<JsonElement>("/api/inventory/alerts?withinDays=365");
+        Assert.Equal((1, 0, 0), (alerts.GetProperty("lowStock").GetInt32(), alerts.GetProperty("expiredLots").GetInt32(), alerts.GetProperty("expiringLots").GetInt32()));
+    }
+
+    [Theory]
+    [InlineData("/api/inventory/low-stock")]
+    [InlineData("/api/inventory/expiring")]
+    [InlineData("/api/inventory/alerts")]
+    public async Task Alerts_NeedASignedInUser(string url)
+    {
+        await factory.MigrateAsync();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await factory.CreateClient().GetAsync(url)).StatusCode);
+    }
+}

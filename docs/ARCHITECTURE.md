@@ -902,9 +902,15 @@ Choose the simplest solution that satisfies documented requirements, security, m
   products' lots still appear as expiring (the stock is on the shelf until written off). On order counts `Ordered`
   and `PartiallyReceived` orders only, as `quantity − quantityReceived` per line. Low stock is sorted deepest below
   the level first (on hand − reorder level), then by name; expiring lots by expiry date, then product name. The values
-  are computed per request with correlated subqueries (no stored or cached totals); a partial index
+  are computed per request, without stored or cached totals: in the B-22 review the correlated sums (which the
+  database repeated in every clause using them) became two grouped subqueries, on-hand by product and on-order by
+  product, left-joined to the products once; a partial index
   (clinic_id, expires_on) where the lot holds stock and has an expiry date serves the expiring list. The counts carry
   the clinic-local `today` they were computed for. Nothing here is audited (inventory reads).
-- **Accepted for now:** the low-stock list scans the clinic's active products with a reorder level and sums their
-  lots and open order lines per row; a materialised on-hand total can come with X-04 if a clinic's catalogue makes it
+- **Review fixes (B-22):** the grouped-subquery rewrite above; tests that another clinic's lots, open orders and
+  counts never show, and that the three endpoints need a signed-in user; API.md states the inclusive window, the
+  shortfall sort, the `uncovered=false` and blank-category behaviour and the empty page for an unknown product.
+- **Accepted for now:** the low-stock list aggregates the clinic's lots and open order lines per request (and the
+  paged lists count before they fetch); the index is created without `CONCURRENTLY` (stock tables are small before
+  production); the frontend sees `onHand` here and `quantityOnHand` on products for the same value; a materialised on-hand total can come with X-04 if a clinic's catalogue makes it
   slow. No notifications or emails for low or expiring stock until B-25; no reorder suggestions (quantities to order).

@@ -1436,8 +1436,8 @@ Implemented in B-22 (ADR-022). Read-only, with `inventory.read`; computed at the
 clinic's lots and open purchase orders. Not audited.
 
 **Low stock:** `GET /api/inventory/low-stock` lists **active, stocked products with a reorder level whose on-hand
-stock is at or below it** (a reorder level of 10 means "reorder when down to 10"), the deepest below their level
-first (then by name), paginated. Products without a reorder level, services and inactive products never appear.
+stock is at or below it** (a reorder level of 10 means "reorder when down to 10"), the largest shortfall
+(`reorderLevel − onHand`, an absolute quantity) first, then by name, paginated. Products without a reorder level, services and inactive products never appear.
 
     {
       "product": { "id": "uuid", "sku": "AMX-250", "name": "...", "unit": "Tablet", "type": "Medication", "category": "..." | null, "controlled": false },
@@ -1447,13 +1447,14 @@ first (then by name), paginated. Products without a reorder level, services and 
 - `onHand` is the sum of the product's lots; `onOrder` what `Ordered` and `PartiallyReceived` purchase orders still
   await for it (drafts, cancelled, closed and received orders do not count); `shortfall` is `reorderLevel − onHand`
   (0 or more); `covered` is true when `onHand + onOrder` is above the reorder level.
-- Filters: `type` (a stocked type; `Service` or an unknown name is `422`), `category` (exact, ignoring case),
-  `uncovered=true` (only rows that are not `covered`).
+- Filters: `type` (a stocked type; `Service` or an unknown name is `422`), `category` (exact, ignoring case,
+  trimmed; blank is ignored), `uncovered=true` (only rows that are not `covered`; `false` or absent lists all).
 
 **Expiring:** `GET /api/inventory/expiring` lists **lots holding stock whose expiry date is within `withinDays`
-clinic-local days** (default 30, 0 to 365, `422` otherwise), **already expired lots included**, soonest expiry first
-(then product name), paginated. Lots of inactive products are included (the stock is still on the shelf); empty lots
-and lots without an expiry date never appear. Filter: `productId`.
+clinic-local days** (inclusive: `daysLeft ≤ withinDays`; default 30, 0 to 365, `422` otherwise), **already expired
+lots included**, soonest expiry first (then product name), paginated. Lots of inactive products are included (the stock is still on the shelf); empty lots
+and lots without an expiry date never appear. Filter: `productId` (an unknown or another clinic's product returns
+an empty page).
 
     { "lot": { ...stock lot (section 11.2)... }, "expired": false, "daysLeft": 10 }
 
