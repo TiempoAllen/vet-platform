@@ -1162,7 +1162,7 @@ search is B-27.
 Products and stock are implemented in B-19 (ADR-019), outgoing movements, reversals, controlled drugs and the
 register in B-20 (ADR-020), suppliers and purchase orders in B-21 (ADR-021, section 11.4). Stock is held **per lot**,
 changes **only through recorded stock movements** and **never goes negative**. Low-stock and expiring-soon queries
-come with B-22.
+are in B-22 (ADR-022, section 11.5).
 
 Permissions: `inventory.read` (Admin, Veterinarian, Nurse, Receptionist, Inventory) reads products, stock, movements
 and registers; `inventory.manage` (Admin, Inventory) creates and edits products and records every movement type;
@@ -1430,6 +1430,42 @@ into a service since it was ordered cannot be received (`422`).
 **Audit:** `purchase_order.created`, `.updated`, `.deleted`, `.item_added`, `.item_updated`, `.item_removed`,
 `.ordered`, `.received` (line ids, quantities, movement ids), `.cancelled`, `.closed`, with ids, numbers, quantities and
 totals; never notes or reasons. Each delivered line is also audited as `stock.received`.
+
+### 11.5 Low stock and expiring stock
+Implemented in B-22 (ADR-022). Read-only, with `inventory.read`; computed at the time of the request from the
+clinic's lots and open purchase orders. Not audited.
+
+**Low stock:** `GET /api/inventory/low-stock` lists **active, stocked products with a reorder level whose on-hand
+stock is at or below it** (a reorder level of 10 means "reorder when down to 10"), the deepest below their level
+first (then by name), paginated. Products without a reorder level, services and inactive products never appear.
+
+    {
+      "product": { "id": "uuid", "sku": "AMX-250", "name": "...", "unit": "Tablet", "type": "Medication", "category": "..." | null, "controlled": false },
+      "reorderLevel": 10, "onHand": 7, "onOrder": 7, "shortfall": 3, "covered": true
+    }
+
+- `onHand` is the sum of the product's lots; `onOrder` what `Ordered` and `PartiallyReceived` purchase orders still
+  await for it (drafts, cancelled, closed and received orders do not count); `shortfall` is `reorderLevel − onHand`
+  (0 or more); `covered` is true when `onHand + onOrder` is above the reorder level.
+- Filters: `type` (a stocked type; `Service` or an unknown name is `422`), `category` (exact, ignoring case),
+  `uncovered=true` (only rows that are not `covered`).
+
+**Expiring:** `GET /api/inventory/expiring` lists **lots holding stock whose expiry date is within `withinDays`
+clinic-local days** (default 30, 0 to 365, `422` otherwise), **already expired lots included**, soonest expiry first
+(then product name), paginated. Lots of inactive products are included (the stock is still on the shelf); empty lots
+and lots without an expiry date never appear. Filter: `productId`.
+
+    { "lot": { ...stock lot (section 11.2)... }, "expired": false, "daysLeft": 10 }
+
+`daysLeft` counts clinic-local days from today to the expiry date: 0 on the day itself, negative once expired
+(`expired: true`). An expired lot is written off with an `Expire` movement (section 11.3).
+
+**Counts:** `GET /api/inventory/alerts?withinDays=30` returns the totals of the two lists for a dashboard:
+
+    { "lowStock": 3, "lowStockUncovered": 2, "expiredLots": 1, "expiringLots": 4, "withinDays": 30, "today": "2026-11-01" }
+
+`expiredLots` and `expiringLots` split the expiring list into lots already past their date and lots still within the
+window; `today` is the clinic-local date the counts were computed for.
 
 ## 12. Reports
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.

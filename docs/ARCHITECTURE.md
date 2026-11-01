@@ -890,3 +890,21 @@ Choose the simplest solution that satisfies documented requirements, security, m
   rounded (as for invoices); no expected delivery date, supplier SKUs or price lists; a purchase order is not emailed
   to the supplier (B-25 notifications); what a closed order will never receive is still shown as outstanding on its
   lines (use the status); "on order" quantities for reorder suggestions are B-22.
+
+### ADR-022: Low-stock and expiring-soon queries (decided in B-22)
+- **Confirmed with the user:** a product is low when its on-hand stock is **at or below** its reorder level (the B-19
+  field's meaning; the SRS wording "below" was corrected). Low stock is judged on on-hand stock; each row also shows
+  what open purchase orders still await (`onOrder`), the `shortfall` and whether orders cover it, and
+  `uncovered=true` hides covered rows. Expiring soon means within `withinDays` clinic-local days (default 30, at most
+  365), already expired lots included; no new setting. Two paginated lists (`/api/inventory/low-stock`,
+  `/api/inventory/expiring`) and a counts endpoint (`/api/inventory/alerts`) for the dashboard, all `inventory.read`.
+- **Made here (recorded for review):** only active, stocked products with a reorder level can be low; inactive
+  products' lots still appear as expiring (the stock is on the shelf until written off). On order counts `Ordered`
+  and `PartiallyReceived` orders only, as `quantity − quantityReceived` per line. Low stock is sorted deepest below
+  the level first (on hand − reorder level), then by name; expiring lots by expiry date, then product name. The values
+  are computed per request with correlated subqueries (no stored or cached totals); a partial index
+  (clinic_id, expires_on) where the lot holds stock and has an expiry date serves the expiring list. The counts carry
+  the clinic-local `today` they were computed for. Nothing here is audited (inventory reads).
+- **Accepted for now:** the low-stock list scans the clinic's active products with a reorder level and sums their
+  lots and open order lines per row; a materialised on-hand total can come with X-04 if a clinic's catalogue makes it
+  slow. No notifications or emails for low or expiring stock until B-25; no reorder suggestions (quantities to order).

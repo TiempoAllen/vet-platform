@@ -54,6 +54,7 @@ builder.Services.AddScoped<PaymentService>();
 builder.Services.AddScoped<ReceiptService>();
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddScoped<StockService>();
+builder.Services.AddScoped<InventoryAlertService>();
 builder.Services.AddScoped<SupplierService>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddFileStorage(builder.Configuration);
