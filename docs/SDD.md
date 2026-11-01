@@ -8,7 +8,7 @@ new module follows. Requirements are in `SRS.md`; the reasoning behind each majo
 ADRs of `ARCHITECTURE.md` section 11, and only referenced here. If this document and an ADR disagree, the ADR wins
 and this document must be fixed.
 
-Sections 2–7 describe what exists (B-01 to B-20). Section 8 is the design to follow for planned modules.
+Sections 2–7 describe what exists (B-01 to B-21). Section 8 is the design to follow for planned modules.
 
 ## 2. System context
 
@@ -137,7 +137,7 @@ erDiagram
   }
 ```
 
-Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13), `AddVaccinations` (B-14), `AddClinicalNotesAndAttachments` (B-15), `AddInvoicesAndTaxRates` (B-16), `AddPayments` (B-17), `AddReceiptsAndBillTo` (B-18), `AddProductsAndStock` (B-19), `AddStockMovements` (B-20). The full planned
+Migrations: `Baseline` (B-02), `AddIdentityAndSessions` (B-03), `AddRolesAndAuditLog` (B-04), `AddClients` (B-05), `AddPatients` (B-06), `AddSchedulingAndClinicTimeZone` (B-08), `AddAppointments` (B-09), `AddAppointmentLifecycle` (B-10), `AddConsultations` (B-11), `AddDiagnosesAndTreatments` (B-12), `AddPrescriptions` (B-13), `AddVaccinations` (B-14), `AddClinicalNotesAndAttachments` (B-15), `AddInvoicesAndTaxRates` (B-16), `AddPayments` (B-17), `AddReceiptsAndBillTo` (B-18), `AddProductsAndStock` (B-19), `AddStockMovements` (B-20), `AddSuppliersAndPurchaseOrders` (B-21). The full planned
 model is in `DATABASE.md`.
 
 ## 6. Cross-cutting mechanisms

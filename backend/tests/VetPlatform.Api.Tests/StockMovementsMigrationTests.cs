@@ -50,6 +50,9 @@ public sealed class StockMovementsMigrationTests(DatabaseApiFactory factory) : I
         var lot = register.GetProperty("data")[0].GetProperty("lot").GetProperty("id").GetGuid();
         await OkAsync(await stock.PostAsJsonAsync("/api/inventory/movements", new { type = "Sell", stockLotId = lot, quantity = 1 }), HttpStatusCode.Created);
         await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync("AddProductsAndStock"));
-        await factory.UpdateDatabaseAsync(async db => Assert.Empty(await db.Database.GetPendingMigrationsAsync()));
+        // Later migrations (B-21) step back first; the B-20 one stays applied.
+        await factory.UpdateDatabaseAsync(async db => Assert.DoesNotContain(
+            await db.Database.GetPendingMigrationsAsync(), m => m.EndsWith("_AddStockMovements", StringComparison.Ordinal)));
+        await migrator.MigrateAsync();
     }
 }

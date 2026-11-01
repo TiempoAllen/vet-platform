@@ -116,6 +116,18 @@ public static class AuditActions
     public const string StockReturnedFromClient = "stock.returned_from_client";
     public const string StockExpired = "stock.expired";
     public const string StockReversed = "stock.reversed";
+    public const string SupplierCreated = "supplier.created";
+    public const string SupplierUpdated = "supplier.updated";
+    public const string PurchaseOrderCreated = "purchase_order.created";
+    public const string PurchaseOrderUpdated = "purchase_order.updated";
+    public const string PurchaseOrderDeleted = "purchase_order.deleted";
+    public const string PurchaseOrderItemAdded = "purchase_order.item_added";
+    public const string PurchaseOrderItemUpdated = "purchase_order.item_updated";
+    public const string PurchaseOrderItemRemoved = "purchase_order.item_removed";
+    public const string PurchaseOrderOrdered = "purchase_order.ordered";
+    public const string PurchaseOrderReceived = "purchase_order.received";
+    public const string PurchaseOrderCancelled = "purchase_order.cancelled";
+    public const string PurchaseOrderClosed = "purchase_order.closed";
 
     /// <summary>Reads of clinical records (SECURITY.md section 10).</summary>
     public const string ConsultationViewed = "consultation.viewed";

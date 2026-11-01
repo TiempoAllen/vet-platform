@@ -158,6 +158,9 @@ public sealed record StockMovementResponse(
     Guid? PatientId,
     Guid? ConsultationId,
     Guid? InvoiceItemId,
+    Guid? SupplierId,
+    Guid? PurchaseOrderId,
+    Guid? PurchaseOrderItemId,
     Guid? ReversesMovementId,
     Guid? ReversedByMovementId,
     DateTimeOffset OccurredAt,
@@ -175,7 +178,8 @@ public sealed record StockMovementResponse(
             m.Id, m.Type, StockLotResponse.Summary(m.Product!),
             new StockMovementLotSummary(m.StockLot!.Id, m.StockLot.LotNumber, m.StockLot.ExpiresOn, m.StockLot.Location, Currencies.Shortest(m.StockLot.Quantity)),
             Currencies.Shortest(m.Quantity), Currencies.Shortest(m.BalanceAfter), ProductResponse.Shortest(m.UnitCost), m.Currency,
-            m.Reference, Clinical(m, m.Reason, clinicalReader), Clinical(m, m.Notes, clinicalReader), m.PatientId, m.ConsultationId, m.InvoiceItemId, m.ReversesMovementId, reversedBy,
+            m.Reference, Clinical(m, m.Reason, clinicalReader), Clinical(m, m.Notes, clinicalReader), m.PatientId, m.ConsultationId, m.InvoiceItemId, m.SupplierId, m.PurchaseOrderItem?.PurchaseOrderId,
+            m.PurchaseOrderItemId, m.ReversesMovementId, reversedBy,
             TimeZoneInfo.ConvertTime(m.OccurredAt, zone), Person(m.PerformedBy), Person(m.Witness), m.CreatedAt);
 
     private static AppointmentPersonSummary? Person(Identity.User? user) =>
@@ -207,7 +211,8 @@ public sealed record RecordStockMovementRequest(
     Guid? ConsultationId,
     Guid? InvoiceItemId,
     Guid? WitnessUserId,
-    DateTimeOffset? OccurredAt);
+    DateTimeOffset? OccurredAt,
+    Guid? SupplierId);
 
 /// <summary>Undoes a movement recorded by mistake: the reason is required, and a witness when the product is controlled.</summary>
 public sealed record ReverseStockMovementRequest(
@@ -221,6 +226,10 @@ public sealed class StockMovementListQuery : PageQuery, IValidatableObject
     public Guid? StockLotId { get; init; }
 
     public string? Type { get; init; }
+
+    public Guid? SupplierId { get; init; }
+
+    public Guid? PurchaseOrderId { get; init; }
 
     public StockMovementType? ParsedType => StrictEnum.TryParse<StockMovementType>(Type, out var type) ? type : null;
 

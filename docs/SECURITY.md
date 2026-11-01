@@ -123,6 +123,9 @@ staff member as witness on every other movement that can take them out (the witn
 risk). Movement responses carry patient and consultation ids only, never names; the reason and notes of dispensing
 movements are returned only to `clinical.read` holders; reasons never reach the audit log.
 
+Since B-21 (ADR-021): suppliers and purchase orders are read with `inventory.read` and managed with `inventory.manage`;
+supplier contact details and order notes and reasons never reach the audit log; placed orders are never deleted.
+
 ## 10. Clinical records
 Clinical record access must be permission-controlled and auditable. Avoid destructive edits where history should be preserved.
 

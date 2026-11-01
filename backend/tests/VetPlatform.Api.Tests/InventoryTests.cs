@@ -239,7 +239,7 @@ public sealed class InventoryTests(DatabaseApiFactory factory) : IClassFixture<D
             unitCost = 0.1234m, reference = "DN-5531", notes = "Box slightly damaged",
         }), HttpStatusCode.Created);
         Assert.Equal(
-            ["id", "type", "product", "lot", "quantity", "balanceAfter", "unitCost", "currency", "reference", "reason", "notes", "patientId", "consultationId", "invoiceItemId", "reversesMovementId", "reversedByMovementId", "occurredAt", "performedBy", "witnessedBy", "createdAt"],
+            ["id", "type", "product", "lot", "quantity", "balanceAfter", "unitCost", "currency", "reference", "reason", "notes", "patientId", "consultationId", "invoiceItemId", "supplierId", "purchaseOrderId", "purchaseOrderItemId", "reversesMovementId", "reversedByMovementId", "occurredAt", "performedBy", "witnessedBy", "createdAt"],
             first.EnumerateObject().Select(p => p.Name));
         Assert.Equal(("L-1", 100m, "EUR", 0.1234m), (first.GetProperty("lot").GetProperty("lotNumber").GetString(), Number(first.GetProperty("lot"), "quantity"), first.GetProperty("currency").GetString(), Number(first, "unitCost")));
         var lotId = first.GetProperty("lot").GetProperty("id").GetGuid();

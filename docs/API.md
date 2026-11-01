@@ -239,7 +239,8 @@ Implemented in B-08; the currency in B-16 (the other clinic settings follow in B
 `PATCH /api/clinic` (`settings.manage`): `{ "timeZone": "Europe/London", "currency": "EUR" }` (either or both).
 - `currency` is an upper-case ISO 4217 code (`422` otherwise, field `currency`). It is `null` until an administrator
   sets it, and invoices cannot be created before. It can change only while the clinic has **no invoice**, no
-  costed stock receipt and no product default price (`409`), because those amounts are in it (B-19). `GET /api/auth/me` does not carry the currency; read it here.
+  costed stock receipt, no product default price and no purchase order (`409`), because those amounts are in it
+  (B-19, B-21). `GET /api/auth/me` does not carry the currency; read it here.
 - `timeZone` is an IANA id. Windows ids ("GMT Standard Time") and unknown ids are `422` (field `timeZone`).
 - New clinics get the zone from `create-admin --timezone` (default `UTC`); clinics created before B-08 start as `UTC`.
 - Weekly working hours are local wall-clock times, so changing the zone shifts every future working period with it.
@@ -1159,8 +1160,9 @@ search is B-27.
 
 ## 11. Inventory
 Products and stock are implemented in B-19 (ADR-019), outgoing movements, reversals, controlled drugs and the
-register in B-20 (ADR-020). Stock is held **per lot**, changes **only through recorded stock movements** and **never
-goes negative**. Suppliers and purchase orders come with B-21; low-stock and expiring-soon queries with B-22.
+register in B-20 (ADR-020), suppliers and purchase orders in B-21 (ADR-021, section 11.4). Stock is held **per lot**,
+changes **only through recorded stock movements** and **never goes negative**. Low-stock and expiring-soon queries
+come with B-22.
 
 Permissions: `inventory.read` (Admin, Veterinarian, Nurse, Receptionist, Inventory) reads products, stock, movements
 and registers; `inventory.manage` (Admin, Inventory) creates and edits products and records every movement type;
@@ -1233,6 +1235,7 @@ are kept in a register with reasons and witnesses).
       "quantity": -2, "balanceAfter": 118.5, "unitCost": 0.1234 | null, "currency": "EUR" | null,
       "reference": "DN-5531" | null, "reason": "..." | null, "notes": "..." | null,
       "patientId": "uuid" | null, "consultationId": "uuid" | null, "invoiceItemId": "uuid" | null,
+      "supplierId": "uuid" | null, "purchaseOrderId": "uuid" | null, "purchaseOrderItemId": "uuid" | null,
       "reversesMovementId": "uuid" | null, "reversedByMovementId": "uuid" | null,
       "occurredAt": "...", "performedBy": { "id", "name" } | null, "witnessedBy": { "id", "name" } | null, "createdAt": "..."
     }
@@ -1245,7 +1248,7 @@ are returned only to callers with `clinical.read` (Admin, Veterinarian, Nurse); 
 
 | Endpoint | Permission | Notes |
 |---|---|---|
-| `GET /api/inventory/movements` | `inventory.read` | Newest first (`occurredAt`), paginated; filters `productId`, `stockLotId`, `type`. |
+| `GET /api/inventory/movements` | `inventory.read` | Newest first (`occurredAt`), paginated; filters `productId`, `stockLotId`, `type`, `supplierId`, `purchaseOrderId`. |
 | `GET /api/products/:id/register` | `inventory.read` | The product's **register**: every movement **oldest first in the order recorded**, paginated, each with its lot's `balanceAfter`. For a controlled drug this is the controlled-drug register. Unknown or another clinic's product: `404`. |
 | `POST /api/inventory/movements` | `inventory.manage`, or `inventory.dispense` for `Dispense` only | Records one movement (body below). `201` with the movement (no `Location`: there is no single-movement `GET`). |
 | `POST /api/inventory/movements/:id/reverse` | `inventory.manage` | `{ "reason": "...", "witnessUserId": "uuid"? }`: records the exact opposite movement on the same lot (`201` with the reversal). |
@@ -1255,11 +1258,11 @@ gives the direction (negative takes stock out). At most 1,000,000 either way, at
 
 | Type | Direction | Names | Required | Notes |
 |---|---|---|---|---|
-| `Receive` | in | `productId` and the lot identity (`lotNumber`, `expiresOn`, `location`) | — | B-19 rules below. |
+| `Receive` | in | `productId` and the lot identity (`lotNumber`, `expiresOn`, `location`) | — | B-19 rules below; `supplierId` optional (an active supplier, B-21). Deliveries against purchase orders are received through section 11.4 and also name the order line. |
 | `Dispense` | out | `stockLotId` | `patientId` (an **active** patient of the clinic); `consultationId` optional (in progress or completed, of that patient) | Given or used for a patient. |
 | `Sell` | out | `stockLotId` | — | `invoiceItemId` optional: a line of an **issued** invoice of the clinic that links the **same product**. Issuing an invoice never changes stock. |
 | `Adjust` | either | `stockLotId` | `reason` | A count correction. |
-| `ReturnToSupplier` | out | `stockLotId` | `reason` | Supplier links come with B-21. |
+| `ReturnToSupplier` | out | `stockLotId` | `reason` | `supplierId` optional (an active supplier, B-21). |
 | `ReturnFromClient` | in | `stockLotId` | `reason` | E.g. an unopened retail item. |
 | `Expire` | out | `stockLotId` | `reason` | Only a lot whose `expiresOn` is today or earlier (clinic-local); use `Adjust` otherwise. |
 | `Reversal` | opposite | — | — | Only through the reverse endpoint (`422` on `type` here). |
@@ -1268,7 +1271,8 @@ An unknown type name is `400` (section 13). For B-19 clients: the outgoing types
 now, and `type=Sell` etc. are valid list filters.
 
 Fields a type does not use (`lotNumber`, `expiresOn`, `location`, `unitCost` outside `Receive`; `patientId` /
-`consultationId` outside `Dispense`; `invoiceItemId` outside `Sell`; `stockLotId` or `witnessUserId` on `Receive`)
+`consultationId` outside `Dispense`; `invoiceItemId` outside `Sell`; `supplierId` outside `Receive` and
+`ReturnToSupplier`; `stockLotId` or `witnessUserId` on `Receive`)
 are `422`. A `productId` sent with a lot must be the lot's product. `reason` (max 500) and `notes` (max 500) are
 trimmed; `reference` (max 100) is optional for every type; `occurredAt` (optional, default now) may be earlier but not
 in the future or before 2000.
@@ -1302,7 +1306,7 @@ movement already reversed, `409`; the witness (`422`); then the quantity (`409`)
 
 **Audit:** `stock.received`, `stock.dispensed`, `stock.sold`, `stock.adjusted`, `stock.returned_to_supplier`,
 `stock.returned_from_client`, `stock.expired`, `stock.reversed`, with ids (product, lot, patient, consultation,
-invoice line, witness, reversed movement), type, quantity, balance after, unit cost and currency; never lot numbers,
+invoice line, witness, reversed movement, supplier, purchase order), type, quantity, balance after, unit cost and currency; never lot numbers,
 locations, references, reasons or notes. Movement and register reads are not audited.
 
 **Receive** (B-19):
@@ -1326,6 +1330,99 @@ locations, references, reasons or notes. Movement and register reads are not aud
 
 Billing a product on an invoice line (section 10.3, `productId`) does not change stock; record a `Sell` (optionally
 naming the line) when the item leaves the shelf.
+
+### 11.4 Suppliers and purchase orders
+Implemented in B-21 (ADR-021). Read with `inventory.read`; managed with `inventory.manage` (Admin, Inventory). Other
+clinics' suppliers and orders are `404`; another clinic's supplier, product or order line in a body is `422` with the
+same message as an unknown one.
+
+**Suppliers**
+
+    {
+      "id": "uuid", "name": "VetPharma", "contactName": "Sam Lee" | null, "email": "..." | null, "phone": "..." | null,
+      "addressLine1": "..." | null, "addressLine2": "..." | null, "city": "..." | null, "region": "..." | null,
+      "postalCode": "..." | null, "country": "..." | null, "accountNumber": "C-991" | null, "notes": "..." | null,
+      "status": "Active" | "Inactive", "createdAt": "...", "updatedAt": "..."
+    }
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /api/suppliers` | `inventory.read` | Ordered by name, paginated; `q` (part of the name or contact name, ignoring case), `status`. |
+| `GET /api/suppliers/:id` | `inventory.read` | `200` or `404`. |
+| `POST /api/suppliers` | `inventory.manage` | `name` required (max 200, trimmed, **unique per clinic ignoring case**, inactive suppliers included: `409`); `contactName` (max 200), `email` (max 254), `phone` (max 32), address lines (max 200), `city`, `region`, `country` (max 100), `postalCode` (max 20), `accountNumber` (max 50: the clinic's customer number with them), `notes` (max 2000), all optional. `201` with `Location: /api/suppliers/:id`. |
+| `PATCH /api/suppliers/:id` | `inventory.manage` | Partial update; omitted or `null` fields are unchanged, `""` clears optional text; `status` `Inactive` deactivates, `Active` restores. A blank name is `422` before the lookup. |
+
+Suppliers are never deleted. An inactive supplier cannot be named on new orders or movements; its open orders carry
+on. Changes are audited (`supplier.created`, `supplier.updated`) with field names and status only.
+
+**Purchase orders**
+
+    {
+      "id": "uuid", "number": 7 | null,
+      "status": "Draft" | "Ordered" | "PartiallyReceived" | "Received" | "Cancelled" | "Closed",
+      "supplier": { "id": "uuid", "name": "VetPharma" } | null, "currency": "EUR", "notes": "..." | null,
+      "items": [ {
+        "id": "uuid", "position": 1, "product": { "id", "sku", "name", "unit" },
+        "quantity": 10, "unitCost": 0.5, "lineTotal": 5, "quantityReceived": 6, "quantityOutstanding": 4
+      } ],
+      "total": 5, "orderedAt": "..." | null, "orderedBy": { "id", "name" } | null, "receivedAt": "..." | null,
+      "cancelledAt": "..." | null, "cancelledBy": { "id", "name" } | null, "cancelReason": "..." | null,
+      "closedAt": "..." | null, "closedBy": { "id", "name" } | null, "closeReason": "..." | null,
+      "createdBy": { "id", "name" } | null, "createdAt": "...", "updatedAt": "..."
+    }
+
+Instants other than `createdAt` / `updatedAt` carry the clinic's offset. Amounts are in the order's `currency` (the
+clinic currency, copied when the draft is created); costs exclude tax. `lineTotal` is `quantity × unitCost` rounded
+half away from zero to the currency's minor units; `total` is the sum. `quantityOutstanding` is `quantity −
+quantityReceived` (what a Closed order will never receive is still shown).
+
+**Lifecycle:** a `Draft` is editable, has no number and may be deleted. **Ordering** freezes it and gives it the
+clinic's next **gapless** number (1, 2, 3, ... per clinic). Deliveries move it to `PartiallyReceived` and `Received`
+(`receivedAt` set); reversing a delivery moves it back. An `Ordered` order with nothing received can be **cancelled**;
+a `PartiallyReceived` one can be **closed** (the rest will not come). Placed orders are never deleted. The database
+enforces the same rules, and checks at commit that every line's `quantityReceived` equals its deliveries minus their
+reversals and that the status matches.
+
+| Endpoint | Permission | Notes |
+|---|---|---|
+| `GET /api/purchase-orders` | `inventory.read` | Newest first, paginated; filters `status`, `supplierId`, `productId` (orders with a line for it). |
+| `GET /api/purchase-orders/:id` | `inventory.read` | `200` or `404`. |
+| `POST /api/purchase-orders` | `inventory.manage` | `{ "supplierId", "notes"? }`: a draft. The clinic currency must be set (`409`); the supplier must be active (`422`). `201` with `Location`. |
+| `PATCH /api/purchase-orders/:id` | `inventory.manage` | Drafts only (`409` otherwise): `supplierId`, `notes` (`""` clears; max 2000). |
+| `DELETE /api/purchase-orders/:id` | `inventory.manage` | Drafts only (`204`; `409` otherwise). |
+| `POST /api/purchase-orders/:id/items` | `inventory.manage` | `{ "productId", "quantity", "unitCost" }`: an active, non-`Service` product not already on the order; `quantity` above 0, at most 1,000,000, 3 decimals; `unitCost` 0 to 1,000,000,000, 4 decimals (`422`, reported together). At most 200 lines (`409`). |
+| `PATCH /api/purchase-orders/:id/items/:itemId` | `inventory.manage` | `quantity`, `unitCost`. |
+| `DELETE /api/purchase-orders/:id/items/:itemId` | `inventory.manage` | Removes a line. |
+| `POST /api/purchase-orders/:id/order` | `inventory.manage` | Draft → `Ordered`; needs a line, an active supplier and active products (`409`). |
+| `POST /api/purchase-orders/:id/cancel` | `inventory.manage` | `{ "reason" }` (required, max 500). `Ordered` with nothing received only (`409`). |
+| `POST /api/purchase-orders/:id/close` | `inventory.manage` | `{ "reason" }` (required, max 500). `PartiallyReceived` only (`409`). |
+| `POST /api/purchase-orders/:id/receipts` | `inventory.manage` | Receives a delivery (below). `201` with the order. |
+
+Every change to a draft, ordering, cancelling and closing returns the whole order with `200`; changes to a placed
+order's lines are `409`. A line total or order total above 1,000,000,000,000 is `422`.
+
+**Receiving a delivery:**
+
+    { "lines": [ { "itemId": "uuid", "quantity": 6, "lotNumber": "G1", "expiresOn": "2027-10-01", "location": "Store" } ],
+      "reference": "DN-5531", "notes": "...", "occurredAt": "..." }
+
+1 to 200 `lines`, each naming a line of this order at most once. Each line becomes a **`Receive` movement** (section
+11.3) into the product's lot with that lot number, expiry and location (topped up, or created), carrying the line's
+`unitCost`, the order currency, the order's `supplierId` and `purchaseOrderItemId`, and the delivery's `reference`,
+`notes` and `occurredAt` (default now; not in the future and not before the order was placed). Lot rules are those of
+`Receive`: `expiresOn` is required for medications and vaccines and may not be past. Order of checks: body rules
+(`422`, with fields like `lines[0].quantity`); unknown order `404`; an order that is not `Ordered` or
+`PartiallyReceived` `409`; a line not on the order `422`; a quantity above what the line still awaits `409`; then
+inactive products and missing expiry dates (`422`, reported together); then the lot maximum (`409`). Deliveries of one
+order are applied one after the other. The delivery's movements are listed with
+`GET /api/inventory/movements?purchaseOrderId=:id`.
+
+Reversing one of those movements (section 11.3) lowers its line's `quantityReceived` and moves the order back to
+`PartiallyReceived` or `Ordered` (`receivedAt` cleared); a closed order stays closed.
+
+**Audit:** `purchase_order.created`, `.updated`, `.deleted`, `.item_added`, `.item_updated`, `.item_removed`,
+`.ordered`, `.received` (line ids, quantities, movement ids), `.cancelled`, `.closed`, with ids, numbers, quantities and
+totals; never notes or reasons. Each delivered line is also audited as `stock.received`.
 
 ## 12. Reports
 Reports should use dedicated read endpoints and must enforce clinic scope and reporting permissions.

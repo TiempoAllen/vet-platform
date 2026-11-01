@@ -195,6 +195,14 @@ public sealed class StockMovement : Entity, IClinicOwned
     /// <summary>The movement a <see cref="StockMovementType.Reversal"/> undoes (same lot, opposite quantity).</summary>
     public Guid? ReversesMovementId { get; set; }
 
+    /// <summary>The supplier stock came from or went back to (Receive, ReturnToSupplier; copied onto reversals; B-21).</summary>
+    public Guid? SupplierId { get; set; }
+
+    /// <summary>The purchase order line a receipt was delivered against (copied onto its reversal; B-21).</summary>
+    public Guid? PurchaseOrderItemId { get; set; }
+
+    public Purchasing.PurchaseOrderItem? PurchaseOrderItem { get; set; }
+
     /// <summary>A second staff member who witnessed a controlled-drug adjustment, write-off or reversal.</summary>
     public Guid? WitnessUserId { get; set; }
 
@@ -359,6 +367,10 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
             table.HasCheckConstraint("ck_stock_movements_invoice_item", "invoice_item_id IS NULL OR type = 'Sell'");
             table.HasCheckConstraint("ck_stock_movements_reversal", "(reverses_movement_id IS NOT NULL) = (type = 'Reversal')");
             table.HasCheckConstraint("ck_stock_movements_witness", "witness_user_id IS NULL OR witness_user_id <> performed_by_user_id");
+            table.HasCheckConstraint("ck_stock_movements_supplier", "supplier_id IS NULL OR type IN ('Receive', 'ReturnToSupplier', 'Reversal')");
+            table.HasCheckConstraint(
+                "ck_stock_movements_purchase_order_item",
+                "purchase_order_item_id IS NULL OR (type IN ('Receive', 'Reversal') AND supplier_id IS NOT NULL)");
         });
         builder.Property(m => m.Type).HasConversion<string>().HasMaxLength(20);
         builder.Property(m => m.Quantity).HasPrecision(12, 3);
@@ -397,6 +409,15 @@ internal sealed class StockMovementConfiguration : IEntityTypeConfiguration<Stoc
         builder.HasOne<InvoiceItem>().WithMany()
             .HasForeignKey(m => new { m.ClinicId, m.InvoiceItemId })
             .HasPrincipalKey(i => new { i.ClinicId, i.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Purchasing.Supplier>().WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.SupplierId })
+            .HasPrincipalKey(s => new { s.ClinicId, s.Id })
+            .OnDelete(DeleteBehavior.Restrict);
+        // The order line is always one of the movement's product.
+        builder.HasOne(m => m.PurchaseOrderItem).WithMany()
+            .HasForeignKey(m => new { m.ClinicId, m.ProductId, m.PurchaseOrderItemId })
+            .HasPrincipalKey(i => new { i.ClinicId, i.ProductId, i.Id })
             .OnDelete(DeleteBehavior.Restrict);
         // A reversal undoes a movement of the same lot.
         builder.HasAlternateKey(m => new { m.ClinicId, m.StockLotId, m.Id });
