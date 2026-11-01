@@ -478,7 +478,7 @@ stock_lot_id, occurred_at), (clinic_id, occurred_at, id) for the unfiltered list
 (clinic_id, stock_lot_id, id) for reversals. Deferred constraint trigger `stock_movements_match_lot`: at commit, the
 lot's quantity equals the sum of its movements, so a movement without the lot's change (or the reverse) cannot commit.
 The original `reference_type` / `reference_id` columns became explicit links (patient, consultation, invoice line,
-reversed movement; purchase orders with B-21).
+reversed movement, supplier, purchase order line).
 
 Rolling the B-19 migration back locks the inventory tables and invoice lines, then refuses while stock movements
 exist or issued invoice lines link products (products, empty lots and draft-line links are dropped, as drafts are in
@@ -486,27 +486,65 @@ B-16). Rolling the B-20 migration back refuses while any movement is not a plain
 a witness), a product is controlled, or a vaccination or prescription links a product; it restores the B-19 guards.
 
 ### Supplier
-- id
-- clinic_id
-- name
-- contact information
-- status
+Table `suppliers` (B-21, ADR-021).
+- id, clinic_id; name (max 200, `case_insensitive`, CHECK not blank; unique index `ux_suppliers_clinic_id_name`)
+- contact_name (max 200), email (max 254), phone (max 32), address_line1/2 (max 200), city, region, country (max 100),
+  postal_code (max 20), account_number (max 50), notes (max 2000): optional
+- status (`Active`, `Inactive`; CHECK), created_at, updated_at
+
+Alternate key (clinic_id, id). `suppliers_guard` refuses DELETE and moves; TRUNCATE refused.
 
 ### PurchaseOrder
-- id
-- clinic_id
-- supplier_id
-- status
-- ordered_at
-- received_at
-- total
+Table `purchase_orders`.
+- id, clinic_id; supplier_id: composite FK (clinic_id, supplier_id) → suppliers
+- number (gapless per clinic from `purchase_order_number_sequences`, assigned when ordered; partial unique index
+  `ux_purchase_orders_clinic_number`)
+- status (`Draft`, `Ordered`, `PartiallyReceived`, `Received`, `Cancelled`, `Closed`; CHECK)
+- currency `char(3)` (copied from the clinic), notes (max 2000), total `numeric(19,4)` (CHECK 0 to 1,000,000,000,000)
+- ordered_at, ordered_by_user_id; received_at; cancelled_at, cancelled_by_user_id, cancel_reason (max 500); closed_at,
+  closed_by_user_id, close_reason (max 500); created_by_user_id (all users through composite FKs); created_at,
+  updated_at. CHECK `ck_purchase_orders_lifecycle`: each state carries exactly its own fields; times not before
+  `ordered_at`.
+
+Indexes: (clinic_id, created_at), (clinic_id, supplier_id, created_at), one per user key. Trigger
+`purchase_orders_guard`: new rows are drafts; drafts change freely and may be deleted; Draft → Ordered only with lines
+whose totals add up to the total; afterwards only the receiving status (Ordered, PartiallyReceived, Received in any
+direction), Ordered → Cancelled and PartiallyReceived → Closed, changing nothing but the status and its own fields
+(whole-row comparison; `received_at` stays put while the order stays Received); a closed order changes nothing but
+`updated_at`; no DELETE of a placed order; TRUNCATE refused. Deferred constraint
+triggers `purchase_orders_match_items` / `purchase_order_items_match_order`: at commit a placed order's status matches
+what its lines received (Ordered and Cancelled: nothing; PartiallyReceived: some; Received: everything; Closed: not
+everything, which after reversals may be nothing).
+
+### PurchaseOrderNumberSequence
+Table `purchase_order_number_sequences`: clinic_id (primary key, FK clinics), next_number (CHECK > 0). Row created on
+first use; `UPDATE ... RETURNING` while ordering, in the ordering transaction (lock order: order, then sequence).
 
 ### PurchaseOrderItem
-- id
-- purchase_order_id
-- product_id
-- quantity
-- unit_cost
+Table `purchase_order_items` (no DbSet; reached through the order).
+- id, clinic_id; purchase_order_id: composite FK (clinic_id, purchase_order_id) → purchase_orders
+- position (CHECK > 0; unique per order); product_id: composite FK to products (unique per order)
+- quantity `numeric(12,3)` (CHECK above 0, at most 1,000,000), unit_cost `numeric(19,4)` (CHECK 0 to 1,000,000,000),
+  line_total `numeric(19,4)` (CHECK 0 to 1,000,000,000,000)
+- quantity_received `numeric(12,3)` (CHECK 0 to quantity)
+
+Alternate key `ak_purchase_order_items_clinic_id_product_id_id` (clinic_id, product_id, id) for stock movements.
+Trigger `purchase_order_items_follow_order` (order locked first, then tested: `FOR NO KEY UPDATE` when
+`quantity_received` changes, so concurrent writers of different lines queue and the commit-time status check sees
+them all; `FOR SHARE` otherwise): lines change only on drafts (nothing received there); on placed orders only
+`quantity_received` changes; a line never moves; TRUNCATE refused. Deferred constraint triggers
+`purchase_order_items_match_movements` / `stock_movements_match_purchase_order_item`: at commit `quantity_received`
+equals the sum of the line's movements (deliveries minus their reversals).
+
+Stock movements gained (B-21) `supplier_id` (composite FK to suppliers; CHECK only `Receive`, `ReturnToSupplier`,
+`Reversal`) and `purchase_order_item_id` (composite FK (clinic_id, product_id, purchase_order_item_id) →
+purchase_order_items, so the line is the movement's product; CHECK only `Receive` and `Reversal`, with a supplier;
+constraint `fk_stock_movements_purchase_order_items_clinic_id_product_id`), with indexes
+`ix_stock_movements_clinic_id_supplier_id` and `ix_stock_movements_clinic_id_product_id_purchase_order_item_id`.
+`stock_movements_guard` also locks the order of a delivery `FOR NO KEY UPDATE`, then refuses a delivery that names another
+supplier or arrives on a draft, cancelled or closed order; a reversal keeps its original's supplier and order line.
+Rolling the B-21 migration back refuses while suppliers (and so orders) or supplier-linked movements exist and
+restores the B-20 guard.
 
 ## 9. Scheduling
 Implemented in B-08 (ADR-008). Every time and instant is on a 5-minute grid.

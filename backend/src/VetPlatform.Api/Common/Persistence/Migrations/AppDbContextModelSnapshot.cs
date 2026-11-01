@@ -2205,6 +2205,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("product_id");
 
+                    b.Property<Guid?>("PurchaseOrderItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("purchase_order_item_id");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(12, 3)
                         .HasColumnType("numeric(12,3)")
@@ -2227,6 +2231,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Property<Guid>("StockLotId")
                         .HasColumnType("uuid")
                         .HasColumnName("stock_lot_id");
+
+                    b.Property<Guid?>("SupplierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("supplier_id");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -2264,6 +2272,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasIndex("ClinicId", "PerformedByUserId")
                         .HasDatabaseName("ix_stock_movements_clinic_id_performed_by_user_id");
 
+                    b.HasIndex("ClinicId", "SupplierId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_supplier_id");
+
                     b.HasIndex("ClinicId", "WitnessUserId")
                         .HasDatabaseName("ix_stock_movements_clinic_id_witness_user_id");
 
@@ -2275,6 +2286,9 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                     b.HasIndex("ClinicId", "ProductId", "OccurredAt")
                         .HasDatabaseName("ix_stock_movements_clinic_id_product_id_occurred_at");
+
+                    b.HasIndex("ClinicId", "ProductId", "PurchaseOrderItemId")
+                        .HasDatabaseName("ix_stock_movements_clinic_id_product_id_purchase_order_item_id");
 
                     b.HasIndex("ClinicId", "StockLotId", "ReversesMovementId")
                         .HasDatabaseName("ix_stock_movements_clinic_id_stock_lot_id_reverses_movement_id");
@@ -2299,6 +2313,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
 
                             t.HasCheckConstraint("ck_stock_movements_patient", "(patient_id IS NOT NULL) = (type = 'Dispense')");
 
+                            t.HasCheckConstraint("ck_stock_movements_purchase_order_item", "purchase_order_item_id IS NULL OR (type IN ('Receive', 'Reversal') AND supplier_id IS NOT NULL)");
+
                             t.HasCheckConstraint("ck_stock_movements_quantity", "quantity <> 0 AND abs(quantity) <= 1000000 AND (type NOT IN ('Receive', 'ReturnFromClient') OR quantity > 0) AND (type NOT IN ('Dispense', 'Sell', 'ReturnToSupplier', 'Expire') OR quantity < 0)");
 
                             t.HasCheckConstraint("ck_stock_movements_reason", "(reason IS NULL OR btrim(reason) <> '') AND (type NOT IN ('Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal') OR reason IS NOT NULL)");
@@ -2306,6 +2322,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                             t.HasCheckConstraint("ck_stock_movements_reference", "reference IS NULL OR btrim(reference) <> ''");
 
                             t.HasCheckConstraint("ck_stock_movements_reversal", "(reverses_movement_id IS NOT NULL) = (type = 'Reversal')");
+
+                            t.HasCheckConstraint("ck_stock_movements_supplier", "supplier_id IS NULL OR type IN ('Receive', 'ReturnToSupplier', 'Reversal')");
 
                             t.HasCheckConstraint("ck_stock_movements_type", "type IN ('Receive', 'Dispense', 'Sell', 'Adjust', 'ReturnToSupplier', 'ReturnFromClient', 'Expire', 'Reversal')");
 
@@ -2447,6 +2465,346 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                             t.HasCheckConstraint("ck_patients_status", "status IN ('Active', 'Inactive', 'Deceased')");
 
                             t.HasCheckConstraint("ck_patients_weight_kg", "weight_kg > 0 AND weight_kg <= 2000");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrder", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CancelReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("cancel_reason");
+
+                    b.Property<DateTimeOffset?>("CancelledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cancelled_at");
+
+                    b.Property<Guid?>("CancelledByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cancelled_by_user_id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<string>("CloseReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("close_reason");
+
+                    b.Property<DateTimeOffset?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at");
+
+                    b.Property<Guid?>("ClosedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("closed_by_user_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character(3)")
+                        .HasColumnName("currency")
+                        .IsFixedLength();
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("notes");
+
+                    b.Property<int?>("Number")
+                        .HasColumnType("integer")
+                        .HasColumnName("number");
+
+                    b.Property<DateTimeOffset?>("OrderedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ordered_at");
+
+                    b.Property<Guid?>("OrderedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ordered_by_user_id");
+
+                    b.Property<DateTimeOffset?>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("supplier_id");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("total");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_purchase_orders");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_purchase_orders_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "CancelledByUserId")
+                        .HasDatabaseName("ix_purchase_orders_clinic_id_cancelled_by_user_id");
+
+                    b.HasIndex("ClinicId", "ClosedByUserId")
+                        .HasDatabaseName("ix_purchase_orders_clinic_id_closed_by_user_id");
+
+                    b.HasIndex("ClinicId", "CreatedAt")
+                        .HasDatabaseName("ix_purchase_orders_clinic_id_created_at");
+
+                    b.HasIndex("ClinicId", "CreatedByUserId")
+                        .HasDatabaseName("ix_purchase_orders_clinic_id_created_by_user_id");
+
+                    b.HasIndex("ClinicId", "Number")
+                        .IsUnique()
+                        .HasDatabaseName("ux_purchase_orders_clinic_number")
+                        .HasFilter("number IS NOT NULL");
+
+                    b.HasIndex("ClinicId", "OrderedByUserId")
+                        .HasDatabaseName("ix_purchase_orders_clinic_id_ordered_by_user_id");
+
+                    b.HasIndex("ClinicId", "SupplierId", "CreatedAt")
+                        .HasDatabaseName("ix_purchase_orders_clinic_id_supplier_id_created_at");
+
+                    b.ToTable("purchase_orders", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_purchase_orders_currency", "currency ~ '^[A-Z]{3}$'");
+
+                            t.HasCheckConstraint("ck_purchase_orders_lifecycle", "(status = 'Draft') = (number IS NULL) AND (status = 'Draft') = (ordered_at IS NULL) AND (ordered_at IS NULL) = (ordered_by_user_id IS NULL) AND (status = 'Received') = (received_at IS NOT NULL) AND (received_at IS NULL OR received_at >= ordered_at) AND (status = 'Cancelled') = (cancelled_at IS NOT NULL) AND (cancelled_at IS NULL) = (cancelled_by_user_id IS NULL) AND (cancelled_at IS NULL) = (cancel_reason IS NULL) AND (cancelled_at IS NULL OR cancelled_at >= ordered_at) AND (status = 'Closed') = (closed_at IS NOT NULL) AND (closed_at IS NULL) = (closed_by_user_id IS NULL) AND (closed_at IS NULL) = (close_reason IS NULL) AND (closed_at IS NULL OR closed_at >= ordered_at)");
+
+                            t.HasCheckConstraint("ck_purchase_orders_number", "number > 0");
+
+                            t.HasCheckConstraint("ck_purchase_orders_reasons", "btrim(cancel_reason) <> '' AND btrim(close_reason) <> ''");
+
+                            t.HasCheckConstraint("ck_purchase_orders_status", "status IN ('Draft', 'Ordered', 'PartiallyReceived', 'Received', 'Cancelled', 'Closed')");
+
+                            t.HasCheckConstraint("ck_purchase_orders_total", "total >= 0 AND total <= 1000000000000");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrderItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<decimal>("LineTotal")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("line_total");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<Guid>("PurchaseOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("purchase_order_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(12, 3)
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("quantity");
+
+                    b.Property<decimal>("QuantityReceived")
+                        .HasPrecision(12, 3)
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("quantity_received");
+
+                    b.Property<decimal>("UnitCost")
+                        .HasPrecision(19, 4)
+                        .HasColumnType("numeric(19,4)")
+                        .HasColumnName("unit_cost");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_purchase_order_items");
+
+                    b.HasAlternateKey("ClinicId", "ProductId", "Id")
+                        .HasName("ak_purchase_order_items_clinic_id_product_id_id");
+
+                    b.HasIndex("ClinicId", "PurchaseOrderId", "Position")
+                        .IsUnique()
+                        .HasDatabaseName("ix_purchase_order_items_clinic_id_purchase_order_id_position");
+
+                    b.HasIndex("ClinicId", "PurchaseOrderId", "ProductId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_purchase_order_items_clinic_id_purchase_order_id_product_id");
+
+                    b.ToTable("purchase_order_items", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_purchase_order_items_line_total", "line_total >= 0 AND line_total <= 1000000000000");
+
+                            t.HasCheckConstraint("ck_purchase_order_items_position", "position > 0");
+
+                            t.HasCheckConstraint("ck_purchase_order_items_quantity", "quantity > 0 AND quantity <= 1000000");
+
+                            t.HasCheckConstraint("ck_purchase_order_items_quantity_received", "quantity_received >= 0 AND quantity_received <= quantity");
+
+                            t.HasCheckConstraint("ck_purchase_order_items_unit_cost", "unit_cost >= 0 AND unit_cost <= 1000000000");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrderNumberSequence", b =>
+                {
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<int>("NextNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("next_number");
+
+                    b.HasKey("ClinicId")
+                        .HasName("pk_purchase_order_number_sequences");
+
+                    b.ToTable("purchase_order_number_sequences", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_purchase_order_number_sequences_next_number", "next_number > 0");
+                        });
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.Supplier", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountNumber")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("account_number");
+
+                    b.Property<string>("AddressLine1")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("address_line1");
+
+                    b.Property<string>("AddressLine2")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("address_line2");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("city");
+
+                    b.Property<Guid>("ClinicId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("clinic_id");
+
+                    b.Property<string>("ContactName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("contact_name");
+
+                    b.Property<string>("Country")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("country");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("email");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name")
+                        .UseCollation("case_insensitive");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("notes");
+
+                    b.Property<string>("Phone")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("phone");
+
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("postal_code");
+
+                    b.Property<string>("Region")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("region");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_suppliers");
+
+                    b.HasAlternateKey("ClinicId", "Id")
+                        .HasName("ak_suppliers_clinic_id_id");
+
+                    b.HasIndex("ClinicId", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("ux_suppliers_clinic_id_name");
+
+                    b.ToTable("suppliers", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_suppliers_name", "btrim(name) <> ''");
+
+                            t.HasCheckConstraint("ck_suppliers_status", "status IN ('Active', 'Inactive')");
                         });
                 });
 
@@ -3397,6 +3755,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_stock_movements_products_clinic_id_product_id");
 
+                    b.HasOne("VetPlatform.Api.Features.Purchasing.Supplier", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "SupplierId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_suppliers_clinic_id_supplier_id");
+
                     b.HasOne("VetPlatform.Api.Features.Identity.User", "Witness")
                         .WithMany()
                         .HasForeignKey("ClinicId", "WitnessUserId")
@@ -3410,6 +3775,13 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasPrincipalKey("ClinicId", "PatientId", "Id")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_stock_movements_consultations_clinic_id_patient_id_consulta");
+
+                    b.HasOne("VetPlatform.Api.Features.Purchasing.PurchaseOrderItem", "PurchaseOrderItem")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId", "PurchaseOrderItemId")
+                        .HasPrincipalKey("ClinicId", "ProductId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_purchase_order_items_clinic_id_product_id");
 
                     b.HasOne("VetPlatform.Api.Features.Inventory.StockLot", "StockLot")
                         .WithMany()
@@ -3429,6 +3801,8 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.Navigation("PerformedBy");
 
                     b.Navigation("Product");
+
+                    b.Navigation("PurchaseOrderItem");
 
                     b.Navigation("StockLot");
 
@@ -3453,6 +3827,110 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                         .HasConstraintName("fk_patients_clients_clinic_id_client_id");
 
                     b.Navigation("Client");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrder", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_orders_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "CancelledBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "CancelledByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_purchase_orders_users_clinic_id_cancelled_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "ClosedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ClosedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_purchase_orders_users_clinic_id_closed_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "CreatedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_purchase_orders_users_clinic_id_created_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Identity.User", "OrderedBy")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "OrderedByUserId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_purchase_orders_users_clinic_id_ordered_by_user_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Purchasing.Supplier", "Supplier")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "SupplierId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_orders_suppliers_clinic_id_supplier_id");
+
+                    b.Navigation("CancelledBy");
+
+                    b.Navigation("ClosedBy");
+
+                    b.Navigation("CreatedBy");
+
+                    b.Navigation("OrderedBy");
+
+                    b.Navigation("Supplier");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrderItem", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_order_items_clinics_clinic_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Inventory.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ClinicId", "ProductId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_order_items_products_clinic_id_product_id");
+
+                    b.HasOne("VetPlatform.Api.Features.Purchasing.PurchaseOrder", null)
+                        .WithMany("Items")
+                        .HasForeignKey("ClinicId", "PurchaseOrderId")
+                        .HasPrincipalKey("ClinicId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_order_items_purchase_orders_clinic_id_purchase_ord");
+
+                    b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrderNumberSequence", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_purchase_order_number_sequences_clinics_clinic_id");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.Supplier", b =>
+                {
+                    b.HasOne("VetPlatform.Api.Features.Identity.Clinic", null)
+                        .WithMany()
+                        .HasForeignKey("ClinicId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_suppliers_clinics_clinic_id");
                 });
 
             modelBuilder.Entity("VetPlatform.Api.Features.Scheduling.ScheduleException", b =>
@@ -3575,6 +4053,11 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
             modelBuilder.Entity("VetPlatform.Api.Features.Identity.User", b =>
                 {
                     b.Navigation("Roles");
+                });
+
+            modelBuilder.Entity("VetPlatform.Api.Features.Purchasing.PurchaseOrder", b =>
+                {
+                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

@@ -11,6 +11,7 @@ using VetPlatform.Api.Features.Billing;
 using VetPlatform.Api.Features.Consultations;
 using VetPlatform.Api.Features.Identity;
 using VetPlatform.Api.Features.Patients;
+using VetPlatform.Api.Features.Purchasing;
 using VetPlatform.Api.Features.Scheduling;
 
 namespace VetPlatform.Api.Features.Inventory;
@@ -66,6 +67,16 @@ public sealed class StockService(
             movements = movements.Where(m => m.Type == type);
         }
 
+        if (query.SupplierId is { } supplierId)
+        {
+            movements = movements.Where(m => m.SupplierId == supplierId);
+        }
+
+        if (query.PurchaseOrderId is { } orderId)
+        {
+            movements = movements.Where(m => m.PurchaseOrderItem!.PurchaseOrderId == orderId);
+        }
+
         return await PageAsync(movements.OrderByDescending(m => m.OccurredAt).ThenByDescending(m => m.Id), query, cancellationToken);
     }
 
@@ -106,6 +117,17 @@ public sealed class StockService(
         ThrowIfAny(problems);
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (request.UnitCost is not null)
+        {
+            // The clinic row FOR SHARE, then the currency again: a concurrent currency change waits and sees this cost.
+            await db.Database.ExecuteSqlAsync($"SELECT 1 FROM clinics WHERE id = {CurrentClinicId} FOR SHARE", cancellationToken);
+            clinic = await db.Clinics.AsNoTracking().SingleAsync(c => c.Id == CurrentClinicId, cancellationToken);
+            if (clinic.Currency is null)
+            {
+                throw Invalid("unitCost", "Set the clinic currency before recording costs.");
+            }
+        }
+
         var (product, lot, newLot) = type == StockMovementType.Receive
             ? await ReceivingLotAsync(request, cancellationToken)
             : await ExistingLotAsync(request.StockLotId!.Value, request.ProductId, cancellationToken);
@@ -132,6 +154,12 @@ public sealed class StockService(
         if (request.WitnessUserId is { } witnessId)
         {
             await CheckWitnessAsync(witnessId, problems, cancellationToken);
+        }
+
+        if (request.SupplierId is { } supplierId
+            && !await db.Suppliers.AnyAsync(s => s.Id == supplierId && s.Status == SupplierStatus.Active, cancellationToken))
+        {
+            problems.Add(new ApiErrorDetail("supplierId", "The supplier was not found or is not active."));
         }
 
         switch (type)
@@ -175,6 +203,7 @@ public sealed class StockService(
             PatientId = request.PatientId,
             ConsultationId = request.ConsultationId,
             InvoiceItemId = request.InvoiceItemId,
+            SupplierId = request.SupplierId,
             WitnessUserId = request.WitnessUserId,
             OccurredAt = request.OccurredAt is { } given ? TimestampsInterceptor.ToDatabasePrecision(given.ToUniversalTime()) : now,
             PerformedByUserId = CallerId,
@@ -186,12 +215,49 @@ public sealed class StockService(
             {
                 type, productId = product.Id, stockLotId = lot.Id, newLot, quantity = delta, balanceAfter = movement.BalanceAfter,
                 controlled = product.Controlled, patientId = movement.PatientId, consultationId = movement.ConsultationId,
-                invoiceItemId = movement.InvoiceItemId, witnessUserId = movement.WitnessUserId,
+                invoiceItemId = movement.InvoiceItemId, witnessUserId = movement.WitnessUserId, supplierId = movement.SupplierId,
                 unitCost = movement.UnitCost, currency = movement.Currency,
             });
         await SaveAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return await GetAsync(movement.Id, zone, cancellationToken);
+    }
+
+    /// <summary>
+    /// A receipt against a purchase order line (B-21), inside the caller's transaction: the caller has locked the order
+    /// and then the (active, stocked) product, and checked the lot details. Same lot rules and audit as a plain receipt.
+    /// </summary>
+    internal async Task<StockMovement> ReceiveForOrderAsync(
+        Product product, PurchaseOrder order, PurchaseOrderItem item, decimal quantity, string? lotNumber, DateOnly? expiresOn,
+        string? location, string? reference, string? notes, DateTimeOffset occurredAt, CancellationToken cancellationToken)
+    {
+        var (lot, newLot) = await LotForReceiptAsync(product, lotNumber, expiresOn, location, cancellationToken);
+        var movement = new StockMovement
+        {
+            ClinicId = product.ClinicId,
+            ProductId = product.Id,
+            StockLotId = lot.Id,
+            Type = StockMovementType.Receive,
+            Quantity = quantity,
+            UnitCost = item.UnitCost,
+            Currency = order.Currency,
+            Reference = reference,
+            Notes = notes,
+            SupplierId = order.SupplierId,
+            PurchaseOrderItemId = item.Id,
+            OccurredAt = occurredAt,
+            PerformedByUserId = CallerId,
+        };
+        Apply(product, lot, movement);
+        audit.Record(
+            AuditActions.StockReceived, nameof(StockMovement), movement.Id,
+            new
+            {
+                type = movement.Type, productId = product.Id, stockLotId = lot.Id, newLot, quantity, balanceAfter = movement.BalanceAfter,
+                controlled = product.Controlled, supplierId = order.SupplierId, purchaseOrderId = order.Id, purchaseOrderItemId = item.Id,
+                unitCost = movement.UnitCost, currency = movement.Currency,
+            });
+        return movement;
     }
 
     /// <summary>
@@ -209,6 +275,8 @@ public sealed class StockService(
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        // Lock order: purchase order, then product, then lot (as receipts against orders take them).
+        var order = original.PurchaseOrderItemId is { } itemId ? await LockOrderOfItemAsync(itemId, cancellationToken) : null;
         var (product, lot, _) = await ExistingLotAsync(original.StockLotId, null, cancellationToken);
         if (await db.StockMovements.AnyAsync(m => m.ReversesMovementId == id, cancellationToken))
         {
@@ -236,18 +304,27 @@ public sealed class StockService(
             Quantity = -original.Quantity,
             Reason = request.Reason!.Trim(),
             ReversesMovementId = original.Id,
+            SupplierId = original.SupplierId,
+            PurchaseOrderItemId = original.PurchaseOrderItemId,
             WitnessUserId = request.WitnessUserId,
             OccurredAt = Now,
             PerformedByUserId = CallerId,
         };
         Apply(product, lot, reversal);
+        if (order is not null)
+        {
+            // The line no longer counts the reversed delivery; the order's receiving status follows.
+            order.Items.Single(i => i.Id == original.PurchaseOrderItemId).QuantityReceived += reversal.Quantity;
+            order.ApplyReceivingStatus(reversal.OccurredAt);
+        }
+
         audit.Record(
             AuditActions.StockReversed, nameof(StockMovement), reversal.Id,
             new
             {
                 reversesMovementId = original.Id, reversedType = original.Type, productId = product.Id, stockLotId = lot.Id,
                 quantity = reversal.Quantity, balanceAfter = reversal.BalanceAfter, controlled = product.Controlled,
-                witnessUserId = reversal.WitnessUserId,
+                witnessUserId = reversal.WitnessUserId, purchaseOrderId = order?.Id,
             });
         await SaveAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -351,6 +428,11 @@ public sealed class StockService(
             NotFor("invoiceItemId", request.InvoiceItemId is not null);
         }
 
+        if (type is not (StockMovementType.Receive or StockMovementType.ReturnToSupplier))
+        {
+            NotFor("supplierId", request.SupplierId is not null);
+        }
+
         if (StockMovement.NeedsReason(type) && NullIfBlank(request.Reason) is null)
         {
             problems.Add(new ApiErrorDetail("reason", $"Required for {type} movements."));
@@ -388,15 +470,24 @@ public sealed class StockService(
             throw Invalid("expiresOn", $"Required for {product.Type} products.");
         }
 
-        var lotNumber = NullIfBlank(request.LotNumber);
-        var location = NullIfBlank(request.Location);
-        // The lot number and location columns compare ignoring case, as the identity index does.
-        var lot = await db.StockLots.SingleOrDefaultAsync(
-            l => l.ProductId == productId && l.LotNumber == lotNumber && l.ExpiresOn == request.ExpiresOn && l.Location == location,
-            cancellationToken);
+        var (lot, newLot) = await LotForReceiptAsync(product, NullIfBlank(request.LotNumber), request.ExpiresOn, NullIfBlank(request.Location), cancellationToken);
+        return (product, lot, newLot);
+    }
+
+    /// <summary>The product's lot with this identity, created (not yet saved) when there is none. The product must be locked.</summary>
+    private async Task<(StockLot Lot, bool NewLot)> LotForReceiptAsync(
+        Product product, string? lotNumber, DateOnly? expiresOn, string? location, CancellationToken cancellationToken)
+    {
+        // The lot number and location columns compare ignoring case, as the identity index does. Lots added earlier in
+        // the same unit of work (two lines of one delivery) are found in the change tracker first.
+        var lot = db.StockLots.Local.FirstOrDefault(l => l.ProductId == product.Id && Same(l.LotNumber, lotNumber)
+                && l.ExpiresOn == expiresOn && Same(l.Location, location))
+            ?? await db.StockLots.SingleOrDefaultAsync(
+                l => l.ProductId == product.Id && l.LotNumber == lotNumber && l.ExpiresOn == expiresOn && l.Location == location,
+                cancellationToken);
         if (lot is not null)
         {
-            return (product, lot, false);
+            return (lot, false);
         }
 
         lot = new StockLot
@@ -404,11 +495,23 @@ public sealed class StockService(
             ClinicId = product.ClinicId,
             ProductId = product.Id,
             LotNumber = lotNumber,
-            ExpiresOn = request.ExpiresOn,
+            ExpiresOn = expiresOn,
             Location = location,
         };
         db.StockLots.Add(lot);
-        return (product, lot, true);
+        return (lot, true);
+    }
+
+    private static bool Same(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Locks the purchase order a line belongs to (after the clinic-filtered lookup) and loads it with its lines.</summary>
+    private async Task<PurchaseOrder> LockOrderOfItemAsync(Guid itemId, CancellationToken cancellationToken)
+    {
+        var orderId = await db.PurchaseOrders.AsNoTracking()
+            .Where(o => o.Items.Any(i => i.Id == itemId)).Select(o => o.Id).SingleAsync(cancellationToken);
+        await db.Database.ExecuteSqlAsync(
+            $"SELECT 1 FROM purchase_orders WHERE id = {orderId} AND clinic_id = {CurrentClinicId} FOR NO KEY UPDATE", cancellationToken);
+        return await db.PurchaseOrders.Include(o => o.Items).SingleAsync(o => o.Id == orderId, cancellationToken);
     }
 
     /// <summary>An existing lot of the clinic and its product (locked first: lock order product, then lot).</summary>
@@ -424,7 +527,7 @@ public sealed class StockService(
         return (product, await db.StockLots.SingleAsync(l => l.Id == lotId, cancellationToken), false);
     }
 
-    private async Task<Product?> LockProductAsync(Guid productId, CancellationToken cancellationToken)
+    internal async Task<Product?> LockProductAsync(Guid productId, CancellationToken cancellationToken)
     {
         if (!await db.Products.AsNoTracking().AnyAsync(p => p.Id == productId, cancellationToken))
         {
@@ -535,7 +638,8 @@ public sealed class StockService(
     private static readonly DateTimeOffset Earliest = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     private static IQueryable<StockMovement> WithDetails(IQueryable<StockMovement> movements) =>
-        movements.Include(m => m.Product).Include(m => m.StockLot).Include(m => m.PerformedBy).Include(m => m.Witness);
+        movements.Include(m => m.Product).Include(m => m.StockLot).Include(m => m.PerformedBy).Include(m => m.Witness)
+            .Include(m => m.PurchaseOrderItem);
 
     private List<Role> Roles => Permissions.RolesOf(httpContextAccessor.HttpContext!.User).ToList();
 

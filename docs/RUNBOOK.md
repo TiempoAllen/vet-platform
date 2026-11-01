@@ -68,7 +68,7 @@ Check: `curl https://localhost:7096/api/health` returns `{"status":"Healthy"}`.
 4. Send the administrator the password through a separate channel and ask them to change it at first sign-in
    (`POST /api/auth/password`; the UI will offer this from F-03).
 5. Before the clinic invoices, the administrator sets the currency (`PATCH /api/clinic` with an ISO 4217 code; it is
-   fixed once the first invoice, costed stock receipt or product default price exists) and creates the tax rates (`POST /api/tax-rates`, e.g. a standard and a zero
+   fixed once the first invoice, costed stock receipt, product default price or purchase order exists) and creates the tax rates (`POST /api/tax-rates`, e.g. a standard and a zero
    rate). Confirm the currency with the clinic: a wrong one can only be fixed by hand in the database before any
    invoice exists.
 
@@ -230,7 +230,7 @@ not restore old sessions.
    `AddRolesAndAuditLog` is refused while `audit_logs` has rows, by design; so is rolling back past
    `AddProductsAndStock` (B-19) while stock movements exist or issued invoice lines link products, and past
    `AddStockMovements` (B-20) while movements other than receipts, controlled products or clinical product links
-   exist.
+   exist, and past `AddSuppliersAndPurchaseOrders` (B-21) while suppliers or supplier-linked movements exist.
 
 ### 6.7 Suspected account compromise
 1. Ask the clinic administrator to disable the user (ends all sessions immediately), or operator SQL:

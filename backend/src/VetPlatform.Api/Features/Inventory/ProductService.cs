@@ -163,6 +163,16 @@ public sealed partial class ProductService(AppDbContext db, ITenantContext tenan
                 StatusCodes.Status409Conflict, ErrorCodes.Conflict, "The type, unit and controlled flag cannot change once stock has been received.");
         }
 
+        // Nor while a placed order still awaits it: its quantities are in this unit (B-21 review). Deliveries lock the
+        // product too, so this check and a delivery cannot interleave.
+        if (fixedFieldsChange && await db.PurchaseOrders.AnyAsync(
+                o => (o.Status == Purchasing.PurchaseOrderStatus.Ordered || o.Status == Purchasing.PurchaseOrderStatus.PartiallyReceived)
+                    && o.Items.Any(i => i.ProductId == id), cancellationToken))
+        {
+            throw new ApiException(
+                StatusCodes.Status409Conflict, ErrorCodes.Conflict, "The type, unit and controlled flag cannot change while an open purchase order awaits the product.");
+        }
+
         if (changed.Count > 0)
         {
             audit.Record(AuditActions.ProductUpdated, nameof(Product), id, new { fields = changed, type = product.Type, status = product.Status, controlled = product.Controlled });

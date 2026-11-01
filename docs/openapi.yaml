@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.20.0
-  summary: Implemented endpoints as of milestone B-20.
+  version: 0.21.0
+  summary: Implemented endpoints as of milestone B-21.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (the rest of
@@ -2662,7 +2662,7 @@ paths:
       tags: [Inventory]
       operationId: updateProduct
       summary: Edit, deactivate or restore a product
-      description: Requires `inventory.manage`. Omitted fields are unchanged. The type, unit and controlled flag cannot change once the product has a stock lot (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
+      description: Requires `inventory.manage`. Omitted fields are unchanged. The type, unit and controlled flag cannot change once the product has a stock lot or while an open purchase order awaits it (409); a SKU used by another product is 409. Body rules are 422 before the lookup. Audited.
       parameters:
         - $ref: '#/components/parameters/XsrfToken'
       requestBody:
@@ -2718,6 +2718,8 @@ paths:
         - { name: productId, in: query, schema: { type: string, format: uuid } }
         - { name: stockLotId, in: query, schema: { type: string, format: uuid } }
         - { name: type, in: query, schema: { $ref: '#/components/schemas/StockMovementType' } }
+        - { name: supplierId, in: query, schema: { type: string, format: uuid } }
+        - { name: purchaseOrderId, in: query, schema: { type: string, format: uuid } }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PageSize'
       responses:
@@ -2818,6 +2820,406 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/suppliers:
+    get:
+      tags: [Inventory]
+      operationId: listSuppliers
+      summary: The clinic's suppliers
+      description: Requires `inventory.read`. Ordered by name; `q` matches part of the name or contact name ignoring case.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/SupplierStatus' } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of suppliers.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Inventory]
+      operationId: createSupplier
+      summary: Create a supplier
+      description: Requires `inventory.manage`. The name is unique per clinic ignoring case (409). Audited without names or contact details.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSupplierRequest' }
+      responses:
+        '201':
+          description: Created (Location /api/suppliers/{id}).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/suppliers/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Inventory]
+      operationId: getSupplier
+      summary: One supplier
+      description: Requires `inventory.read`.
+      responses:
+        '200':
+          description: The supplier.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Inventory]
+      operationId: updateSupplier
+      summary: Edit, deactivate or restore a supplier
+      description: Requires `inventory.manage`. Omitted or null fields are unchanged; "" clears optional text. A blank name is 422 before the lookup.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSupplierRequest' }
+      responses:
+        '200':
+          description: The supplier.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Supplier' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/purchase-orders:
+    get:
+      tags: [Inventory]
+      operationId: listPurchaseOrders
+      summary: Purchase orders
+      description: Requires `inventory.read`. Newest first.
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PurchaseOrderStatus' } }
+        - { name: supplierId, in: query, schema: { type: string, format: uuid } }
+        - { name: productId, in: query, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of orders.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrderPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Inventory]
+      operationId: createPurchaseOrder
+      summary: Create a draft purchase order
+      description: Requires `inventory.manage`. The clinic currency must be set (409); the supplier must be active (422).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePurchaseOrderRequest' }
+      responses:
+        '201':
+          description: Created (Location /api/purchase-orders/{id}).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/purchase-orders/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Inventory]
+      operationId: getPurchaseOrder
+      summary: One purchase order
+      description: Requires `inventory.read`.
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Inventory]
+      operationId: updatePurchaseOrder
+      summary: Edit a draft
+      description: Requires `inventory.manage`. Drafts only (409).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePurchaseOrderRequest' }
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Inventory]
+      operationId: deletePurchaseOrder
+      summary: Delete a draft
+      description: Requires `inventory.manage`. Drafts only (409).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '204':
+          description: Deleted.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/purchase-orders/{id}/items:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Inventory]
+      operationId: addPurchaseOrderItem
+      summary: Add a line to a draft
+      description: Requires `inventory.manage`. An active, non-Service product not already on the order; at most 200 lines (409).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePurchaseOrderItemRequest' }
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/purchase-orders/{id}/items/{itemId}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Inventory]
+      operationId: updatePurchaseOrderItem
+      summary: Edit a draft's line
+      description: Requires `inventory.manage`. Drafts only (409).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePurchaseOrderItemRequest' }
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Inventory]
+      operationId: removePurchaseOrderItem
+      summary: Remove a draft's line
+      description: Requires `inventory.manage`. Drafts only (409). Returns the order.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/purchase-orders/{id}/order:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Inventory]
+      operationId: orderPurchaseOrder
+      summary: Place a draft with the supplier
+      description: Requires `inventory.manage`. Assigns the next gapless number and freezes the lines. Needs a line, an active supplier and active, non-Service products (409).
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/purchase-orders/{id}/cancel:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Inventory]
+      operationId: cancelPurchaseOrder
+      summary: Cancel an order before anything arrived
+      description: Requires `inventory.manage`. Ordered with nothing received only (409). Audited without the reason.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurchaseOrderReasonRequest' }
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/purchase-orders/{id}/close:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Inventory]
+      operationId: closePurchaseOrder
+      summary: Close a partially received order
+      description: Requires `inventory.manage`. PartiallyReceived only (409); what has not arrived will not come. Audited without the reason.
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PurchaseOrderReasonRequest' }
+      responses:
+        '200':
+          description: The order.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/purchase-orders/{id}/receipts:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Inventory]
+      operationId: receivePurchaseOrder
+      summary: Receive a delivery
+      description: 'Requires `inventory.manage`. Each line becomes a Receive movement (B-19 lot rules) carrying the line''s unit cost and the order''s supplier. The order must be Ordered or PartiallyReceived (409); never more than a line still awaits (409). Movements: GET /api/inventory/movements?purchaseOrderId=.'
+      parameters:
+        - $ref: '#/components/parameters/XsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReceivePurchaseOrderRequest' }
+      responses:
+        '201':
+          description: The order after the delivery.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseOrder' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/ForbiddenOrCsrf' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/health:
@@ -3495,7 +3897,7 @@ components:
       type: object
       properties:
         timeZone: { type: [string, 'null'], maxLength: 64, description: 'IANA id, e.g. Europe/London.' }
-        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice, a costed stock receipt or a product default price.' }
+        currency: { type: [string, 'null'], maxLength: 3, description: 'Upper-case ISO 4217 code, e.g. EUR; fixed once the clinic has an invoice, a costed stock receipt, a product default price or a purchase order.' }
 
     DayOfWeek:
       type: string
@@ -4868,7 +5270,7 @@ components:
     StockMovement:
       type: object
       additionalProperties: false
-      required: [id, type, product, lot, quantity, balanceAfter, unitCost, currency, reference, reason, notes, patientId, consultationId, invoiceItemId, reversesMovementId, reversedByMovementId, occurredAt, performedBy, witnessedBy, createdAt]
+      required: [id, type, product, lot, quantity, balanceAfter, unitCost, currency, reference, reason, notes, patientId, consultationId, invoiceItemId, supplierId, purchaseOrderId, purchaseOrderItemId, reversesMovementId, reversedByMovementId, occurredAt, performedBy, witnessedBy, createdAt]
       properties:
         id: { type: string, format: uuid }
         type: { $ref: '#/components/schemas/StockMovementType' }
@@ -4893,6 +5295,9 @@ components:
         patientId: { type: [string, 'null'], format: uuid, description: Dispense only. }
         consultationId: { type: [string, 'null'], format: uuid }
         invoiceItemId: { type: [string, 'null'], format: uuid, description: Sell only. }
+        supplierId: { type: [string, 'null'], format: uuid, description: 'Receive, ReturnToSupplier and their reversals (B-21).' }
+        purchaseOrderId: { type: [string, 'null'], format: uuid, description: The order a delivery was received against. }
+        purchaseOrderItemId: { type: [string, 'null'], format: uuid }
         reversesMovementId: { type: [string, 'null'], format: uuid, description: Reversal only. }
         reversedByMovementId: { type: [string, 'null'], format: uuid, description: The reversal that undid this movement. }
         occurredAt: { type: string, format: date-time, description: "Carries the clinic's offset." }
@@ -4938,6 +5343,7 @@ components:
         invoiceItemId: { type: [string, 'null'], format: uuid, description: 'Sell only: a line of an issued invoice that links the same product.' }
         witnessUserId: { type: [string, 'null'], format: uuid, description: 'Another active staff member; required for Sell, Adjust, ReturnToSupplier and Expire of controlled drugs; not on Receive.' }
         occurredAt: { type: [string, 'null'], format: date-time, description: 'Default now; not in the future or before 2000.' }
+        supplierId: { type: [string, 'null'], format: uuid, description: 'Receive and ReturnToSupplier only: an active supplier of the clinic.' }
 
     ReverseStockMovementRequest:
       type: object
@@ -4945,6 +5351,208 @@ components:
       properties:
         reason: { type: string, minLength: 1, maxLength: 500 }
         witnessUserId: { type: [string, 'null'], format: uuid, description: 'Another active staff member; required when the product is a controlled drug.' }
+
+    SupplierStatus:
+      type: string
+      enum: [Active, Inactive]
+
+    Supplier:
+      type: object
+      additionalProperties: false
+      required: [id, name, contactName, email, phone, addressLine1, addressLine2, city, region, postalCode, country, accountNumber, notes, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, maxLength: 200 }
+        contactName: { type: [string, 'null'], maxLength: 200 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        addressLine1: { type: [string, 'null'], maxLength: 200 }
+        addressLine2: { type: [string, 'null'], maxLength: 200 }
+        city: { type: [string, 'null'], maxLength: 100 }
+        region: { type: [string, 'null'], maxLength: 100 }
+        postalCode: { type: [string, 'null'], maxLength: 20 }
+        country: { type: [string, 'null'], maxLength: 100 }
+        accountNumber: { type: [string, 'null'], maxLength: 50, description: "The clinic's customer number with the supplier." }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        status: { $ref: '#/components/schemas/SupplierStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SupplierPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Supplier' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreateSupplierRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        contactName: { type: [string, 'null'], maxLength: 200 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        addressLine1: { type: [string, 'null'], maxLength: 200 }
+        addressLine2: { type: [string, 'null'], maxLength: 200 }
+        city: { type: [string, 'null'], maxLength: 100 }
+        region: { type: [string, 'null'], maxLength: 100 }
+        postalCode: { type: [string, 'null'], maxLength: 20 }
+        country: { type: [string, 'null'], maxLength: 100 }
+        accountNumber: { type: [string, 'null'], maxLength: 50 }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    UpdateSupplierRequest:
+      type: object
+      description: 'Omitted or null fields are unchanged; "" clears optional text.'
+      properties:
+        name: { type: [string, 'null'], minLength: 1, maxLength: 200 }
+        contactName: { type: [string, 'null'], maxLength: 200 }
+        email: { type: [string, 'null'], maxLength: 254 }
+        phone: { type: [string, 'null'], maxLength: 32 }
+        addressLine1: { type: [string, 'null'], maxLength: 200 }
+        addressLine2: { type: [string, 'null'], maxLength: 200 }
+        city: { type: [string, 'null'], maxLength: 100 }
+        region: { type: [string, 'null'], maxLength: 100 }
+        postalCode: { type: [string, 'null'], maxLength: 20 }
+        country: { type: [string, 'null'], maxLength: 100 }
+        accountNumber: { type: [string, 'null'], maxLength: 50 }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+        status:
+          oneOf:
+            - $ref: '#/components/schemas/SupplierStatus'
+            - type: 'null'
+
+    PurchaseOrderStatus:
+      type: string
+      enum: [Draft, Ordered, PartiallyReceived, Received, Cancelled, Closed]
+
+    PurchaseOrderItem:
+      type: object
+      additionalProperties: false
+      required: [id, position, product, quantity, unitCost, lineTotal, quantityReceived, quantityOutstanding]
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer, minimum: 1 }
+        product: { $ref: '#/components/schemas/StockProductSummary' }
+        quantity: { type: number }
+        unitCost: { type: number, description: Before tax, in the order currency. }
+        lineTotal: { type: number, description: 'quantity × unitCost, rounded half away from zero to the currency.' }
+        quantityReceived: { type: number }
+        quantityOutstanding: { type: number, description: quantity − quantityReceived. }
+
+    PurchaseOrder:
+      type: object
+      additionalProperties: false
+      required: [id, number, status, supplier, currency, notes, items, total, orderedAt, orderedBy, receivedAt, cancelledAt, cancelledBy, cancelReason, closedAt, closedBy, closeReason, createdBy, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: [integer, 'null'], description: Gapless per clinic; assigned when ordered. }
+        status: { $ref: '#/components/schemas/PurchaseOrderStatus' }
+        supplier:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [id, name]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+            - type: 'null'
+        currency: { type: string }
+        notes: { type: [string, 'null'] }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PurchaseOrderItem' }
+        total: { type: number }
+        orderedAt: { type: [string, 'null'], format: date-time }
+        orderedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        receivedAt: { type: [string, 'null'], format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
+        cancelledBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        cancelReason: { type: [string, 'null'] }
+        closedAt: { type: [string, 'null'], format: date-time }
+        closedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        closeReason: { type: [string, 'null'] }
+        createdBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonSummary'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PurchaseOrderPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/PurchaseOrder' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    CreatePurchaseOrderRequest:
+      type: object
+      required: [supplierId]
+      properties:
+        supplierId: { type: string, format: uuid, description: An active supplier of the clinic. }
+        notes: { type: [string, 'null'], maxLength: 2000 }
+
+    UpdatePurchaseOrderRequest:
+      type: object
+      properties:
+        supplierId: { type: [string, 'null'], format: uuid }
+        notes: { type: [string, 'null'], maxLength: 2000, description: '"" clears the notes.' }
+
+    CreatePurchaseOrderItemRequest:
+      type: object
+      required: [productId, quantity, unitCost]
+      properties:
+        productId: { type: string, format: uuid, description: 'An active, non-Service product not already on the order.' }
+        quantity: { type: number, exclusiveMinimum: 0, maximum: 1000000, description: At most 3 decimals. }
+        unitCost: { type: number, minimum: 0, maximum: 1000000000, description: Before tax; at most 4 decimals. }
+
+    UpdatePurchaseOrderItemRequest:
+      type: object
+      properties:
+        quantity: { type: [number, 'null'], exclusiveMinimum: 0, maximum: 1000000 }
+        unitCost: { type: [number, 'null'], minimum: 0, maximum: 1000000000 }
+
+    PurchaseOrderReasonRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+
+    ReceivePurchaseOrderRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: object
+            required: [itemId, quantity]
+            properties:
+              itemId: { type: string, format: uuid, description: A line of this order (once per delivery). }
+              quantity: { type: number, exclusiveMinimum: 0, maximum: 1000000, description: At most what the line still awaits. }
+              lotNumber: { type: [string, 'null'], maxLength: 50 }
+              expiresOn: { type: [string, 'null'], format: date, description: 'Required for Medication and Vaccine; not before the clinic-local today.' }
+              location: { type: [string, 'null'], maxLength: 100 }
+        reference: { type: [string, 'null'], maxLength: 100 }
+        notes: { type: [string, 'null'], maxLength: 500 }
+        occurredAt: { type: [string, 'null'], format: date-time, description: 'Default now; not in the future or before the order was placed.' }
 
   responses:
     BadRequest:

@@ -846,3 +846,47 @@ Choose the simplest solution that satisfies documented requirements, security, m
   dispensed. A sale names at most one invoice line and its quantity is not compared with the line's. `TRUNCATE
   invoice_items` now fails on the stock-movement foreign key before its own guard (refused either way). Patient-level
   reports of dispensed drugs are B-23/B-24.
+
+### ADR-021: Suppliers and purchase orders (decided in B-21)
+- **Confirmed with the user:** purchase orders go Draft (editable, deletable, no number) → Ordered (frozen, numbered)
+  → PartiallyReceived → Received; an order with nothing received is cancelled, a partially received one is closed
+  (the rest will not come), each with a reason. Deliveries are partial: `POST /api/purchase-orders/{id}/receipts`
+  takes lines with the lot details, each line becomes a `Receive` movement (B-19 lot rules) carrying the line's unit
+  cost and the order's supplier, and never more than a line still awaits (`409`). Suppliers hold contact details, an
+  account number and notes, are unique per clinic by name ignoring case, and are deactivated, never deleted. Order
+  numbers are gapless per clinic, assigned when ordered (the invoice pattern); line totals are quantity × unit cost
+  rounded half away from zero to the clinic currency; orders carry no tax. Permissions reuse `inventory.read` and
+  `inventory.manage`; there is no approval step and no per-supplier price list. Free receipts (opening stock, samples)
+  stay and may name a supplier, as may returns to suppliers.
+- **Made here (recorded for review):** one line per product per order. A line's product must be active and stocked
+  when it is added and when the order is placed; a delivery for a product deactivated since is `422` (reactivate it
+  or close the order), because receipts into inactive products are refused everywhere (B-19). Reversing a delivered
+  movement (ADR-020) lowers its line's received quantity and moves the order's status back (`receivedAt` cleared); a
+  closed order stays closed. The order currency is copied from the clinic and the clinic currency is now also fixed
+  once any purchase order exists. Lock order for deliveries: the order, then the delivered products in id order, then
+  their lots; a reversal of a delivery takes the order before the product, so the two cannot deadlock. A delivery's
+  `occurredAt` may be backdated but not before the order was placed; `receivedAt` is when the last quantity was
+  recorded. The order response lists its lines (orders are short); the delivery's movements are read through the
+  movement list (`purchaseOrderId` filter). Supplier and order reads are not audited.
+- **Database:** `purchase_orders_guard` (drafts free; ordering needs lines adding up to the total; afterwards only
+  the receiving status, cancel and close; nothing deleted), `purchase_order_items_follow_order` (lines only on drafts,
+  then only `quantity_received`), deferred constraint triggers keeping each line's `quantity_received` equal to the
+  sum of its movements and each placed order's status equal to what its lines received, and `stock_movements_guard`
+  extended: a delivery locks its order `FOR SHARE`, must name the order's supplier and cannot arrive on a draft,
+  cancelled or closed order; a reversal keeps its original's supplier and line. The movement references the line
+  through (clinic_id, product_id, purchase_order_item_id), so the line is always for the movement's product.
+  `suppliers_guard` refuses deletes and moves. Rolling back refuses while placed orders or supplier-linked movements
+  exist and restores the B-20 guard.
+- **Review fixes (B-21):** a product's type, unit and controlled flag are also fixed while an open order awaits it,
+  ordering refuses lines whose product became a service and deliveries refuse products that are no longer stocked;
+  creating an order (and a costed plain receipt) reads the clinic currency under the clinic row's shared lock, which
+  the currency change takes exclusively; ordering locks the supplier and the products `FOR SHARE` before testing
+  them (lock order: order, supplier, products); the line and movement triggers lock the order `FOR NO KEY UPDATE`
+  when a received quantity changes, so the commit-time status check cannot be beaten by two writers of different
+  lines; `received_at` cannot be rewritten on a Received order; the deferred line check uses the product index; the
+  rollback also refuses while suppliers exist; two generated constraint names are pinned to the table name. A closed
+  order may end with nothing received after reversals (accepted: Closed means no more deliveries will come).
+- **Accepted for now:** the database checks that line totals add up to the order total but not how a line total was
+  rounded (as for invoices); no expected delivery date, supplier SKUs or price lists; a purchase order is not emailed
+  to the supplier (B-25 notifications); what a closed order will never receive is still shown as outstanding on its
+  lines (use the status); "on order" quantities for reorder suggestions are B-22.
