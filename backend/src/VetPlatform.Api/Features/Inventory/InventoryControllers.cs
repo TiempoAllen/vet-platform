@@ -80,3 +80,25 @@ public sealed class StockController(StockService stock) : ControllerBase
     public async Task<ActionResult<StockMovementResponse>> Reverse(Guid id, ReverseStockMovementRequest request, CancellationToken cancellationToken) =>
         StatusCode(StatusCodes.Status201Created, await stock.ReverseAsync(id, request, cancellationToken));
 }
+
+/// <summary>
+/// Low-stock and expiring-soon queries and their counts (B-22, ADR-022), read with <c>inventory.read</c>.
+/// </summary>
+[ApiController]
+public sealed class InventoryAlertsController(InventoryAlertService alerts) : ControllerBase
+{
+    [HttpGet("api/inventory/low-stock")]
+    [RequirePermission(Permissions.InventoryRead)]
+    public Task<PagedResponse<LowStockResponse>> LowStock([FromQuery] LowStockQuery query, CancellationToken cancellationToken) =>
+        alerts.LowStockAsync(query, cancellationToken);
+
+    [HttpGet("api/inventory/expiring")]
+    [RequirePermission(Permissions.InventoryRead)]
+    public Task<PagedResponse<ExpiringLotResponse>> Expiring([FromQuery] ExpiringQuery query, CancellationToken cancellationToken) =>
+        alerts.ExpiringAsync(query, cancellationToken);
+
+    [HttpGet("api/inventory/alerts")]
+    [RequirePermission(Permissions.InventoryRead)]
+    public Task<InventoryAlertsResponse> Alerts([FromQuery] InventoryAlertsQuery query, CancellationToken cancellationToken) =>
+        alerts.AlertsAsync(query, cancellationToken);
+}

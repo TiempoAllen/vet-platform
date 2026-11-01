@@ -2132,6 +2132,10 @@ namespace VetPlatform.Api.Common.Persistence.Migrations
                     b.HasAlternateKey("ClinicId", "ProductId", "Id")
                         .HasName("ak_stock_lots_clinic_id_product_id_id");
 
+                    b.HasIndex("ClinicId", "ExpiresOn")
+                        .HasDatabaseName("ix_stock_lots_expiring")
+                        .HasFilter("quantity > 0 AND expires_on IS NOT NULL");
+
                     b.HasIndex("ClinicId", "ProductId", "LotNumber", "ExpiresOn", "Location")
                         .IsUnique()
                         .HasDatabaseName("ux_stock_lots_identity");

@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.17, 2026-11-01, updated for B-21.
+Veterinary Management Platform. Version 1.18, 2026-11-01, updated for B-22.
 
 ## 1. Introduction
 
@@ -174,7 +174,7 @@ A user may hold several roles; their permissions are the union.
 | FR-INV-2 | Stock is held per lot with optional expiration date and location, and is changed only through recorded stock movements (receive, dispense, sell, adjust, return, expire). | Done (B-19: lots, `Receive`; B-20: dispense, sell, adjust, both returns, expire and reversals; each lot equals the sum of its movements and every movement stores the balance after it, database-enforced) |
 | FR-INV-3 | Stock may not go negative unless a documented rule allows it. | Done (B-20, Q-5: never negative; outgoing movements name a lot and cannot exceed it, database-enforced) |
 | FR-INV-4 | Suppliers and purchase orders can be managed; receiving a purchase order creates stock movements. | Done (B-21: suppliers; orders Draft → Ordered (gapless numbers) → PartiallyReceived → Received, cancel and close; each delivered line is a Receive movement; received quantities and statuses database-checked) |
-| FR-INV-5 | Low-stock (below reorder level) and expiring-soon queries are available. | Planned (B-22) |
+| FR-INV-5 | Low-stock (at or below the reorder level) and expiring-soon queries are available. | Done (B-22: low stock with on-order and shortfall; lots expiring within N clinic-local days, expired included; counts for the dashboard) |
 
 ### 3.9 Notifications, reports, settings, audit — B-23..B-27
 | ID | Requirement | Status |

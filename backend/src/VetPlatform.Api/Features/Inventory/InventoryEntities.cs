@@ -332,6 +332,11 @@ internal sealed class StockLotConfiguration : IEntityTypeConfiguration<StockLot>
             .HasDatabaseName(StockLot.IdentityIndex)
             .IsUnique()
             .AreNullsDistinct(false);
+
+        // The expiring-soon query (B-22): lots holding stock, by expiry date.
+        builder.HasIndex(l => new { l.ClinicId, l.ExpiresOn })
+            .HasDatabaseName("ix_stock_lots_expiring")
+            .HasFilter("quantity > 0 AND expires_on IS NOT NULL");
     }
 }
 

@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.21.0
-  summary: Implemented endpoints as of milestone B-21.
+  version: 0.22.0
+  summary: Implemented endpoints as of milestone B-22.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (the rest of
-    inventory, reports) are listed in `API.md` sections 11-12 and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (reports and
+    later) are listed in `API.md` section 12 onwards and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -3222,6 +3222,73 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/inventory/low-stock:
+    get:
+      tags: [Inventory]
+      operationId: listLowStock
+      summary: Products at or below their reorder level
+      description: Requires `inventory.read`. Active, stocked products with a reorder level whose on-hand stock is at or below it, largest shortfall first. onOrder counts what Ordered and PartiallyReceived purchase orders still await.
+      parameters:
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/ProductType' }, description: 'A stocked type; Service is 422.' }
+        - { name: category, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: uncovered, in: query, schema: { type: boolean } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of low-stock products.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LowStockPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/inventory/expiring:
+    get:
+      tags: [Inventory]
+      operationId: listExpiringLots
+      summary: Lots expiring soon or already expired
+      description: Requires `inventory.read`. Lots holding stock whose expiry date is within withinDays clinic-local days (inclusive; expired lots included), soonest first. An unknown productId gives an empty page.
+      parameters:
+        - { name: withinDays, in: query, schema: { type: integer, minimum: 0, maximum: 365, default: 30 } }
+        - { name: productId, in: query, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of lots.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExpiringLotPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/inventory/alerts:
+    get:
+      tags: [Inventory]
+      operationId: getInventoryAlerts
+      summary: Low-stock and expiry counts for a dashboard
+      description: Requires `inventory.read`. The totals of the low-stock and expiring lists.
+      parameters:
+        - { name: withinDays, in: query, schema: { type: integer, minimum: 0, maximum: 365, default: 30 } }
+      responses:
+        '200':
+          description: The counts.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InventoryAlerts' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -5553,6 +5620,68 @@ components:
         reference: { type: [string, 'null'], maxLength: 100 }
         notes: { type: [string, 'null'], maxLength: 500 }
         occurredAt: { type: [string, 'null'], format: date-time, description: 'Default now; not in the future or before the order was placed.' }
+
+    LowStock:
+      type: object
+      additionalProperties: false
+      required: [product, reorderLevel, onHand, onOrder, shortfall, covered]
+      properties:
+        product:
+          type: object
+          additionalProperties: false
+          required: [id, sku, name, unit, type, category, controlled]
+          properties:
+            id: { type: string, format: uuid }
+            sku: { type: string }
+            name: { type: string }
+            unit: { $ref: '#/components/schemas/ProductUnit' }
+            type: { $ref: '#/components/schemas/ProductType' }
+            category: { type: [string, 'null'] }
+            controlled: { type: boolean }
+        reorderLevel: { type: number }
+        onHand: { type: number }
+        onOrder: { type: number, description: What open purchase orders still await. }
+        shortfall: { type: number, minimum: 0, description: reorderLevel − onHand. }
+        covered: { type: boolean, description: onHand + onOrder is above the reorder level. }
+
+    LowStockPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/LowStock' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    ExpiringLot:
+      type: object
+      additionalProperties: false
+      required: [lot, expired, daysLeft]
+      properties:
+        lot: { $ref: '#/components/schemas/StockLot' }
+        expired: { type: boolean }
+        daysLeft: { type: integer, description: 'Clinic-local days to the expiry date; 0 on the day, negative once expired.' }
+
+    ExpiringLotPage:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ExpiringLot' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+
+    InventoryAlerts:
+      type: object
+      additionalProperties: false
+      required: [lowStock, lowStockUncovered, expiredLots, expiringLots, withinDays, today]
+      properties:
+        lowStock: { type: integer }
+        lowStockUncovered: { type: integer }
+        expiredLots: { type: integer }
+        expiringLots: { type: integer, description: Lots within the window and not yet expired. }
+        withinDays: { type: integer }
+        today: { type: string, format: date, description: The clinic-local date the counts were computed for. }
 
   responses:
     BadRequest:
