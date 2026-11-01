@@ -41,13 +41,14 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
         }
 
         var vets = await VeterinariansAsync(local.Select(r => r.VeterinarianId), cancellationToken);
+        var byDay = local.ToLookup(r => r.Day);
         return new AppointmentsReportResponse(
             period.From, period.To, period.Grouping, zone.Id, Count(local),
             local.GroupBy(r => r.VeterinarianId)
                 .Select(g => new AppointmentReportVeterinarian(vets(g.Key), Count(g)))
                 .OrderBy(v => v.Veterinarian.Name, StringComparer.Ordinal).ThenBy(v => v.Veterinarian.Id)
                 .ToList(),
-            period.Buckets().Select(b => new AppointmentReportBucket(b.Start, b.End, Count(local.Where(r => r.Day >= b.Start && r.Day <= b.End)))).ToList());
+            period.Buckets().Select(b => new AppointmentReportBucket(b.Start, b.End, Count(Days(b).SelectMany(d => byDay[d])))).ToList());
     }
 
     public async Task<PatientsSeenReportResponse> PatientsSeenAsync(ReportQuery query, CancellationToken cancellationToken)
@@ -59,10 +60,11 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
             .ToListAsync(cancellationToken);
         var visits = rows.Select(r => (r.PatientId, Day: period.LocalDay(r.StartAt), r.VeterinarianId, r.Species)).ToList();
 
-        // A patient is new where its first-ever completed appointment (with any veterinarian) falls.
-        var patientIds = visits.Select(v => v.PatientId).Distinct().ToList();
+        // A patient is new where its first-ever completed appointment (with any veterinarian) falls. The patients come
+        // from a subquery, so no list of ids is sent to the database.
+        var seen = InPeriod(period, query.VeterinarianId).Where(a => a.Status == AppointmentStatus.Completed).Select(a => a.PatientId);
         var firsts = await db.Appointments.AsNoTracking()
-            .Where(a => a.Status == AppointmentStatus.Completed && patientIds.Contains(a.PatientId))
+            .Where(a => a.Status == AppointmentStatus.Completed && seen.Contains(a.PatientId))
             .GroupBy(a => a.PatientId)
             .Select(g => new { PatientId = g.Key, First = g.Min(a => a.StartAt) })
             .ToListAsync(cancellationToken);
@@ -77,6 +79,7 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
         }
 
         var vets = await VeterinariansAsync(visits.Select(v => v.VeterinarianId), cancellationToken);
+        var visitsByDay = visits.ToLookup(v => v.Day);
         return new PatientsSeenReportResponse(
             period.From, period.To, period.Grouping, zone.Id, Count(visits, period.From, period.To),
             visits.GroupBy(v => v.Species).OrderBy(g => g.Key)
@@ -85,7 +88,7 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
                 .Select(g => new PatientsSeenVeterinarian(vets(g.Key), Count(g, period.From, period.To)))
                 .OrderBy(v => v.Veterinarian.Name, StringComparer.Ordinal).ThenBy(v => v.Veterinarian.Id)
                 .ToList(),
-            period.Buckets().Select(b => new PatientsSeenBucket(b.Start, b.End, Count(visits.Where(v => v.Day >= b.Start && v.Day <= b.End), b.Start, b.End))).ToList());
+            period.Buckets().Select(b => new PatientsSeenBucket(b.Start, b.End, Count(Days(b).SelectMany(d => visitsByDay[d]), b.Start, b.End))).ToList());
     }
 
     // ---------- Helpers ----------
@@ -110,6 +113,14 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
         var clinicId = tenant.ClinicId ?? throw new InvalidOperationException("Reports require a current clinic.");
         var zone = ClinicTimeZone.Of(await db.Clinics.AsNoTracking().SingleAsync(c => c.Id == clinicId, cancellationToken));
         return (new Period(query.From!.Value, query.To!.Value, query.ParsedGroupBy, zone), zone);
+    }
+
+    private static IEnumerable<DateOnly> Days((DateOnly Start, DateOnly End) bucket)
+    {
+        for (var day = bucket.Start; day <= bucket.End; day = day.AddDays(1))
+        {
+            yield return day;
+        }
     }
 
     private static decimal? Rate(int part, int whole) => whole == 0 ? null : decimal.Round((decimal)part / whole, 4, MidpointRounding.AwayFromZero);

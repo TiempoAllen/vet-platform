@@ -158,6 +158,19 @@ public sealed class ReportsTests(DatabaseApiFactory factory) : IClassFixture<Dat
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await clinic.Admin.GetAsync("/api/reports/patients-seen?" + query)).StatusCode);
     }
 
+    [Theory]
+    [InlineData("from=2026-05-01&to=2026-05-31&groupBy=week", "groupBy")]
+    [InlineData("from=2026-05-01&to=2101-01-01", "to")]
+    [InlineData("from=1999-12-31&to=2000-01-02", "from")]
+    [InlineData("from=2026-05-31&to=2026-05-01", "to")]
+    public async Task InvalidPeriods_NameTheirField(string query, string field)
+    {
+        var clinic = await ClinicAsync();
+        var response = await clinic.Admin.GetAsync("/api/reports/appointments?" + query);
+        var error = (await response.Content.ReadFromJsonAsync<VetPlatform.Api.Common.Errors.ApiErrorResponse>())!.Error;
+        Assert.Equal([field], error.Details!.Select(d => d.Field));
+    }
+
     [Fact]
     public async Task Reports_AreForAdministrators_AndStayInTheClinic()
     {

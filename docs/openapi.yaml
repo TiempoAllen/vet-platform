@@ -3298,7 +3298,7 @@ paths:
       description: Requires `reports.read`. Appointments counted on the clinic-local day they were scheduled to start; rates are fractions of the resolved (completed, cancelled, no-show) appointments.
       parameters:
         - { name: from, in: query, required: true, schema: { type: string, format: date } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; at most 366 days after from.' }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; the period is at most 366 days (to at most 365 days after from).' }
         - { name: groupBy, in: query, schema: { $ref: '#/components/schemas/ReportGrouping' } }
         - { name: veterinarianId, in: query, schema: { type: string, format: uuid } }
       responses:
@@ -3321,7 +3321,7 @@ paths:
       description: Requires `reports.read`. A patient is seen when an appointment of theirs was completed; new when their first-ever completed appointment falls in the bucket.
       parameters:
         - { name: from, in: query, required: true, schema: { type: string, format: date } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; at most 366 days after from.' }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; the period is at most 366 days (to at most 365 days after from).' }
         - { name: groupBy, in: query, schema: { $ref: '#/components/schemas/ReportGrouping' } }
         - { name: veterinarianId, in: query, schema: { type: string, format: uuid } }
       responses:

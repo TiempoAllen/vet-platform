@@ -931,6 +931,9 @@ Choose the simplest solution that satisfies documented requirements, security, m
   patient's first completed appointment comes from one grouped query. `veterinarianId` narrows the report to one
   veterinarian, but "new" still looks at the patient's first visit with anyone. Veterinarians are listed by name
   (a user that can no longer be shown appears with an empty name). Not audited.
+- **Review fixes (B-23):** the rows are grouped by clinic-local day once, so each bucket reads only its own days
+  (instead of every bucket scanning the whole period); the patients whose first visit is looked up come from a
+  subquery, so no list of ids is sent; each out-of-range date is reported under its own field.
 - **Accepted for now:** a year-long report reads every appointment of the year (a few columns each); fine for clinic
   volumes, and X-04 can move the counting into SQL or a read replica if needed. Consultations, vaccinations and
   prescriptions per veterinarian are not reported yet.

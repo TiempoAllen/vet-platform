@@ -50,11 +50,20 @@ public sealed class ReportQuery : IValidatableObject
             yield break;
         }
 
-        if (!ScheduleRules.IsInSupportedRange(from) || !ScheduleRules.IsInSupportedRange(to))
+        // Each date under its own field; the order and length only once both are in range.
+        var fromValid = ScheduleRules.IsInSupportedRange(from);
+        var toValid = ScheduleRules.IsInSupportedRange(to);
+        if (!fromValid)
         {
             yield return new ValidationResult(ScheduleRules.SupportedRangeMessage, [nameof(From)]);
         }
-        else if (to < from || to.DayNumber - from.DayNumber >= MaxDays)
+
+        if (!toValid)
+        {
+            yield return new ValidationResult(ScheduleRules.SupportedRangeMessage, [nameof(To)]);
+        }
+
+        if (fromValid && toValid && (to < from || to.DayNumber - from.DayNumber >= MaxDays))
         {
             yield return new ValidationResult($"To must be on or after From, and the period at most {MaxDays} days.", [nameof(To)]);
         }
