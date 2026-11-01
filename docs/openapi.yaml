@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.22.0
-  summary: Implemented endpoints as of milestone B-22.
+  version: 0.23.0
+  summary: Implemented endpoints as of milestone B-23.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (reports and
-    later) are listed in `API.md` section 12 onwards and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (financial and
+    inventory reports and later) are listed in `API.md` section 12 onwards and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -37,6 +37,7 @@ tags:
   - name: ClinicalNotes
   - name: Billing
   - name: Inventory
+  - name: Reports
   - name: Operations
 security:
   - sessionCookie: []
@@ -3289,6 +3290,52 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/reports/appointments:
+    get:
+      tags: [Reports]
+      operationId: getAppointmentsReport
+      summary: Appointments by status, veterinarian and period
+      description: Requires `reports.read`. Appointments counted on the clinic-local day they were scheduled to start; rates are fractions of the resolved (completed, cancelled, no-show) appointments.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; at most 366 days after from.' }
+        - { name: groupBy, in: query, schema: { $ref: '#/components/schemas/ReportGrouping' } }
+        - { name: veterinarianId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppointmentsReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/reports/patients-seen:
+    get:
+      tags: [Reports]
+      operationId: getPatientsSeenReport
+      summary: Patients seen, new and returning
+      description: Requires `reports.read`. A patient is seen when an appointment of theirs was completed; new when their first-ever completed appointment falls in the bucket.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; at most 366 days after from.' }
+        - { name: groupBy, in: query, schema: { $ref: '#/components/schemas/ReportGrouping' } }
+        - { name: veterinarianId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PatientsSeenReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/health:
     get:
       tags: [Operations]
@@ -3387,7 +3434,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage, inventory.dispense, inventory.dispense_controlled]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage, inventory.dispense, inventory.dispense_controlled, reports.read]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -5682,6 +5729,116 @@ components:
         expiringLots: { type: integer, description: Lots within the window and not yet expired. }
         withinDays: { type: integer }
         today: { type: string, format: date, description: The clinic-local date the counts were computed for. }
+
+    ReportGrouping:
+      type: string
+      enum: [Day, Week, Month]
+      default: Day
+
+    AppointmentCounts:
+      type: object
+      additionalProperties: false
+      required: [total, scheduled, checkedIn, completed, cancelled, cancelledByClient, cancelledByClinic, noShow, noShowRate, cancellationRate]
+      properties:
+        total: { type: integer }
+        scheduled: { type: integer }
+        checkedIn: { type: integer }
+        completed: { type: integer }
+        cancelled: { type: integer }
+        cancelledByClient: { type: integer }
+        cancelledByClinic: { type: integer }
+        noShow: { type: integer }
+        noShowRate: { type: [number, 'null'], description: 'Fraction of the resolved appointments; null when none.' }
+        cancellationRate: { type: [number, 'null'] }
+
+    AppointmentReportBucket:
+      type: object
+      additionalProperties: false
+      required: [start, end, counts]
+      properties:
+        start: { type: string, format: date }
+        end: { type: string, format: date }
+        counts: { $ref: '#/components/schemas/AppointmentCounts' }
+
+    AppointmentReportVeterinarian:
+      type: object
+      additionalProperties: false
+      required: [veterinarian, counts]
+      properties:
+        veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        counts: { $ref: '#/components/schemas/AppointmentCounts' }
+
+    AppointmentsReport:
+      type: object
+      additionalProperties: false
+      required: [from, to, groupBy, timeZone, totals, byVeterinarian, buckets]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        groupBy: { $ref: '#/components/schemas/ReportGrouping' }
+        timeZone: { type: string, description: The clinic's IANA time zone. }
+        totals: { $ref: '#/components/schemas/AppointmentCounts' }
+        byVeterinarian:
+          type: array
+          items: { $ref: '#/components/schemas/AppointmentReportVeterinarian' }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/AppointmentReportBucket' }
+
+    PatientsSeenCounts:
+      type: object
+      additionalProperties: false
+      required: [patients, newPatients, returningPatients, visits]
+      properties:
+        patients: { type: integer }
+        newPatients: { type: integer }
+        returningPatients: { type: integer }
+        visits: { type: integer, description: Completed appointments. }
+
+    PatientsSeenBucket:
+      type: object
+      additionalProperties: false
+      required: [start, end, counts]
+      properties:
+        start: { type: string, format: date }
+        end: { type: string, format: date }
+        counts: { $ref: '#/components/schemas/PatientsSeenCounts' }
+
+    PatientsSeenSpecies:
+      type: object
+      additionalProperties: false
+      required: [species, counts]
+      properties:
+        species: { $ref: '#/components/schemas/Species' }
+        counts: { $ref: '#/components/schemas/PatientsSeenCounts' }
+
+    PatientsSeenVeterinarian:
+      type: object
+      additionalProperties: false
+      required: [veterinarian, counts]
+      properties:
+        veterinarian: { $ref: '#/components/schemas/PersonSummary' }
+        counts: { $ref: '#/components/schemas/PatientsSeenCounts' }
+
+    PatientsSeenReport:
+      type: object
+      additionalProperties: false
+      required: [from, to, groupBy, timeZone, totals, bySpecies, byVeterinarian, buckets]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        groupBy: { $ref: '#/components/schemas/ReportGrouping' }
+        timeZone: { type: string, description: The clinic's IANA time zone. }
+        totals: { $ref: '#/components/schemas/PatientsSeenCounts' }
+        bySpecies:
+          type: array
+          items: { $ref: '#/components/schemas/PatientsSeenSpecies' }
+        byVeterinarian:
+          type: array
+          items: { $ref: '#/components/schemas/PatientsSeenVeterinarian' }
+        buckets:
+          type: array
+          items: { $ref: '#/components/schemas/PatientsSeenBucket' }
 
   responses:
     BadRequest:

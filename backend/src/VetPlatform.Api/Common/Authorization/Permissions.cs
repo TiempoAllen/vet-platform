@@ -77,6 +77,9 @@ public static class Permissions
     /// <summary>Record Dispense movements: stock given or used for a patient (B-20, ADR-020).</summary>
     public const string InventoryDispense = "inventory.dispense";
 
+    /// <summary>Run reports (B-23, ADR-023): clinic-wide aggregates for owners and managers.</summary>
+    public const string ReportsRead = "reports.read";
+
     /// <summary>Dispense controlled drugs. Veterinarians only, whatever other inventory permissions a role has (ADR-020).</summary>
     public const string InventoryDispenseControlled = "inventory.dispense_controlled";
 
@@ -86,7 +89,7 @@ public static class Permissions
         {
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
             SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead, VaccinationsReadDue,
-            BillingRead, BillingManage, PaymentsRecord, PaymentsRefund, InventoryRead, InventoryManage,
+            BillingRead, BillingManage, PaymentsRecord, PaymentsRefund, InventoryRead, InventoryManage, ReportsRead,
         }.ToFrozenSet(),
         [Role.Veterinarian] = new[]
         {

@@ -123,6 +123,9 @@ staff member as witness on every other movement that can take them out (the witn
 risk). Movement responses carry patient and consultation ids only, never names; the reason and notes of dispensing
 movements are returned only to `clinical.read` holders; reasons never reach the audit log.
 
+Since B-23 (ADR-023): reports need `reports.read` (Admin only), stay in the caller's clinic and return counts only,
+never patient or client names, so they are not audited as exports.
+
 Since B-21 (ADR-021): suppliers and purchase orders are read with `inventory.read` and managed with `inventory.manage`;
 supplier contact details and order notes and reasons never reach the audit log; placed orders are never deleted.
 
