@@ -957,8 +957,9 @@ Choose the simplest solution that satisfies documented requirements, security, m
   counts a reversal against the type it undoes, so mistaken movements reversed in the period vanish from usage; a
   reversal in a later period lowers that period's column (it can go below 0). A valuation lot whose costed receipts
   were all reversed is uncosted; a lot with costed and uncosted receipts is valued wholly at the costed average.
-  Receivables are unpaginated, largest balance first; its audit entry lists the client ids shown, the statement's the
-  dates. The shared period logic moved into `ReportPeriod`, and the query classes became a small hierarchy
+  Receivables are unpaginated, largest balance first; its audit entry records the date and the number of clients
+  shown (it always lists every client owing money, so ids would only grow the row; security review), the statement's
+  the dates. The shared period logic moved into `ReportPeriod`, and the query classes became a small hierarchy
   (`ReportDateRange` -> `ReportPeriodQuery` -> `ReportQuery`).
 - **Accepted for now:** revenue and payments read their rows of the period like the B-23 reports; the statement reads
   one client's rows up to the period end; stock reports group in SQL. No CSV export, no as-of dates for receivables or

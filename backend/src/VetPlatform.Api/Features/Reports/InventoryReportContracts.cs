@@ -37,7 +37,8 @@ public sealed record StockValuationReportResponse(
 
 /// <summary>
 /// One product's movements in the period, in its unit. Incoming columns (<c>received</c>, <c>returnedFromClient</c>)
-/// and outgoing ones (<c>dispensed</c>, <c>sold</c>, <c>returnedToSupplier</c>, <c>expired</c>) are positive amounts;
+/// and outgoing ones (<c>dispensed</c>, <c>sold</c>, <c>returnedToSupplier</c>, <c>expired</c>) are positive amounts
+/// (below 0 when a reversal undoes a movement of an earlier period);
 /// <c>adjusted</c> is signed. A reversal counts against the type it undoes, so a mistaken dispense reversed in the same
 /// period nets to 0. <c>closing = opening + net</c>.
 /// </summary>

@@ -200,7 +200,7 @@ public sealed class FinancialReportsTests(DatabaseApiFactory factory) : IClassFi
         Assert.Equal("Zed", clients[1].GetProperty("client").GetProperty("lastName").GetString());
 
         var entry = (await factory.AuditEntriesAsync(clinic.AdminUser.ClinicId)).Single(e => e.Action == AuditActions.ReceivablesViewed);
-        Assert.Contains(clinic.Jane.ToString(), entry.Metadata);
+        Assert.Equal(2, JsonDocument.Parse(entry.Metadata!).RootElement.GetProperty("clients").GetInt32());
         Assert.DoesNotContain("Doe", entry.Metadata);
     }
 

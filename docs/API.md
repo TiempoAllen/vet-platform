@@ -1615,7 +1615,8 @@ when nothing is costed. Categories are listed by name, products without one last
 
 `from` and `to` as for the other reports (no `groupBy`). Per product with stock at the start of the period or a
 movement in it: `opening` is the stock before `from`, then the movements of the period by `occurredAt` (clinic-local)
-and type. Incoming and outgoing columns are positive amounts, `adjusted` is signed; a **reversal counts against the
+and type. Incoming and outgoing columns are positive amounts (a column goes below 0 when a movement of an earlier
+period is reversed in this one), `adjusted` is signed; a **reversal counts against the
 type it undoes** (a dispense reversed in the period nets to 0). `net` is the change and `closing = opening + net`.
 Backdated movements change the periods they are dated in.
 

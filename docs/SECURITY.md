@@ -127,9 +127,9 @@ Since B-23 (ADR-023): reports need `reports.read` (Admin only), stay in the call
 never patient or client names, so they are not audited as exports.
 
 Since B-24 (ADR-024): financial reports need `reports.read` (Admin); inventory reports need `reports.inventory`
-(Admin, Inventory) and show products and quantities only. Aged receivables (client names and balances) and a client's
+(Admin, Inventory) and show products, quantities and stock value only. Aged receivables (client names and balances) and a client's
 statement (`billing.read`: Admin, Veterinarian, Receptionist; client name, address and account history) are audited on
-every call, with ids and dates only; revenue, payment and stock reports are aggregates and are not. No CSV export yet.
+every call, with ids, dates and counts only (receivables records how many clients were shown); revenue, payment and stock reports are aggregates and are not. No CSV export yet.
 
 Since B-21 (ADR-021): suppliers and purchase orders are read with `inventory.read` and managed with `inventory.manage`;
 supplier contact details and order notes and reasons never reach the audit log; placed orders are never deleted.

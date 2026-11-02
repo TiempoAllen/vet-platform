@@ -121,7 +121,7 @@ public sealed class FinancialReportService(AppDbContext db, ITenantContext tenan
             .ThenBy(c => c.Client?.Id)
             .ToList();
 
-        audit.Record(AuditActions.ReceivablesViewed, nameof(Clinic), clinic.Id, new { asOf = today, clientIds = byClient.Select(c => c.Client?.Id).ToList() });
+        audit.Record(AuditActions.ReceivablesViewed, nameof(Clinic), clinic.Id, new { asOf = today, clients = byClient.Count });
         await db.SaveChangesAsync(cancellationToken);
         return new ReceivablesReportResponse(today, zone.Id, clinic.Currency, Age(rows), byClient);
     }

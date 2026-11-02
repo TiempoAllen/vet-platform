@@ -5,8 +5,8 @@ info:
   summary: Implemented endpoints as of milestone B-24.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
-    wins if the two disagree; update both in the same change. Planned endpoints (financial and
-    inventory reports and later) are listed in `API.md` section 12 onwards and are added here when implemented.
+    wins if the two disagree; update both in the same change. Planned endpoints (later milestones)
+    are listed in `API.md` and are added here when implemented.
 
     Conventions (API.md sections 2, 3 and 13):
     - Same-site only, HTTPS, no CORS. Authentication is the HttpOnly `__Host-vet_session` cookie.
@@ -3417,7 +3417,7 @@ paths:
       description: >
         Requires `reports.read`. Balances due of issued invoices, as of the clinic-local today, by days past their due
         date (current = due today or later), in total and per client (largest balance first). Audited
-        (report.receivables_viewed).
+        (report.receivables_viewed, with the number of clients shown).
       responses:
         '200':
           description: The report.
@@ -3571,7 +3571,7 @@ components:
     Permission:
       type: string
       description: Stable permission name. Grants per role are listed in API.md section 4.
-      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage, inventory.dispense, inventory.dispense_controlled, reports.read]
+      enum: [users.read, users.manage, clients.read, clients.manage, patients.read, patients.manage, schedules.read, schedules.manage, schedules.manage_own, settings.manage, appointments.read, appointments.manage, clinical.read, clinical.write, consultations.complete, prescriptions.issue, vaccinations.read_due, billing.read, billing.manage, payments.record, payments.refund, inventory.read, inventory.manage, inventory.dispense, inventory.dispense_controlled, reports.read, reports.inventory]
     Species:
       type: string
       enum: [Dog, Cat, Bird, Rabbit, Rodent, Reptile, Horse, Other]
@@ -6245,7 +6245,7 @@ components:
             type: object
             additionalProperties: false
             required: [product, opening, received, returnedFromClient, dispensed, sold, returnedToSupplier, expired, adjusted, net, closing]
-            description: Quantities in the product's unit; in and out columns are positive, adjusted is signed; closing = opening + net.
+            description: "Quantities in the product's unit; in and out columns are positive (below 0 when a reversal undoes an earlier period's movement), adjusted is signed; closing = opening + net."
             properties:
               product: { $ref: '#/components/schemas/ReportProductSummary' }
               opening: { type: number }
