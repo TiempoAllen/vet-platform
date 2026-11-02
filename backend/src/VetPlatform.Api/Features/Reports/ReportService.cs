@@ -4,7 +4,6 @@ using VetPlatform.Api.Common.Tenancy;
 using VetPlatform.Api.Features.Appointments;
 using VetPlatform.Api.Features.Identity;
 using VetPlatform.Api.Features.Patients;
-using VetPlatform.Api.Features.Scheduling;
 
 namespace VetPlatform.Api.Features.Reports;
 
@@ -48,7 +47,7 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
                 .Select(g => new AppointmentReportVeterinarian(vets(g.Key), Count(g)))
                 .OrderBy(v => v.Veterinarian.Name, StringComparer.Ordinal).ThenBy(v => v.Veterinarian.Id)
                 .ToList(),
-            period.Buckets().Select(b => new AppointmentReportBucket(b.Start, b.End, Count(Days(b).SelectMany(d => byDay[d])))).ToList());
+            period.Buckets().Select(b => new AppointmentReportBucket(b.Start, b.End, Count(ReportPeriod.Days(b).SelectMany(d => byDay[d])))).ToList());
     }
 
     public async Task<PatientsSeenReportResponse> PatientsSeenAsync(ReportQuery query, CancellationToken cancellationToken)
@@ -88,13 +87,13 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
                 .Select(g => new PatientsSeenVeterinarian(vets(g.Key), Count(g, period.From, period.To)))
                 .OrderBy(v => v.Veterinarian.Name, StringComparer.Ordinal).ThenBy(v => v.Veterinarian.Id)
                 .ToList(),
-            period.Buckets().Select(b => new PatientsSeenBucket(b.Start, b.End, Count(Days(b).SelectMany(d => visitsByDay[d]), b.Start, b.End))).ToList());
+            period.Buckets().Select(b => new PatientsSeenBucket(b.Start, b.End, Count(ReportPeriod.Days(b).SelectMany(d => visitsByDay[d]), b.Start, b.End))).ToList());
     }
 
     // ---------- Helpers ----------
 
     /// <summary>Appointments scheduled to start within the period (clinic-local days), optionally one veterinarian's.</summary>
-    private IQueryable<Appointment> InPeriod(Period period, Guid? veterinarianId)
+    private IQueryable<Appointment> InPeriod(ReportPeriod period, Guid? veterinarianId)
     {
         var appointments = db.Appointments.AsNoTracking().Where(a => a.StartAt >= period.StartsAt && a.StartAt < period.EndsBefore);
         return veterinarianId is { } vet ? appointments.Where(a => a.VeterinarianId == vet) : appointments;
@@ -108,47 +107,11 @@ public sealed class ReportService(AppDbContext db, ITenantContext tenant)
         return id => new AppointmentPersonSummary(id, names.GetValueOrDefault(id, ""));
     }
 
-    private async Task<(Period Period, TimeZoneInfo Zone)> PeriodAsync(ReportQuery query, CancellationToken cancellationToken)
+    private async Task<(ReportPeriod Period, TimeZoneInfo Zone)> PeriodAsync(ReportQuery query, CancellationToken cancellationToken)
     {
-        var clinicId = tenant.ClinicId ?? throw new InvalidOperationException("Reports require a current clinic.");
-        var zone = ClinicTimeZone.Of(await db.Clinics.AsNoTracking().SingleAsync(c => c.Id == clinicId, cancellationToken));
-        return (new Period(query.From!.Value, query.To!.Value, query.ParsedGroupBy, zone), zone);
-    }
-
-    private static IEnumerable<DateOnly> Days((DateOnly Start, DateOnly End) bucket)
-    {
-        for (var day = bucket.Start; day <= bucket.End; day = day.AddDays(1))
-        {
-            yield return day;
-        }
+        var zone = ClinicTimeZone.Of(await ReportPeriod.ClinicAsync(db, tenant, cancellationToken));
+        return (new ReportPeriod(query.From!.Value, query.To!.Value, query.ParsedGroupBy, zone), zone);
     }
 
     private static decimal? Rate(int part, int whole) => whole == 0 ? null : decimal.Round((decimal)part / whole, 4, MidpointRounding.AwayFromZero);
-
-    /// <summary>A clinic-local period and its buckets; the first and last buckets are clipped to the period.</summary>
-    private sealed record Period(DateOnly From, DateOnly To, ReportGrouping Grouping, TimeZoneInfo Zone)
-    {
-        public DateTimeOffset StartsAt => WorkingHoursCalculator.ToInstant(From.ToDateTime(TimeOnly.MinValue), Zone);
-
-        public DateTimeOffset EndsBefore => WorkingHoursCalculator.ToInstant(To.AddDays(1).ToDateTime(TimeOnly.MinValue), Zone);
-
-        public DateOnly LocalDay(DateTimeOffset instant) => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, Zone).DateTime);
-
-        public IEnumerable<(DateOnly Start, DateOnly End)> Buckets()
-        {
-            var start = From;
-            while (start <= To)
-            {
-                var next = Grouping switch
-                {
-                    ReportGrouping.Week => start.AddDays(7 - ((int)start.DayOfWeek + 6) % 7),
-                    ReportGrouping.Month => new DateOnly(start.Year, start.Month, 1).AddMonths(1),
-                    _ => start.AddDays(1),
-                };
-                var end = next.AddDays(-1) < To ? next.AddDays(-1) : To;
-                yield return (start, end);
-                start = next;
-            }
-        }
-    }
 }

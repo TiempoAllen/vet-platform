@@ -151,6 +151,10 @@ public static class AuditActions
     /// <summary>A receipt opened (viewed or reprinted).</summary>
     public const string ReceiptViewed = "receipt.viewed";
     public const string ReceiptsListed = "receipt.listed";
+
+    /// <summary>Reports that show clients' balances (B-24): aged receivables and a client's statement.</summary>
+    public const string ReceivablesViewed = "report.receivables_viewed";
+    public const string ClientStatementViewed = "client.statement_viewed";
 }
 
 /// <summary>

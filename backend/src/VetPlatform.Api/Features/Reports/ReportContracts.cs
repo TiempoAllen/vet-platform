@@ -17,10 +17,10 @@ public enum ReportGrouping
 }
 
 /// <summary>
-/// A report period (docs/API.md section 12, ADR-023): clinic-local dates <c>from</c> to <c>to</c> inclusive, at most
-/// 366 days, cut into buckets by <c>groupBy</c>.
+/// A report's dates (docs/API.md section 12, ADR-023): clinic-local dates <c>from</c> to <c>to</c> inclusive, at most
+/// 366 days. Used as is by the stock movement summary and the client statement (B-24).
 /// </summary>
-public sealed class ReportQuery : IValidatableObject
+public class ReportDateRange : IValidatableObject
 {
     public const int MaxDays = 366;
 
@@ -30,21 +30,8 @@ public sealed class ReportQuery : IValidatableObject
     [Required]
     public DateOnly? To { get; init; }
 
-    /// <summary>Day (default), Week or Month.</summary>
-    public string? GroupBy { get; init; }
-
-    /// <summary>Only this veterinarian's appointments.</summary>
-    public Guid? VeterinarianId { get; init; }
-
-    public ReportGrouping ParsedGroupBy => StrictEnum.TryParse<ReportGrouping>(GroupBy, out var grouping) ? grouping : ReportGrouping.Day;
-
-    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    public virtual IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (GroupBy is not null && !StrictEnum.TryParse<ReportGrouping>(GroupBy, out _))
-        {
-            yield return new ValidationResult($"GroupBy must be one of {StrictEnum.Names<ReportGrouping>()}.", [nameof(GroupBy)]);
-        }
-
         if (From is not { } from || To is not { } to)
         {
             yield break;
@@ -68,6 +55,35 @@ public sealed class ReportQuery : IValidatableObject
             yield return new ValidationResult($"To must be on or after From, and the period at most {MaxDays} days.", [nameof(To)]);
         }
     }
+}
+
+/// <summary>A report period cut into buckets by <c>groupBy</c> (financial reports, B-24).</summary>
+public class ReportPeriodQuery : ReportDateRange
+{
+    /// <summary>Day (default), Week or Month.</summary>
+    public string? GroupBy { get; init; }
+
+    public ReportGrouping ParsedGroupBy => StrictEnum.TryParse<ReportGrouping>(GroupBy, out var grouping) ? grouping : ReportGrouping.Day;
+
+    public override IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (GroupBy is not null && !StrictEnum.TryParse<ReportGrouping>(GroupBy, out _))
+        {
+            yield return new ValidationResult($"GroupBy must be one of {StrictEnum.Names<ReportGrouping>()}.", [nameof(GroupBy)]);
+        }
+
+        foreach (var result in base.Validate(validationContext))
+        {
+            yield return result;
+        }
+    }
+}
+
+/// <summary>The operational reports' query (B-23): a period, optionally one veterinarian's appointments.</summary>
+public sealed class ReportQuery : ReportPeriodQuery
+{
+    /// <summary>Only this veterinarian's appointments.</summary>
+    public Guid? VeterinarianId { get; init; }
 }
 
 /// <summary>

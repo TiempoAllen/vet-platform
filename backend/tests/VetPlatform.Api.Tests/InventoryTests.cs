@@ -201,7 +201,7 @@ public sealed class InventoryTests(DatabaseApiFactory factory) : IClassFixture<D
 
         Assert.Equal(HttpStatusCode.Created, (await clinic.Admin.PostAsJsonAsync("/api/inventory/movements", new { type = "Receive", productId = id, quantity = 1 })).StatusCode);
         var stockMe = await clinic.Stock.GetFromJsonAsync<JsonElement>("/api/auth/me");
-        Assert.Equal([Permissions.InventoryManage, Permissions.InventoryRead], stockMe.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()));
+        Assert.Equal([Permissions.InventoryManage, Permissions.InventoryRead, Permissions.ReportsInventory], stockMe.GetProperty("permissions").EnumerateArray().Select(p => p.GetString()));
         Assert.Equal(HttpStatusCode.Forbidden, (await clinic.Stock.GetAsync("/api/invoices")).StatusCode);
     }
 

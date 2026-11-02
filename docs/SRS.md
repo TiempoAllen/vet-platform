@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-Veterinary Management Platform. Version 1.19, 2026-11-02, updated for B-23.
+Veterinary Management Platform. Version 1.20, 2026-11-03, updated for B-24.
 
 ## 1. Introduction
 
@@ -179,10 +179,10 @@ A user may hold several roles; their permissions are the union.
 ### 3.9 Notifications, reports, settings, audit — B-23..B-27
 | ID | Requirement | Status |
 |---|---|---|
-| FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Partly done (B-23: appointments by status, veterinarian and period; patients seen, new and returning; `reports.read`; financial and inventory reports in B-24) |
+| FR-RPT-1 | Operational reports (appointments, patients seen) and financial/inventory reports, scoped to the clinic and permission-checked. | Done (B-23: appointments by status, veterinarian and period; patients seen, new and returning; `reports.read`. B-24: revenue, payments and refunds, aged receivables, client statement, stock valuation and stock movement summary; `reports.inventory`; ADR-024) |
 | FR-NOT-1 | In-app notifications with per-user preferences; channel infrastructure for future email/SMS. | Planned (B-25) |
 | FR-SET-1 | Administrators can manage clinic settings: legal name, contact, address, timezone, currency, tax configuration. | Partly done: time zone (B-08); currency and tax rates (B-16); the rest B-26 |
-| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16), clinic settings, products and stock movements including adjustments (B-19, B-20); sensitive exports (B-24, if any; the B-23 reports are counts only and not audited, ADR-023) later |
+| FR-AUD-1 | The system records audit entries for authentication events, permission changes, clinical record changes, invoice/payment changes, stock adjustments, sensitive exports and configuration changes. | Partly done: authentication, users, clients, patients, schedules, appointments, clinical records (B-11 to B-15), invoices and tax rates (B-16), clinic settings, products and stock movements including adjustments (B-19, B-20); report views showing client balances (aged receivables, client statements; B-24, ADR-024); aggregate reports are not audited (ADR-023, ADR-024) and there are no CSV exports yet |
 | FR-AUD-2 | Authorised administrators can search the clinic's audit log by date, actor, action and entity. | Planned (B-27, F-22) |
 
 ### 3.10 Dashboard and UI (FR-UI) — F-01..F-22
