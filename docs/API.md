@@ -167,6 +167,7 @@ the API hold one or more; `GET /api/auth/me` still returns empty arrays for a us
 | `inventory.dispense` | – | ✓ | ✓ | – | – |
 | `inventory.dispense_controlled` | – | ✓ | – | – | – |
 | `reports.read` | ✓ | – | – | – | – |
+| `reports.inventory` | ✓ | – | – | – | ✓ |
 
 **User object**
 
@@ -308,6 +309,31 @@ deliberately loose (text, one `@`, text, e.g. `a@b` passes); the frontend may va
 
 Creating a client and every change to one is written to the audit log (`client.created`, `client.updated`). The entry
 names the changed fields but not their values.
+
+### 5.1 Client statement (B-24)
+`GET /api/clients/:id/statement?from=YYYY-MM-DD&to=YYYY-MM-DD` (`billing.read`): what the client owed at the start of
+the period, every change in it with the running balance, and what was owed at its end. `from` and `to` are required
+clinic-local dates as in section 12 (inclusive, at most 366 days; `422` otherwise); an unknown or another clinic's
+client is `404`. Each call is audited (`client.statement_viewed`, with the dates only).
+
+    {
+      "client": { "id", "firstName", "lastName", "addressLine1", "addressLine2", "city", "region", "postalCode", "country" },
+      "from": "2026-05-01", "to": "2026-05-31", "timeZone": "Europe/London", "currency": "EUR",
+      "openingBalance": 34,
+      "totals": { "invoiced": 108, "paid": 88, "refunded": 10, "voided": 54 },
+      "closingBalance": 10,
+      "entries": [ {
+        "type": "InvoiceIssued" | "Payment" | "Refund" | "InvoiceVoided", "occurredAt": "...",
+        "invoice": { "id", "number" }, "dueOn": "2026-05-31" | null, "paymentId": "uuid" | null, "refundId": "uuid" | null,
+        "method": "Cash" | ... | null, "amount": -34, "balance": 54
+      } ]
+    }
+
+The balance owed is the sum of the client's issued invoices, minus their payments, plus refunds, minus voided invoices
+(an invoice is voided only once its payments are refunded, so a void cancels its own amount). Drafts never appear.
+`amount` is signed (positive raises the balance), `occurredAt` carries the clinic's offset (issue, payment, refund or
+void time), and entries are oldest first (at one instant: invoices, payments, refunds, voids). `client` shows today's
+name and address; print each invoice from its own frozen `billTo` (section 10.3).
 
 ## 6. Patients
 Implemented in B-06. Patients are the animals of the caller's clinic: other clinics' patients are `404 NOT_FOUND`,
@@ -1470,11 +1496,13 @@ an empty page).
 window; `today` is the clinic-local date the counts were computed for.
 
 ## 12. Reports
-Operational reports are implemented in B-23 (ADR-023); financial and inventory reports follow in B-24. Reports are
-read-only aggregates over the caller's clinic, need `reports.read` (Admin), return JSON counts only (never patient or
-client names) and are not audited.
+Operational reports are implemented in B-23 (ADR-023), financial and inventory reports in B-24 (ADR-024). Reports are
+read-only, JSON only, over the caller's clinic. Operational and financial reports need `reports.read` (Admin);
+inventory reports need `reports.inventory` (Admin, Inventory). Aggregates (appointments, patients seen, revenue,
+payments, stock) are not audited; aged receivables names clients with their balances and is audited
+(`report.receivables_viewed`). A client's statement is in section 5.1.
 
-**Periods.** Both reports take `from` and `to` (required clinic-local dates, inclusive, 2000-01-01 to 2100-12-31, at
+**Periods.** The period reports take `from` and `to` (required clinic-local dates, inclusive, 2000-01-01 to 2100-12-31, at
 most 366 days), `groupBy` (`Day` by default, `Week` for ISO weeks Monday to Sunday, or `Month`) and optionally
 `veterinarianId` (only that veterinarian's appointments; an unknown id gives zeros). Every bucket of the period is
 returned, empty ones included, in order; the first and last are clipped to the period (a weekly report from a
@@ -1512,6 +1540,84 @@ A patient is **seen** when one of its appointments was **completed**; `visits` c
 is **new** in a bucket (or in the totals) when its **first-ever completed appointment**, with any veterinarian, falls
 in it; the others are returning, so `newPatients + returningPatients = patients`. Walk-ins without an appointment
 are not counted. `bySpecies` lists the species seen, in the species order of section 6.
+
+### 12.1 Financial reports (B-24)
+Amounts are decimals in the clinic `currency` (fixed once invoices exist, section 10; `null` while none is set), in
+the shortest form like everywhere else. Revenue and payments take `from`, `to` and `groupBy` as above (no
+`veterinarianId`); every bucket is returned.
+
+**`GET /api/reports/revenue`** (`reports.read`)
+
+    {
+      ...period..., "currency": "EUR",
+      "totals": { "invoices": 2, "subtotal": 155, "discountTotal": 10, "taxTotal": 27, "total": 172,
+                  "voidedInvoices": 1, "voidedTotal": 54 },
+      "byTaxRate": [ { "taxRate": { "id", "name", "percent" }, "net": 145, "discount": 10, "tax": 27, "total": 162 } ],
+      "buckets": [ { "start", "end", "totals": { ...as totals... } } ]
+    }
+
+Invoices count on their **clinic-local issue day**. Drafts never count. An invoice issued in the period and voided
+since is left out of the amounts and counted under `voidedInvoices` / `voidedTotal` instead (on its issue day), so a
+closed period changes when an invoice of it is voided. `byTaxRate` sums the lines of the invoices still issued by tax
+rate (lowest percentage first; the rate's current name).
+
+**`GET /api/reports/payments`** (`reports.read`)
+
+    {
+      ...period..., "currency": "EUR",
+      "totals": { "payments": 2, "received": 54, "refunds": 1, "refunded": 5, "net": 49 },
+      "byMethod": [ { "method": "Cash" | "Card" | "BankTransfer" | "Cheque" | "Other", "totals": { ...as totals... } } ],
+      "buckets": [ { "start", "end", "totals": { ...as totals... } } ]
+    }
+
+Payments count on their `paidAt` day and refunds on their `refundedAt` day (clinic-local), each under its own method;
+`net = received - refunded`. `byMethod` lists the methods used in the period, in the order above.
+
+**`GET /api/reports/receivables`** (`reports.read`, audited)
+
+    {
+      "asOf": "2026-11-02", "timeZone": "Europe/London", "currency": "EUR",
+      "totals": { "invoices": 7, "current": 108, "days1To30": 88, "days31To60": 54, "days61To90": 54, "over90Days": 54, "total": 358 },
+      "clients": [ { "client": { "id", "firstName", "lastName" } | null, "aging": { ...as totals... }, "oldestDueOn": "2026-08-03" } ]
+    }
+
+Balances due of **issued** invoices with something left to pay, as of the clinic-local today, by days past
+`dueOn`: `current` is due today or later, then 1 to 30, 31 to 60, 61 to 90 and over 90 days past due. `clients`
+lists every client with a balance, largest total first (unpaginated). No parameters.
+
+### 12.2 Inventory reports (B-24)
+Both need `reports.inventory`; products appear with `{ "id", "sku", "name", "category", "type", "unit", "status" }`,
+by name. Quantities are in the product's unit.
+
+**`GET /api/reports/stock-valuation`**
+
+    {
+      "asOf": "2026-11-02T10:15:00+00:00", "currency": "EUR",
+      "totals": { "products": 3, "lots": 4, "uncostedLots": 1, "value": 44.5 },
+      "byCategory": [ { "category": "Food" | null, "products": 1, "uncostedLots": 0, "value": 4 } ],
+      "products": [ { "product": {...}, "lots": 2, "uncostedLots": 1, "onHand": 19, "costedQuantity": 15,
+                      "uncostedQuantity": 4, "value": 37.5, "unitCost": 2.5 | null } ]
+    }
+
+Stock on hand **now** (lots holding stock, any product status). Each lot is valued at the **weighted average unit
+cost of its costed receipts** (`unitCost` on `Receive` movements; receipts that were reversed are left out), times its
+quantity, rounded to the currency. A lot without a costed receipt is **uncosted**: it counts in `uncostedQuantity` and
+`uncostedLots` and adds nothing to `value`. A product's `unitCost` is its value per costed unit (4 decimals), `null`
+when nothing is costed. Categories are listed by name, products without one last.
+
+**`GET /api/reports/stock-movements?from&to`**
+
+    {
+      "from": "2026-05-01", "to": "2026-05-31", "timeZone": "Europe/London",
+      "products": [ { "product": {...}, "opening": 20, "received": 10, "returnedFromClient": 1, "dispensed": 2, "sold": 4,
+                      "returnedToSupplier": 6, "expired": 0, "adjusted": -1, "net": -2, "closing": 18 } ]
+    }
+
+`from` and `to` as for the other reports (no `groupBy`). Per product with stock at the start of the period or a
+movement in it: `opening` is the stock before `from`, then the movements of the period by `occurredAt` (clinic-local)
+and type. Incoming and outgoing columns are positive amounts, `adjusted` is signed; a **reversal counts against the
+type it undoes** (a dispense reversed in the period nets to 0). `net` is the change and `closing = opening + net`.
+Backdated movements change the periods they are dated in.
 
 
 ## 13. Pagination

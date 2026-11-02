@@ -80,6 +80,9 @@ public static class Permissions
     /// <summary>Run reports (B-23, ADR-023): clinic-wide aggregates for owners and managers.</summary>
     public const string ReportsRead = "reports.read";
 
+    /// <summary>Run inventory reports (stock valuation, movement summary; B-24, ADR-024): Admin and Inventory.</summary>
+    public const string ReportsInventory = "reports.inventory";
+
     /// <summary>Dispense controlled drugs. Veterinarians only, whatever other inventory permissions a role has (ADR-020).</summary>
     public const string InventoryDispenseControlled = "inventory.dispense_controlled";
 
@@ -90,6 +93,7 @@ public static class Permissions
             UsersRead, UsersManage, ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead,
             SchedulesManage, SettingsManage, AppointmentsRead, AppointmentsManage, ClinicalRead, VaccinationsReadDue,
             BillingRead, BillingManage, PaymentsRecord, PaymentsRefund, InventoryRead, InventoryManage, ReportsRead,
+            ReportsInventory,
         }.ToFrozenSet(),
         [Role.Veterinarian] = new[]
         {
@@ -107,7 +111,7 @@ public static class Permissions
             ClientsRead, ClientsManage, PatientsRead, PatientsManage, SchedulesRead, AppointmentsRead, AppointmentsManage,
             VaccinationsReadDue, BillingRead, BillingManage, PaymentsRecord, InventoryRead,
         }.ToFrozenSet(),
-        [Role.Inventory] = new[] { InventoryRead, InventoryManage }.ToFrozenSet(),
+        [Role.Inventory] = new[] { InventoryRead, InventoryManage, ReportsInventory }.ToFrozenSet(),
     }.ToFrozenDictionary();
 
     public static IReadOnlyList<string> For(IEnumerable<Role> roles) =>

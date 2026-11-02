@@ -59,6 +59,8 @@ builder.Services.AddScoped<InventoryAlertService>();
 builder.Services.AddScoped<SupplierService>();
 builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<ReportService>();
+builder.Services.AddScoped<FinancialReportService>();
+builder.Services.AddScoped<InventoryReportService>();
 builder.Services.AddFileStorage(builder.Configuration);
 
 // /api/health is Unhealthy (503) when the database cannot be reached. The timeout keeps a hung connection

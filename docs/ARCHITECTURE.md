@@ -937,3 +937,30 @@ Choose the simplest solution that satisfies documented requirements, security, m
 - **Accepted for now:** a year-long report reads every appointment of the year (a few columns each); fine for clinic
   volumes, and X-04 can move the counting into SQL or a read replica if needed. Consultations, vaccinations and
   prescriptions per veterinarian are not reported yet.
+
+### ADR-024: Financial and inventory reports (decided in B-24)
+- **Confirmed with the user:** financial reports are revenue (issued invoices by period and tax rate), payments and
+  refunds (by method, a cash-up view) and aged receivables (balances due by days past `dueOn`: current, 1-30, 31-60,
+  61-90, over 90, as of the clinic-local today, per client); the client statement deferred from B-17 is a period
+  statement (opening balance, every invoice, payment, refund and void with a running balance, closing balance) at
+  `GET /api/clients/{id}/statement` with `billing.read`; inventory reports are stock valuation and a stock movement
+  summary per product. Invoices count on their issue day (voided ones apart), payments and refunds on their own day.
+  Stock is valued lot by lot at the weighted average cost of its costed receipts, as of now only. Permissions:
+  financial reports `reports.read` (Admin), inventory reports a new `reports.inventory` (Admin, Inventory). JSON only;
+  the receivables report and statements are audited (they show client balances), the aggregates are not.
+- **Made here (recorded for review):** a voided invoice stays on its issue day under `voidedInvoices` /
+  `voidedTotal`, so revenue of a closed period drops when one of its invoices is voided later (the void-day
+  alternative was not chosen); `byTaxRate` uses the rate's current name (its percentage never changes) and sums the
+  lines of invoices still issued. The statement's balance is issued invoices − payments + refunds − voids (a void
+  cancels the invoice's total; it is possible only once its payments are refunded); at one instant the entries are
+  ordered invoice, payment, refund, void, and the client is shown with today's name and address. The movement summary
+  counts a reversal against the type it undoes, so mistaken movements reversed in the period vanish from usage; a
+  reversal in a later period lowers that period's column (it can go below 0). A valuation lot whose costed receipts
+  were all reversed is uncosted; a lot with costed and uncosted receipts is valued wholly at the costed average.
+  Receivables are unpaginated, largest balance first; its audit entry lists the client ids shown, the statement's the
+  dates. The shared period logic moved into `ReportPeriod`, and the query classes became a small hierarchy
+  (`ReportDateRange` -> `ReportPeriodQuery` -> `ReportQuery`).
+- **Accepted for now:** revenue and payments read their rows of the period like the B-23 reports; the statement reads
+  one client's rows up to the period end; stock reports group in SQL. No CSV export, no as-of dates for receivables or
+  valuation (they would rebuild balances from the ledgers), no sales by product, no wastage report (expired and negative
+  adjustments are visible in the movement summary).

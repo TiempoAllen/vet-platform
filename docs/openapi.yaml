@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Veterinary Management Platform API
-  version: 0.23.0
-  summary: Implemented endpoints as of milestone B-23.
+  version: 0.24.0
+  summary: Implemented endpoints as of milestone B-24.
   description: |
     Machine-readable specification of the endpoints that exist today. `docs/API.md` is the narrative contract and
     wins if the two disagree; update both in the same change. Planned endpoints (financial and
@@ -1875,6 +1875,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/clients/{id}/statement:
+    get:
+      tags: [Clients]
+      operationId: getClientStatement
+      summary: A client's account statement
+      description: >
+        Requires `billing.read`. The balance owed at the start of the period (clinic-local dates), every issued
+        invoice, payment, refund and void in it with the running balance, and the balance at its end. Drafts never
+        appear. Audited (client.statement_viewed).
+      parameters:
+        - $ref: '#/components/parameters/ClientId'
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; the period is at most 366 days (to at most 365 days after from).' }
+      responses:
+        '200':
+          description: The statement.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClientStatement' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/clients/{clientId}/attachments:
     parameters:
       - { name: clientId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3332,6 +3358,117 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PatientsSeenReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/reports/revenue:
+    get:
+      tags: [Reports]
+      operationId: getRevenueReport
+      summary: Revenue from issued invoices
+      description: >
+        Requires `reports.read`. Invoices count on their clinic-local issue day; those voided since are left out of the
+        amounts and counted under voidedInvoices / voidedTotal. byTaxRate sums the lines of the invoices still issued.
+        Amounts are in the clinic currency. Not audited.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; the period is at most 366 days (to at most 365 days after from).' }
+        - { name: groupBy, in: query, schema: { $ref: '#/components/schemas/ReportGrouping' } }
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RevenueReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/reports/payments:
+    get:
+      tags: [Reports]
+      operationId: getPaymentsReport
+      summary: Payments and refunds by method
+      description: Requires `reports.read`. Payments count on their paidAt day and refunds on theirs (clinic-local); net = received − refunded. Not audited.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; the period is at most 366 days (to at most 365 days after from).' }
+        - { name: groupBy, in: query, schema: { $ref: '#/components/schemas/ReportGrouping' } }
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentsReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/reports/receivables:
+    get:
+      tags: [Reports]
+      operationId: getReceivablesReport
+      summary: Aged receivables
+      description: >
+        Requires `reports.read`. Balances due of issued invoices, as of the clinic-local today, by days past their due
+        date (current = due today or later), in total and per client (largest balance first). Audited
+        (report.receivables_viewed).
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReceivablesReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reports/stock-valuation:
+    get:
+      tags: [Reports]
+      operationId: getStockValuationReport
+      summary: Stock on hand and its value
+      description: >
+        Requires `reports.inventory`. Products holding stock now; each lot is valued at the weighted average unit cost of
+        its standing costed receipts (reversed receipts left out), rounded to the currency; lots without one are
+        uncosted and add nothing. Not audited.
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockValuationReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/reports/stock-movements:
+    get:
+      tags: [Reports]
+      operationId: getStockMovementsReport
+      summary: Stock movement summary per product
+      description: >
+        Requires `reports.inventory`. Per product with stock at the start or movements in the period: opening stock,
+        quantities by type (by occurredAt, clinic-local; a reversal counts against the type it undoes) and closing
+        stock. Not audited.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date }, description: 'Inclusive; the period is at most 366 days (to at most 365 days after from).' }
+      responses:
+        '200':
+          description: The report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockMovementsReport' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationError' }
@@ -5839,6 +5976,288 @@ components:
         buckets:
           type: array
           items: { $ref: '#/components/schemas/PatientsSeenBucket' }
+
+    RevenueTotals:
+      type: object
+      additionalProperties: false
+      required: [invoices, subtotal, discountTotal, taxTotal, total, voidedInvoices, voidedTotal]
+      properties:
+        invoices: { type: integer, description: Issued invoices (not voided since). }
+        subtotal: { type: number }
+        discountTotal: { type: number }
+        taxTotal: { type: number }
+        total: { type: number }
+        voidedInvoices: { type: integer, description: Invoices issued in the period and voided since. }
+        voidedTotal: { type: number }
+
+    RevenueReport:
+      type: object
+      additionalProperties: false
+      required: [from, to, groupBy, timeZone, currency, totals, byTaxRate, buckets]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        groupBy: { $ref: '#/components/schemas/ReportGrouping' }
+        timeZone: { type: string, description: The clinic's IANA time zone. }
+        currency: { type: [string, 'null'], description: The clinic currency (ISO 4217); null while none is set. }
+        totals: { $ref: '#/components/schemas/RevenueTotals' }
+        byTaxRate:
+          type: array
+          description: Lines of the invoices still issued, by tax rate (lowest percentage first).
+          items:
+            type: object
+            additionalProperties: false
+            required: [taxRate, net, discount, tax, total]
+            properties:
+              taxRate:
+                type: object
+                additionalProperties: false
+                required: [id, name, percent]
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string, description: The rate's current name. }
+                  percent: { type: number }
+              net: { type: number }
+              discount: { type: number }
+              tax: { type: number }
+              total: { type: number }
+        buckets:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [start, end, totals]
+            properties:
+              start: { type: string, format: date }
+              end: { type: string, format: date }
+              totals: { $ref: '#/components/schemas/RevenueTotals' }
+
+    PaymentTotals:
+      type: object
+      additionalProperties: false
+      required: [payments, received, refunds, refunded, net]
+      properties:
+        payments: { type: integer }
+        received: { type: number }
+        refunds: { type: integer }
+        refunded: { type: number }
+        net: { type: number, description: received − refunded. }
+
+    PaymentsReport:
+      type: object
+      additionalProperties: false
+      required: [from, to, groupBy, timeZone, currency, totals, byMethod, buckets]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        groupBy: { $ref: '#/components/schemas/ReportGrouping' }
+        timeZone: { type: string }
+        currency: { type: [string, 'null'] }
+        totals: { $ref: '#/components/schemas/PaymentTotals' }
+        byMethod:
+          type: array
+          description: Methods with a payment or refund in the period, in the order of PaymentMethod.
+          items:
+            type: object
+            additionalProperties: false
+            required: [method, totals]
+            properties:
+              method: { $ref: '#/components/schemas/PaymentMethod' }
+              totals: { $ref: '#/components/schemas/PaymentTotals' }
+        buckets:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [start, end, totals]
+            properties:
+              start: { type: string, format: date }
+              end: { type: string, format: date }
+              totals: { $ref: '#/components/schemas/PaymentTotals' }
+
+    ReceivablesAging:
+      type: object
+      additionalProperties: false
+      required: [invoices, current, days1To30, days31To60, days61To90, over90Days, total]
+      properties:
+        invoices: { type: integer }
+        current: { type: number, description: Not yet due (due today or later). }
+        days1To30: { type: number }
+        days31To60: { type: number }
+        days61To90: { type: number }
+        over90Days: { type: number }
+        total: { type: number }
+
+    ReceivablesReport:
+      type: object
+      additionalProperties: false
+      required: [asOf, timeZone, currency, totals, clients]
+      properties:
+        asOf: { type: string, format: date, description: The clinic-local today. }
+        timeZone: { type: string }
+        currency: { type: [string, 'null'] }
+        totals: { $ref: '#/components/schemas/ReceivablesAging' }
+        clients:
+          type: array
+          description: Clients with a balance due, largest first.
+          items:
+            type: object
+            additionalProperties: false
+            required: [client, aging, oldestDueOn]
+            properties:
+              client:
+                oneOf:
+                  - { $ref: '#/components/schemas/PatientClientSummary' }
+                  - type: 'null'
+              aging: { $ref: '#/components/schemas/ReceivablesAging' }
+              oldestDueOn: { type: string, format: date }
+
+    ClientStatement:
+      type: object
+      additionalProperties: false
+      required: [client, from, to, timeZone, currency, openingBalance, totals, closingBalance, entries]
+      properties:
+        client:
+          type: object
+          additionalProperties: false
+          required: [id, firstName, lastName, addressLine1, addressLine2, city, region, postalCode, country]
+          description: The client as shown today.
+          properties:
+            id: { type: string, format: uuid }
+            firstName: { type: string }
+            lastName: { type: string }
+            addressLine1: { type: [string, 'null'] }
+            addressLine2: { type: [string, 'null'] }
+            city: { type: [string, 'null'] }
+            region: { type: [string, 'null'] }
+            postalCode: { type: [string, 'null'] }
+            country: { type: [string, 'null'] }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        timeZone: { type: string }
+        currency: { type: [string, 'null'] }
+        openingBalance: { type: number, description: Owed at the start of from. }
+        totals:
+          type: object
+          additionalProperties: false
+          required: [invoiced, paid, refunded, voided]
+          properties:
+            invoiced: { type: number }
+            paid: { type: number }
+            refunded: { type: number }
+            voided: { type: number }
+        closingBalance: { type: number, description: Owed at the end of to. }
+        entries:
+          type: array
+          description: Oldest first; at one instant invoices, then payments, refunds and voids.
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, occurredAt, invoice, dueOn, paymentId, refundId, method, amount, balance]
+            properties:
+              type: { type: string, enum: [InvoiceIssued, Payment, Refund, InvoiceVoided] }
+              occurredAt: { type: string, format: date-time, description: With the clinic's offset. }
+              invoice:
+                type: object
+                additionalProperties: false
+                required: [id, number]
+                properties:
+                  id: { type: string, format: uuid }
+                  number: { type: integer }
+              dueOn: { type: [string, 'null'], format: date, description: On InvoiceIssued entries only. }
+              paymentId: { type: [string, 'null'], format: uuid, description: On Payment and Refund entries. }
+              refundId: { type: [string, 'null'], format: uuid }
+              method:
+                oneOf:
+                  - { $ref: '#/components/schemas/PaymentMethod' }
+                  - type: 'null'
+              amount: { type: number, description: 'Signed: positive raises the balance (invoice, refund), negative lowers it (payment, void).' }
+              balance: { type: number, description: The running balance after this entry. }
+
+    ReportProductSummary:
+      type: object
+      additionalProperties: false
+      required: [id, sku, name, category, type, unit, status]
+      properties:
+        id: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        category: { type: [string, 'null'] }
+        type: { $ref: '#/components/schemas/ProductType' }
+        unit: { $ref: '#/components/schemas/ProductUnit' }
+        status: { $ref: '#/components/schemas/ProductStatus' }
+
+    StockValuationReport:
+      type: object
+      additionalProperties: false
+      required: [asOf, currency, totals, byCategory, products]
+      properties:
+        asOf: { type: string, format: date-time, description: Now, with the clinic's offset. }
+        currency: { type: [string, 'null'] }
+        totals:
+          type: object
+          additionalProperties: false
+          required: [products, lots, uncostedLots, value]
+          properties:
+            products: { type: integer }
+            lots: { type: integer }
+            uncostedLots: { type: integer }
+            value: { type: number }
+        byCategory:
+          type: array
+          description: By category name; products without a category last (category null).
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, products, uncostedLots, value]
+            properties:
+              category: { type: [string, 'null'] }
+              products: { type: integer }
+              uncostedLots: { type: integer }
+              value: { type: number }
+        products:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [product, lots, uncostedLots, onHand, costedQuantity, uncostedQuantity, value, unitCost]
+            properties:
+              product: { $ref: '#/components/schemas/ReportProductSummary' }
+              lots: { type: integer, description: Lots holding stock. }
+              uncostedLots: { type: integer }
+              onHand: { type: number }
+              costedQuantity: { type: number }
+              uncostedQuantity: { type: number }
+              value: { type: number }
+              unitCost: { type: [number, 'null'], description: value / costedQuantity (4 decimals); null when nothing is costed. }
+
+    StockMovementsReport:
+      type: object
+      additionalProperties: false
+      required: [from, to, timeZone, products]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        timeZone: { type: string }
+        products:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [product, opening, received, returnedFromClient, dispensed, sold, returnedToSupplier, expired, adjusted, net, closing]
+            description: Quantities in the product's unit; in and out columns are positive, adjusted is signed; closing = opening + net.
+            properties:
+              product: { $ref: '#/components/schemas/ReportProductSummary' }
+              opening: { type: number }
+              received: { type: number }
+              returnedFromClient: { type: number }
+              dispensed: { type: number }
+              sold: { type: number }
+              returnedToSupplier: { type: number }
+              expired: { type: number }
+              adjusted: { type: number }
+              net: { type: number }
+              closing: { type: number }
 
   responses:
     BadRequest:
